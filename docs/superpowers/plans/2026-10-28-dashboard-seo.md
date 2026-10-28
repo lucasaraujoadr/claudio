@@ -73,14 +73,21 @@ do código.
 
 - [ ] **Step 1: Criar o app**
 
-Rodar `npx -y create-next-app@16.4.3 . --ts --tailwind --app --no-src-dir --eslint --use-npm --yes`,
-depois mover o conteúdo gerado para `src/` e ajustar `tsconfig.json` com
-`"paths": { "@/*": ["./src/*"] }`.
+Rodar `npx -y create-next-app@16.4.3 . --ts --tailwind --app --src-dir --eslint --use-npm --yes`
+e confirmar que `tsconfig.json` traz `"paths": { "@/*": ["./src/*"] }`.
+
+O diretório `src/` vem do próprio gerador (`--src-dir`); não mover arquivo à
+mão. Se o gerador reclamar que o diretório não está vazio, ele aceita
+prosseguir — a spec, o plano e o `.gitignore` já versionados devem
+permanecer intactos. Conferir com `git status` depois.
+
+Se `src/lib/utils.ts` já vier gerado com `cn`, manter o que veio e seguir
+para o passo 3; o teste do passo 4 vale para as duas implementações.
 
 - [ ] **Step 2: Instalar dependências**
 
 ```bash
-npm i drizzle-orm @neondatabase/serverless googleapis cheerio zod ai
+npm i drizzle-orm @neondatabase/serverless googleapis cheerio zod ai @vercel/config
 npm i -D drizzle-kit vitest @vitejs/plugin-react dotenv-cli @types/node
 ```
 
@@ -856,6 +863,8 @@ git add -A && git commit -m "feat: pesquisa de temas e clusters com IA" && git p
 **Files:**
 - Create: `src/lib/ai/briefing.ts`, `src/app/api/briefings/gerar/route.ts`,
   `src/app/(dash)/briefings/page.tsx`
+- Modify: `src/lib/ai/schemas.ts` (criado na Tarefa 11 — acrescentar
+  `briefingSchema` e `BriefingGerado`, sem tocar em `clustersSchema`)
 - Test: `src/lib/ai/__tests__/briefing.test.ts`
 
 **Interfaces:**
