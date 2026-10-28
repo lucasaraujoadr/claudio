@@ -149,7 +149,7 @@ git add -A && git commit -m "feat: scaffold Next.js 16 com Tailwind e Vitest"
 
 ```bash
 npx vercel@latest link --yes
-npx vercel@latest integration add neon --yes --no-claim
+npx vercel@latest integration add neon --no-claim
 npx vercel@latest env pull .env.local --yes
 ```
 
