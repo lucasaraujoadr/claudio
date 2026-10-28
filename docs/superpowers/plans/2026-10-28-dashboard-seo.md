@@ -712,7 +712,34 @@ janelas, grava a atual em `gscSnapshots` com `onConflictDoUpdate` sobre
 `(snapshot_date, query, page)`, e devolve os totais da anterior no corpo da
 resposta para inspeção manual.
 
-- [ ] **Step 6: Configurar o acesso do Google e verificar no ar**
+- [ ] **Step 6: Implementar a retenção de snapshots**
+
+Decisão do usuário: manter granularidade diária por 90 dias e, mais antigo
+que isso, uma fotografia por semana. Sem isso a tabela cresce sem limite —
+e o sucesso agrava, porque ranquear melhor multiplica os termos.
+
+Função pura em `src/lib/gsc.ts`, testável sem banco:
+
+```ts
+sqlRetencao(hoje: Date): { corte: string }   // corte = hoje − 90 dias
+```
+
+A exclusão roda no fim do cron, depois do upsert, e apaga de
+`gsc_snapshots` toda linha com `snapshot_date < corte` cuja data **não**
+caia numa segunda-feira. Em SQL: `snapshot_date < $corte AND extract(dow
+from snapshot_date) <> 1`. Idempotente — rodar duas vezes no mesmo dia não
+apaga nada a mais.
+
+Testes:
+
+```ts
+it('corte fica 90 dias antes de hoje', () => {})
+it('preserva segunda-feira anterior ao corte', () => {})
+it('apaga terça a domingo anteriores ao corte', () => {})
+it('não apaga nada dentro da janela de 90 dias', () => {})
+```
+
+- [ ] **Step 7: Configurar o acesso do Google e verificar no ar**
 
 Pedir ao usuário: criar conta de serviço, habilitar a Search Console API, e
 adicionar o email da conta como usuário restrito na propriedade. Então:
@@ -720,7 +747,7 @@ adicionar o email da conta como usuário restrito na propriedade. Então:
 Run: `curl -H "Authorization: Bearer $CRON_SECRET" <URL>/api/cron/gsc`
 Expected: 200 com contagem de linhas maior que zero.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add -A && git commit -m "feat: cliente do Search Console e cron diario" && git push
