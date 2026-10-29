@@ -58,6 +58,18 @@ Ficam na Vercel (Settings > Environment Variables). Nunca coloque os valores no 
 | `GSC_PROPERTY` | Propriedade do Search Console: `sc-domain:ogpericiacontabil.com.br`. |
 | `SITE_URL` | Endereço do site rastreado e aceito como URL publicada; opcional, o padrão é `https://ogpericiacontabil.com.br`. |
 | `CRON_SECRET` | Segredo que protege a rotina diária. Você mesmo gera um texto aleatório longo (`openssl rand -base64 32`) e cadastra como variável `CRON_SECRET` na Vercel, nos três ambientes (Production, Preview e Development); a partir daí a Vercel passa a enviá-lo ao cron. Ele já está configurado neste projeto: não gere outro, para não quebrar a rotina que funciona. |
+| `BREVO_API_KEY` | Chave de API do Brevo (Brevo → SMTP e API → Chaves de API). Opcional: sem ela o CRM funciona, os contatos ficam "pendente" e a tela **CRM → Integração** diz "Brevo não conectado". |
+| `BREVO_WEBHOOK_TOKEN` | Token do webhook de eventos do Brevo (`/api/webhooks/brevo?token=…`). Já configurado. Sem ele o webhook recusa tudo. |
+| `SITE_WEBHOOK_TOKEN` | Token do webhook do formulário do site (`/api/webhooks/site?token=…`). Já configurado. Sem ele o webhook recusa tudo. |
+
+## Brevo e webhooks (CRM)
+
+- O CRM é a fonte da verdade; o Brevo só envia os emails. A tela **CRM → Integração** mostra o estado da conexão, quantos contatos estão pendentes/sincronizados/com erro, o botão **Sincronizar agora** e as duas URLs de webhook (com o token, mascarado, com botões de mostrar e copiar), com o passo a passo para o Brevo e para o Elementor.
+- Atributos que precisam existir no Brevo (Contatos → Configurações → Atributos de contato, tipo Texto): `NOME`, `TELEFONE`, `ESCRITORIO`, `CIDADE`, `UF`. Campo vazio no CRM não é enviado.
+- Contato **descadastrado** nunca é adicionado a lista do Brevo: na sincronização vai bloqueado (`emailBlacklisted`) e é tirado de toda lista.
+- `POST /api/webhooks/brevo?token=…`: descadastro, hard bounce e spam viram "Descadastrado" e tiram o contato dos funis; abertura, clique e entrega só entram na linha do tempo. O mesmo evento repetido não grava nada (tabela `brevo_eventos_recebidos`). Email que não está no CRM e evento desconhecido são aceitos e ignorados.
+- `POST /api/webhooks/site?token=…`: ação "Webhook" do Elementor Forms, com ou sem "Dados avançados" (form-urlencoded) ou JSON. Cria/atualiza o lead com origem "Site" e base legal "Consentimento"; a mensagem fica na linha do tempo. Até 20 envios por minuto por IP; corpo de até 64 KB.
+- **Atenção:** a produção está atrás da proteção de login da Vercel (Deployment Protection), então o Brevo e o Elementor ainda **não conseguem** chamar `/api/webhooks/*`. Para ligar, restrinja a proteção às prévias (Preview) ou crie um "Protection Bypass for Automation" e acrescente `&x-vercel-protection-bypass=…` às URLs.
 
 ## Conta de serviço do Google (Search Console)
 

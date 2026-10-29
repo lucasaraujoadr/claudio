@@ -29,14 +29,17 @@ function redirecionaParaLogin(path: string, cookie?: string) {
 }
 
 describe('proxy: lista de rotas liberadas', () => {
-  it.each(['/login', '/api/login', '/api/cron/gsc', '/api/cron', '/_next/static/x.js', '/favicon.ico'])(
+  it.each([
+    '/login', '/api/login', '/api/cron/gsc', '/api/cron', '/_next/static/x.js', '/favicon.ico',
+    '/api/webhooks/brevo', '/api/webhooks/site', '/api/webhooks',
+  ])(
     'libera %s sem cookie',
     (path) => {
       expect(passa(path)).toBe(true)
     },
   )
 
-  it.each(['/login/', '/loginx', '/api/loginfoo', '/api/cronfoo', '/api/logout', '/favicon.icoX', '/_nextx/a', '/_next'])(
+  it.each(['/login/', '/loginx', '/api/loginfoo', '/api/cronfoo', '/api/webhooksfoo', '/api/webhooks-site', '/api/logout', '/api/crm/brevo/sincronizar', '/favicon.icoX', '/_nextx/a', '/_next'])(
     'não libera %s sem cookie',
     (path) => {
       expect(redirecionaParaLogin(path)).toBe(true)

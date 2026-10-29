@@ -8,6 +8,9 @@ function estaLiberada(pathname: string): boolean {
     ROTAS_LIVRES.includes(pathname) ||
     pathname === '/api/cron' ||
     pathname.startsWith('/api/cron/') ||
+    // Webhooks (Brevo, formulário do site): quem chama não tem cookie; cada rota exige token.
+    pathname === '/api/webhooks' ||
+    pathname.startsWith('/api/webhooks/') ||
     pathname.startsWith('/_next/') ||
     pathname === '/favicon.ico'
   )

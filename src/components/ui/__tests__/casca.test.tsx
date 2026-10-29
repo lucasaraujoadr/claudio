@@ -29,7 +29,7 @@ describe('navegação', () => {
   it('tem os grupos e itens pedidos, na ordem', () => {
     expect(NAVEGACAO.map((g) => g.titulo ?? '')).toEqual(['', 'SEO', 'Dados', 'CRM'])
     expect(NAVEGACAO.flatMap((g) => g.itens.map((i) => i.rotulo))).toEqual([
-      'Visão geral', 'Oportunidades', 'Temas', 'Briefings', 'Tendências', 'Auditoria', 'Tráfego', 'Contatos', 'Funis', 'Importar',
+      'Visão geral', 'Oportunidades', 'Temas', 'Briefings', 'Tendências', 'Auditoria', 'Tráfego', 'Contatos', 'Funis', 'Importar', 'Integração',
     ])
   })
 
@@ -47,7 +47,7 @@ describe('navegação', () => {
       expect(item.querySelector('[aria-disabled]')).toBeNull()
     }
     const hrefs = within(lateral).getAllByRole('link').map((a) => a.getAttribute('href'))
-    expect(hrefs).toEqual(['/', '/oportunidades', '/temas', '/briefings', '/tendencias', '/auditoria', '/trafego', '/crm/contatos', '/crm/importar'])
+    expect(hrefs).toEqual(['/', '/oportunidades', '/temas', '/briefings', '/tendencias', '/auditoria', '/trafego', '/crm/contatos', '/crm/importar', '/crm/integracao'])
   })
 
   it('o selo "em breve" tem pelo menos 11 px (acima de 10 px)', () => {

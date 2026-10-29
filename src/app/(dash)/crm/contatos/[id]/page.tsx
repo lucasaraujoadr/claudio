@@ -49,6 +49,7 @@ const ROTULO_EVENTO: Record<EventoContato['tipo'], string> = {
   descadastrou: 'Descadastrou-se',
   bounce: 'Bounce',
   spam: 'Marcou como spam',
+  formulario: 'Mensagem pelo site',
 }
 
 function rotuloOrigem(v: unknown): string | null {
@@ -82,6 +83,15 @@ function detalheEvento(e: EventoContato): string | null {
     return `${arquivo}${d.acao === 'criado' ? ' · contato novo' : ' · contato já existia (só campos vazios foram preenchidos)'}`
   }
   if (e.tipo === 'criado') return origem ? `Origem: ${origem}` : null
+  if (e.tipo === 'formulario') return typeof d.mensagem === 'string' ? d.mensagem : null
+  if (['enviado', 'aberto', 'clicado', 'descadastrou', 'bounce', 'spam'].includes(e.tipo)) {
+    const partes = [
+      typeof d.campanha === 'string' ? `Campanha: ${d.campanha}` : null,
+      typeof d.link === 'string' ? `Link: ${d.link}` : null,
+      typeof d.motivo === 'string' ? `Motivo: ${d.motivo}` : null,
+    ].filter(Boolean)
+    return partes.length > 0 ? `${partes.join(' · ')}${via}` : origem ? `Via ${origem.toLowerCase()}` : null
+  }
   return null
 }
 

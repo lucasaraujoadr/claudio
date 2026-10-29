@@ -264,6 +264,8 @@ export const eventoContatoTipo = pgEnum('evento_contato_tipo', [
   'descadastrou',
   'bounce',
   'spam',
+  /** Envio do formulário do site (E8); a mensagem fica só aqui, não num campo do contato. */
+  'formulario',
 ])
 
 /** Dado pessoal (LGPD): nunca vai para prompt de IA nem para log. */
@@ -324,6 +326,22 @@ export const importacoesContatos = pgTable('importacoes_contatos', {
   relatorio: jsonb('relatorio'),
   criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
   concluidoEm: timestamp('concluido_em', { withTimezone: true }),
+})
+
+// ---------------------------------------------------------------------------
+// Brevo (E8): eventos do webhook já processados, para que a repetição não grave nada.
+// ---------------------------------------------------------------------------
+
+/**
+ * Chave = sha256 de evento + email + id da mensagem/campanha + instante do evento. O mesmo
+ * evento entregue de novo pelo Brevo bate na chave primária e é ignorado.
+ */
+export const brevoEventosRecebidos = pgTable('brevo_eventos_recebidos', {
+  chave: text('chave').primaryKey(),
+  contatoId: integer('contato_id')
+    .notNull()
+    .references(() => contatos.id, { onDelete: 'cascade' }),
+  recebidoEm: timestamp('recebido_em', { withTimezone: true }).notNull().defaultNow(),
 })
 
 export type Contato = typeof contatos.$inferSelect
