@@ -148,6 +148,7 @@ export const auditIssues = pgTable('audit_issues', {
 })
 
 export type Topic = typeof topics.$inferSelect
+export type Briefing = typeof briefings.$inferSelect
 export type Cluster = typeof clusters.$inferSelect
 export type AuditPage = typeof auditPages.$inferSelect
 
