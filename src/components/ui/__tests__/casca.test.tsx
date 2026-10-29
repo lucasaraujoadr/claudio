@@ -36,7 +36,7 @@ describe('navegação', () => {
   it('telas que não existem são "em breve", não são links e são anunciadas como indisponíveis', () => {
     desenhar('/')
     const lateral = screen.getAllByRole('navigation', { name: 'Módulos' }).at(-1)!
-    for (const rotulo of ['Contatos', 'Funis', 'Importar']) {
+    for (const rotulo of ['Funis']) {
       expect(within(lateral).queryByRole('link', { name: new RegExp(rotulo) })).toBeNull()
       const item = within(lateral).getByText(rotulo).closest('[data-indisponivel]')!
       expect(item.textContent).toContain('em breve')
@@ -47,7 +47,7 @@ describe('navegação', () => {
       expect(item.querySelector('[aria-disabled]')).toBeNull()
     }
     const hrefs = within(lateral).getAllByRole('link').map((a) => a.getAttribute('href'))
-    expect(hrefs).toEqual(['/', '/oportunidades', '/temas', '/briefings', '/tendencias', '/auditoria', '/trafego'])
+    expect(hrefs).toEqual(['/', '/oportunidades', '/temas', '/briefings', '/tendencias', '/auditoria', '/trafego', '/crm/contatos', '/crm/importar'])
   })
 
   it('o selo "em breve" tem pelo menos 11 px (acima de 10 px)', () => {

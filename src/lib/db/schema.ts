@@ -1,6 +1,7 @@
 import {
   boolean,
   date,
+  index,
   integer,
   jsonb,
   pgEnum,
@@ -11,6 +12,7 @@ import {
   timestamp,
   unique,
   uniqueIndex,
+  varchar,
 } from 'drizzle-orm/pg-core'
 
 export const intencao = pgEnum('intencao', [
@@ -240,3 +242,90 @@ export const tesesSugeridas = pgTable(
 
 export type Tendencia = typeof tendencias.$inferSelect
 export type TeseSugerida = typeof tesesSugeridas.$inferSelect
+
+// ---------------------------------------------------------------------------
+// CRM (E7): contatos, linha do tempo e lotes de importação de planilha.
+// ---------------------------------------------------------------------------
+
+export const contatoOrigem = pgEnum('contato_origem', ['site', 'planilha', 'manual', 'brevo'])
+export const baseLegal = pgEnum('base_legal', ['consentimento', 'legitimo_interesse', 'contrato'])
+export const contatoStatus = pgEnum('contato_status', ['lead', 'cliente', 'inativo', 'descadastrado'])
+export const syncStatus = pgEnum('sync_status', ['pendente', 'sincronizado', 'erro'])
+export const eventoContatoTipo = pgEnum('evento_contato_tipo', [
+  'criado',
+  'atualizado',
+  'importado',
+  'mudou_status',
+  'entrou_funil',
+  'saiu_funil',
+  'enviado',
+  'aberto',
+  'clicado',
+  'descadastrou',
+  'bounce',
+  'spam',
+])
+
+/** Dado pessoal (LGPD): nunca vai para prompt de IA nem para log. */
+export const contatos = pgTable(
+  'contatos',
+  {
+    id: serial('id').primaryKey(),
+    /** Vazio quando a fonte não traz nome (ex.: contato vindo só com email). */
+    nome: text('nome').notNull().default(''),
+    /** Como foi informado (aparado); a identidade é `emailNormalizado`. */
+    email: text('email').notNull(),
+    emailNormalizado: text('email_normalizado').notNull(),
+    telefone: text('telefone'),
+    escritorio: text('escritorio'),
+    cidade: text('cidade'),
+    uf: varchar('uf', { length: 2 }),
+    origem: contatoOrigem('origem').notNull(),
+    baseLegal: baseLegal('base_legal').notNull(),
+    consentimentoEm: timestamp('consentimento_em', { withTimezone: true }),
+    status: contatoStatus('status').notNull().default('lead'),
+    tags: jsonb('tags').notNull().$type<string[]>().default([]),
+    notas: text('notas'),
+    brevoId: text('brevo_id'),
+    syncStatus: syncStatus('sync_status').notNull().default('pendente'),
+    syncErro: text('sync_erro'),
+    criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
+    atualizadoEm: timestamp('atualizado_em', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('contatos_email_normalizado_idx').on(t.emailNormalizado)],
+)
+
+export const eventosContato = pgTable(
+  'eventos_contato',
+  {
+    id: serial('id').primaryKey(),
+    contatoId: integer('contato_id')
+      .notNull()
+      .references(() => contatos.id, { onDelete: 'cascade' }),
+    tipo: eventoContatoTipo('tipo').notNull(),
+    dados: jsonb('dados').$type<Record<string, unknown>>(),
+    em: timestamp('em', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('eventos_contato_contato_em_idx').on(t.contatoId, t.em.desc())],
+)
+
+/**
+ * Planilha enviada, guardada no servidor entre a pré-visualização e a confirmação: a
+ * confirmação manda só o id do lote e o mapeamento, e as linhas são relidas daqui.
+ * `conteudo` é apagado ao concluir; o lote inteiro some depois de 24 horas.
+ */
+export const importacoesContatos = pgTable('importacoes_contatos', {
+  id: text('id').primaryKey(),
+  nomeArquivo: text('nome_arquivo').notNull(),
+  conteudo: text('conteudo'),
+  totalLinhas: integer('total_linhas').notNull(),
+  /** `pendente` → `processando` (reivindicado por uma confirmação) → `concluida`. */
+  status: text('status').notNull().default('pendente'),
+  relatorio: jsonb('relatorio'),
+  criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
+  concluidoEm: timestamp('concluido_em', { withTimezone: true }),
+})
+
+export type Contato = typeof contatos.$inferSelect
+export type EventoContato = typeof eventosContato.$inferSelect
+export type ImportacaoContatos = typeof importacoesContatos.$inferSelect

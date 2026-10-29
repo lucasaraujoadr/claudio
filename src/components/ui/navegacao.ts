@@ -29,7 +29,11 @@ export const NAVEGACAO: GrupoNavegacao[] = [
   { titulo: 'Dados', itens: [{ rotulo: 'Tráfego', href: '/trafego' }] },
   {
     titulo: 'CRM',
-    itens: [{ rotulo: 'Contatos' }, { rotulo: 'Funis' }, { rotulo: 'Importar' }],
+    itens: [
+      { rotulo: 'Contatos', href: '/crm/contatos' },
+      { rotulo: 'Funis' },
+      { rotulo: 'Importar', href: '/crm/importar' },
+    ],
   },
 ]
 
