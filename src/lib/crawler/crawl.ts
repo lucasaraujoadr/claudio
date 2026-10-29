@@ -16,7 +16,15 @@ export type OpcoesRastreio = {
   fetchImpl?: typeof fetch
   /** Pausa entre requisições. Padrão 1000 ms; os testes passam 0. */
   intervaloMs?: number
+  /** Orçamento de tempo em ms; passado dele, para de enfileirar e termina com o que tem. Padrão 240 s. */
+  prazoMs?: number
+  /** Relógio injetável (testes). */
+  agora?: () => number
 }
+
+const PRAZO_PADRAO_MS = 240_000
+/** Sempre aplicado, mesmo que o robots.txt falhe ou não possa ser lido. */
+const DISALLOW_FIXO = ['/wp-admin/']
 
 type Regra = { prefixo: RegExp }
 
@@ -58,14 +66,18 @@ function extrairLocs(xml: string): string[] {
   return [...xml.matchAll(/<loc>\s*([^<\s][^<]*?)\s*<\/loc>/gi)].map((m) => m[1])
 }
 
-export async function rastrear(opts: OpcoesRastreio): Promise<{ paginas: SinaisPagina[]; ctx: ContextoAuditoria }> {
+export async function rastrear(opts: OpcoesRastreio): Promise<{ paginas: SinaisPagina[]; ctx: ContextoAuditoria; truncado: boolean }> {
   const fetchImpl = opts.fetchImpl ?? fetch
   const limite = opts.maxPaginas ?? LIMITE_PADRAO
   const intervalo = opts.intervaloMs ?? INTERVALO_PADRAO_MS
+  const prazo = opts.prazoMs ?? PRAZO_PADRAO_MS
+  const agora = opts.agora ?? Date.now
+  const comecou = agora()
 
   const inicio = normalizarUrl(opts.siteUrl, opts.siteUrl)
   if (!inicio) throw new Error(`URL inicial inválida: ${opts.siteUrl}`)
-  const origem = new URL(inicio).origin
+  const raiz: string = inicio
+  const origem = new URL(raiz).origin
 
   // --- Requisição com intervalo, User-Agent e timeout ----------------------
   let ultimaRequisicao = 0
@@ -92,31 +104,44 @@ export async function rastrear(opts: OpcoesRastreio): Promise<{ paginas: SinaisP
     }
   }
 
-  async function buscarTexto(url: string): Promise<string | null> {
-    const r = await buscar(url)
-    if (!r || r.status !== 200) return null
-    try {
-      return await r.corpo()
-    } catch {
-      return null
-    }
-  }
-
-  // --- robots.txt e sitemap --------------------------------------------------
-  const robotsTexto = (await buscarTexto(`${origem}/robots.txt`)) ?? ''
-  const robots = lerRobots(robotsTexto)
+  const regras: Regra[] = DISALLOW_FIXO.map((d) => ({ prefixo: new RegExp(`^${d}`) }))
   const bloqueada = (url: string): boolean => {
     const u = new URL(url)
     const caminho = u.pathname + u.search
-    return robots.disallow.some((r) => r.prefixo.test(caminho))
+    return regras.some((r) => r.prefixo.test(caminho))
   }
+
+  /** GET de texto que só toca URLs da mesma origem e liberadas, seguindo redirecionamentos internos. */
+  async function buscarTexto(bruta: string): Promise<string | null> {
+    let url: string | null = normalizarUrl(bruta, raiz)
+    for (let salto = 0; salto <= MAX_REDIRECIONAMENTOS && url; salto++) {
+      if (bloqueada(url)) return null
+      const r = await buscar(url)
+      if (!r) return null
+      if (r.status >= 300 && r.status < 400 && r.location) {
+        url = normalizarUrl(r.location, url)
+        continue
+      }
+      if (r.status !== 200) return null
+      try {
+        return await r.corpo()
+      } catch {
+        return null
+      }
+    }
+    return null
+  }
+
+  // --- robots.txt e sitemap --------------------------------------------------
+  const robots = lerRobots((await buscarTexto(`${origem}/robots.txt`)) ?? '')
+  regras.push(...robots.disallow)
 
   const candidatosSitemap = robots.sitemaps.length > 0 ? robots.sitemaps : [`${origem}/sitemap.xml`]
   const urlsSitemap: string[] = []
   const jaNoSitemap = new Set<string>()
   const adicionarLocs = (locs: string[]) => {
     for (const loc of locs) {
-      const n = normalizarUrl(loc, inicio)
+      const n = normalizarUrl(loc, raiz)
       if (n && !jaNoSitemap.has(n)) {
         jaNoSitemap.add(n)
         urlsSitemap.push(n)
@@ -152,8 +177,13 @@ export async function rastrear(opts: OpcoesRastreio): Promise<{ paginas: SinaisP
   let urlInicial = inicio
   let urlsMenu: string[] = []
   let processadas = 0
+  let truncado = false
 
   while (fila.length > 0 && processadas < limite) {
+    if (agora() - comecou >= prazo) {
+      truncado = true
+      break
+    }
     const origemFila = fila.shift() as string
     processadas++
 
@@ -215,6 +245,7 @@ export async function rastrear(opts: OpcoesRastreio): Promise<{ paginas: SinaisP
 
   return {
     paginas,
+    truncado,
     ctx: {
       urlInicial,
       sitemapResolvido: urlsSitemap.length > 0,

@@ -259,4 +259,114 @@ describe('rastrear', () => {
       expect(instantes[i] - instantes[i - 1]).toBeGreaterThanOrEqual(35)
     }
   })
+
+  it('não busca sitemap de outra origem nem filho de índice de outra origem ou em /wp-admin/', async () => {
+    const f = fakeFetch({
+      [`${SITE}/robots.txt`]: {
+        tipo: 'text/plain',
+        corpo: ROBOTS(`Sitemap: https://externo.com/sitemap.xml\nSitemap: ${SITE}/indice.xml\nSitemap: ${SITE}/wp-admin/sitemap.xml`),
+      },
+      [`${SITE}/indice.xml`]: {
+        tipo: 'application/xml',
+        corpo: `<sitemapindex><sitemap><loc>https://externo.com/filho.xml</loc></sitemap><sitemap><loc>${SITE}/wp-admin/filho.xml</loc></sitemap><sitemap><loc>${SITE}/filho.xml</loc></sitemap></sitemapindex>`,
+      },
+      [`${SITE}/filho.xml`]: { tipo: 'application/xml', corpo: sitemap(`${SITE}/`, `${SITE}/so-no-sitemap`) },
+      [`${SITE}/so-no-sitemap/`]: pagina('Só sitemap'),
+      [`${SITE}/`]: pagina('Home'),
+    })
+    const { ctx } = await rastrear(opts(f))
+    expect(f.urls().some((u) => u.includes('externo.com'))).toBe(false)
+    expect(f.urls().some((u) => u.includes('/wp-admin/'))).toBe(false)
+    expect(ctx.sitemapResolvido).toBe(true)
+    expect(ctx.urlsSitemap).toContain(`${SITE}/so-no-sitemap/`)
+  })
+
+  it('segue redirecionamento interno ao buscar o sitemap', async () => {
+    const f = fakeFetch({
+      [`${SITE}/robots.txt`]: { tipo: 'text/plain', corpo: ROBOTS(`Sitemap: ${SITE}/sitemap.xml`) },
+      [`${SITE}/sitemap.xml`]: { status: 301, location: '/novo-sitemap.xml' },
+      [`${SITE}/novo-sitemap.xml`]: { tipo: 'application/xml', corpo: sitemap(`${SITE}/`) },
+      [`${SITE}/`]: pagina('Home'),
+    })
+    const { ctx } = await rastrear(opts(f))
+    expect(ctx.sitemapResolvido).toBe(true)
+  })
+
+  it('não segue redirecionamento de sitemap para outra origem', async () => {
+    const f = fakeFetch({
+      [`${SITE}/robots.txt`]: { tipo: 'text/plain', corpo: ROBOTS(`Sitemap: ${SITE}/sitemap.xml`) },
+      [`${SITE}/sitemap.xml`]: { status: 301, location: 'https://externo.com/sitemap.xml' },
+      [`${SITE}/`]: pagina('Home'),
+    })
+    const { ctx } = await rastrear(opts(f))
+    expect(ctx.sitemapResolvido).toBe(false)
+    expect(f.urls().some((u) => u.includes('externo.com'))).toBe(false)
+  })
+
+  it('robots.txt com erro 500 não desliga o bloqueio de /wp-admin/', async () => {
+    const f = fakeFetch({
+      [`${SITE}/robots.txt`]: { status: 500, tipo: 'text/plain', corpo: 'erro' },
+      [`${SITE}/`]: pagina('Home', ['/wp-admin/', '/wp-admin/options.php', '/ok/']),
+      [`${SITE}/ok/`]: pagina('Ok'),
+    })
+    const { paginas } = await rastrear(opts(f))
+    expect(f.urls().some((u) => u.includes('/wp-admin/'))).toBe(false)
+    expect(paginas.map((p) => p.url)).toContain(`${SITE}/ok/`)
+  })
+
+  it('segue redirecionamento interno ao buscar o robots.txt e aplica as regras do destino', async () => {
+    const f = fakeFetch({
+      [`${SITE}/robots.txt`]: { status: 301, location: '/regras.txt' },
+      [`${SITE}/regras.txt`]: { tipo: 'text/plain', corpo: 'User-agent: *\nDisallow: /privado/\n' },
+      [`${SITE}/`]: pagina('Home', ['/privado/', '/ok/']),
+      [`${SITE}/ok/`]: pagina('Ok'),
+    })
+    await rastrear(opts(f))
+    expect(f.urls().some((u) => u.includes('/privado/'))).toBe(false)
+  })
+
+  it('redirecionamento para outra origem não é seguido', async () => {
+    const f = fakeFetch({
+      [`${SITE}/`]: pagina('Home', ['/sai/']),
+      [`${SITE}/sai/`]: { status: 302, location: 'https://externo.com/pagina/' },
+    })
+    const { paginas, ctx } = await rastrear(opts(f))
+    expect(f.urls().some((u) => u.includes('externo.com'))).toBe(false)
+    expect(ctx.statusPorUrl[`${SITE}/sai/`]).toBe(302)
+    expect(paginas.map((p) => p.url)).toEqual([`${SITE}/`])
+  })
+
+  it('redirecionamento para /wp-admin/ não é seguido', async () => {
+    const f = fakeFetch({
+      [`${SITE}/`]: pagina('Home', ['/entrar/']),
+      [`${SITE}/entrar/`]: { status: 302, location: '/wp-admin/' },
+    })
+    const { ctx } = await rastrear(opts(f))
+    expect(f.urls().some((u) => u.includes('/wp-admin/'))).toBe(false)
+    expect(ctx.statusPorUrl[`${SITE}/entrar/`]).toBe(302)
+  })
+
+  it('passado o prazo, para, devolve o que coletou e se declara truncado', async () => {
+    const relogio = { t: 0 }
+    const base = fakeFetch({
+      [`${SITE}/`]: pagina('Home', ['/a/', '/b/']),
+      [`${SITE}/a/`]: pagina('A'),
+      [`${SITE}/b/`]: pagina('B'),
+    })
+    const impl = (async (e: RequestInfo | URL, i?: RequestInit) => {
+      relogio.t += 100_000
+      return base.impl(e, i)
+    }) as typeof fetch
+    const r = await rastrear({ siteUrl: SITE, fetchImpl: impl, intervaloMs: 0, prazoMs: 240_000, agora: () => relogio.t })
+    expect(r.truncado).toBe(true)
+    expect(r.paginas.map((p) => p.url)).toEqual([`${SITE}/`])
+    expect(base.urls()).not.toContain(`${SITE}/a/`)
+  })
+
+  it('dentro do prazo não é truncado', async () => {
+    const f = fakeFetch({ [`${SITE}/`]: pagina('Home', ['/a/']), [`${SITE}/a/`]: pagina('A') })
+    const r = await rastrear(opts(f))
+    expect(r.truncado).toBe(false)
+    expect(r.paginas).toHaveLength(2)
+  })
 })

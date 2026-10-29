@@ -48,6 +48,7 @@ export default async function AuditoriaPage() {
     : []
 
   const rodando = ultimaRun?.status === 'rodando'
+  const interrompido = problemas.find((p) => p.regra === 'rastreamento-interrompido')
   const ultimaFalhou = ultimaRun?.status === 'falhou'
 
   return (
@@ -73,6 +74,11 @@ export default async function AuditoriaPage() {
         <p role="status" className="rounded border border-blue-300 bg-blue-50 p-3 text-sm text-blue-900">
           Há um rastreamento em andamento desde {formatoData.format(ultimaRun.iniciadoEm)}. Atualize a
           página em alguns minutos.
+        </p>
+      )}
+      {interrompido && (
+        <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          {interrompido.mensagem}.
         </p>
       )}
       {ultimaFalhou && (

@@ -3,10 +3,11 @@ import { eq, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db'
 import { auditIssues, auditPages, auditRuns } from '@/lib/db/schema'
 import { rastrear } from '@/lib/crawler/crawl'
-import { avaliar } from '@/lib/crawler/rules'
+import { avaliar, type Problema } from '@/lib/crawler/rules'
 
 export const maxDuration = 300
 
+const REGRA_INTERROMPIDO = 'rastreamento-interrompido'
 const SITE = 'https://ogpericiacontabil.com.br'
 const MINUTOS_ATE_CONSIDERAR_MORTA = 15
 
@@ -32,8 +33,16 @@ export async function POST() {
   }
 
   try {
-    const { paginas, ctx } = await rastrear({ siteUrl: SITE })
-    const problemas = avaliar(paginas, ctx)
+    const { paginas, ctx, truncado } = await rastrear({ siteUrl: SITE })
+    const problemas: Problema[] = avaliar(paginas, ctx)
+    if (truncado) {
+      problemas.push({
+        url: null,
+        severidade: 'aviso',
+        regra: REGRA_INTERROMPIDO,
+        mensagem: `Rastreamento interrompido por tempo após ${paginas.length} páginas; a auditoria está incompleta`,
+      })
+    }
 
     const entrantes = new Map<string, number>()
     for (const p of paginas) {
@@ -91,10 +100,15 @@ export async function POST() {
   } catch (erro) {
     console.error('Falha no rastreamento', erro)
     // Fora da transação revertida, para o status sobreviver; a run anterior segue intacta.
-    await db
-      .update(auditRuns)
-      .set({ status: 'falhou', finalizadoEm: sql`now()` })
-      .where(eq(auditRuns.id, runId))
+    try {
+      await db
+        .update(auditRuns)
+        .set({ status: 'falhou', finalizadoEm: sql`now()` })
+        .where(eq(auditRuns.id, runId))
+    } catch (erroStatus) {
+      // A run fica em `rodando` até a regra de 15 minutos tratá-la como morta.
+      console.error('Não foi possível registrar a falha da run', erroStatus)
+    }
     return NextResponse.json({ erro: 'O rastreamento falhou. Tente novamente.' }, { status: 500 })
   }
 }
