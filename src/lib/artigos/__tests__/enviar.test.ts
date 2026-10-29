@@ -1,0 +1,252 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { eq } from 'drizzle-orm'
+import { artigos, topics } from '@/lib/db/schema'
+import type { BancoCrm } from '@/lib/crm/banco'
+import { ErroWp, type DadosPost, type PostWp, type criarClienteWp } from '@/lib/wordpress'
+import { criarBancoTesteArtigos } from './banco-teste-artigos'
+import { obterArtigo } from '../repositorio'
+import { enviarArtigo, sincronizarAgendados } from '../enviar'
+
+type Cliente = ReturnType<typeof criarClienteWp>
+
+let db: BancoCrm
+let fechar: () => Promise<void>
+const AGORA = new Date('2026-10-29T12:00:00Z')
+const KW = 'perícia contábil'
+
+beforeAll(async () => {
+  ;({ db, fechar } = await criarBancoTesteArtigos())
+})
+afterAll(async () => {
+  await fechar()
+})
+beforeEach(async () => {
+  await db.delete(artigos)
+  await db.delete(topics)
+})
+
+async function criarArtigo(extra: Partial<typeof artigos.$inferInsert> = {}) {
+  const [t] = await db
+    .insert(topics)
+    .values({ titulo: 'T', keyword: KW, keywordNormalizada: 'pericia contabil', intencao: 'informacional', prioridade: 'media', origem: 'ia' })
+    .returning()
+  const [a] = await db
+    .insert(artigos)
+    .values({
+      topicId: t.id,
+      situacao: 'pronto',
+      titulo: 'Perícia contábil: guia',
+      slug: 'pericia-contabil-guia',
+      metaDescription: 'Resumo do artigo.',
+      conteudoHtml: '<p>Texto sobre perícia contábil.</p><p>Outro <strong>parágrafo</strong>.</p>',
+      revisado: true,
+      ...extra,
+    })
+    .returning()
+  return a
+}
+
+function fake(over: Partial<Cliente> = {}) {
+  const chamadas: { criar: DadosPost[]; atualizar: { id: number; d: DadosPost }[] } = { criar: [], atualizar: [] }
+  const post = (id: number, d: DadosPost): PostWp => ({
+    id,
+    status: d.status,
+    link: `https://site.test/${d.slug}/`,
+    modificadoGmt: '2026-10-29T12:00:00',
+    metaGravada: true,
+  })
+  const cliente = {
+    listarCategorias: async () => [],
+    enviarImagem: async () => ({ id: 1, url: 'x' }),
+    criarPost: async (d: DadosPost) => {
+      chamadas.criar.push(d)
+      return post(500, d)
+    },
+    atualizarPost: async (id: number, d: DadosPost) => {
+      chamadas.atualizar.push({ id, d })
+      return post(id, d)
+    },
+    lerPost: async () => null,
+    slugEmUso: async () => null,
+    ...over,
+  } as Cliente
+  return { cliente, chamadas }
+}
+
+const opts = (cliente: Cliente, extra = {}) => ({ cliente, db, agora: AGORA, keyword: KW, ...extra })
+
+describe('enviarArtigo', () => {
+  it('rascunho cria post draft e grava wpPostId/link', async () => {
+    const a = await criarArtigo({ revisado: false, situacao: 'rascunho' })
+    const { cliente, chamadas } = fake()
+    const r = await enviarArtigo(a.id, 'rascunho', opts(cliente))
+    expect(r).toEqual({ tipo: 'ok', link: 'https://site.test/pericia-contabil-guia/', metaGravada: true })
+    expect(chamadas.criar[0].status).toBe('draft')
+    const s = await obterArtigo(a.id, db)
+    expect(s?.wpPostId).toBe(500)
+    expect(s?.wpLink).toBe('https://site.test/pericia-contabil-guia/')
+    expect(s?.situacao).toBe('rascunho')
+  })
+
+  it('publicar sem revisado -> bloqueado com item revisado', async () => {
+    const a = await criarArtigo({ revisado: false, situacao: 'rascunho' })
+    const { cliente } = fake()
+    const r = await enviarArtigo(a.id, 'publicar', opts(cliente))
+    expect(r.tipo).toBe('bloqueado')
+    if (r.tipo === 'bloqueado') expect(r.itens.some((i) => i.id === 'revisado' && i.nivel === 'bloqueia')).toBe(true)
+  })
+
+  it('publicar com mark verificar -> bloqueado', async () => {
+    const a = await criarArtigo({ conteudoHtml: '<p>Lei <mark data-verificar>123</mark></p>' })
+    const { cliente, chamadas } = fake()
+    const r = await enviarArtigo(a.id, 'publicar', opts(cliente))
+    expect(r.tipo).toBe('bloqueado')
+    if (r.tipo === 'bloqueado') expect(r.itens.some((i) => i.id === 'verificar' && i.nivel === 'bloqueia')).toBe(true)
+    expect(chamadas.criar).toHaveLength(0)
+  })
+
+  it('publicar ok atualiza tema para publicado', async () => {
+    const a = await criarArtigo()
+    const { cliente } = fake()
+    const r = await enviarArtigo(a.id, 'publicar', opts(cliente))
+    expect(r.tipo).toBe('ok')
+    expect((await obterArtigo(a.id, db))?.situacao).toBe('publicado')
+    const [t] = await db.select().from(topics).where(eq(topics.id, a.topicId))
+    expect(t.status).toBe('publicado')
+    expect(t.urlPublicada).toBe('https://site.test/pericia-contabil-guia/')
+  })
+
+  it('conteúdo enviado não contém <mark nem data-verificar e contém <!-- wp:paragraph -->', async () => {
+    const a = await criarArtigo({ revisado: false, situacao: 'rascunho', conteudoHtml: '<p>Lei <mark data-verificar>123</mark> vale.</p>' })
+    const { cliente, chamadas } = fake()
+    const r = await enviarArtigo(a.id, 'rascunho', opts(cliente))
+    expect(r.tipo).toBe('ok')
+    const c = chamadas.criar[0].conteudo
+    expect(c).not.toContain('<mark')
+    expect(c).not.toContain('data-verificar')
+    expect(c).toContain('<!-- wp:paragraph -->')
+    expect(c).toContain('123')
+    expect(chamadas.criar[0].resumo).toBe('Resumo do artigo.')
+  })
+
+  describe('post já vinculado', () => {
+    const vinculado = { wpPostId: 77, wpStatus: 'draft', wpLink: 'https://site.test/x/', wpModificadoGmt: '2026-10-29T10:00:00' }
+
+    it('editado no WP (modified diferente) -> conflito; com sobrescrever -> ok', async () => {
+      const a = await criarArtigo(vinculado)
+      const { cliente, chamadas } = fake({
+        lerPost: async () => ({ id: 77, status: 'draft', link: 'https://site.test/x/', modificadoGmt: '2026-10-29T11:00:00', metaGravada: true }),
+      })
+      expect(await enviarArtigo(a.id, 'rascunho', opts(cliente))).toEqual({ tipo: 'conflito' })
+      expect(chamadas.atualizar).toHaveLength(0)
+      const r = await enviarArtigo(a.id, 'rascunho', opts(cliente, { sobrescrever: true }))
+      expect(r.tipo).toBe('ok')
+      expect(chamadas.atualizar[0].id).toBe(77)
+    })
+
+    it('sem alteração no WP -> atualiza o mesmo post', async () => {
+      const a = await criarArtigo(vinculado)
+      const { cliente, chamadas } = fake({
+        lerPost: async () => ({ id: 77, status: 'draft', link: 'https://site.test/x/', modificadoGmt: '2026-10-29T10:00:00', metaGravada: true }),
+      })
+      expect((await enviarArtigo(a.id, 'publicar', opts(cliente))).tipo).toBe('ok')
+      expect(chamadas.atualizar[0].id).toBe(77)
+      expect((await obterArtigo(a.id, db))?.wpPostId).toBe(77)
+    })
+
+    it('post apagado no WP (lerPost null) -> cria novo e troca wpPostId', async () => {
+      const a = await criarArtigo(vinculado)
+      const { cliente, chamadas } = fake({ lerPost: async () => null })
+      const r = await enviarArtigo(a.id, 'rascunho', opts(cliente))
+      expect(r.tipo).toBe('ok')
+      expect(chamadas.criar).toHaveLength(1)
+      expect((await obterArtigo(a.id, db))?.wpPostId).toBe(500)
+    })
+  })
+
+  it('slug em uso por outro post -> bloqueado com o link', async () => {
+    const a = await criarArtigo()
+    const { cliente, chamadas } = fake({ slugEmUso: async () => 'https://site.test/outro/' })
+    const r = await enviarArtigo(a.id, 'publicar', opts(cliente))
+    expect(r.tipo).toBe('bloqueado')
+    if (r.tipo === 'bloqueado') {
+      const s = r.itens.find((i) => i.id === 'slug')
+      expect(s?.nivel).toBe('bloqueia')
+      expect(s?.texto).toContain('https://site.test/outro/')
+    }
+    expect(chamadas.criar).toHaveLength(0)
+  })
+
+  it('rascunho com título vazio -> bloqueado', async () => {
+    const a = await criarArtigo({ titulo: '' })
+    const { cliente } = fake()
+    expect((await enviarArtigo(a.id, 'rascunho', opts(cliente))).tipo).toBe('bloqueado')
+  })
+
+  it('ErroWp credencial -> erro com a mensagem fixa e artigo.erro gravado, wpPostId inalterado', async () => {
+    const a = await criarArtigo()
+    const { cliente } = fake({
+      criarPost: async () => {
+        throw new ErroWp('credencial')
+      },
+    })
+    const r = await enviarArtigo(a.id, 'rascunho', opts(cliente))
+    expect(r).toEqual({ tipo: 'erro', mensagem: 'senha de aplicativo inválida ou usuário sem permissão de Editor' })
+    const s = await obterArtigo(a.id, db)
+    expect(s?.erro).toBe('senha de aplicativo inválida ou usuário sem permissão de Editor')
+    expect(s?.wpPostId).toBeNull()
+  })
+
+  it('agendar com data passada -> bloqueado', async () => {
+    const a = await criarArtigo({ agendadoPara: new Date(AGORA.getTime() + 2 * 60_000) })
+    const { cliente, chamadas } = fake()
+    const r = await enviarArtigo(a.id, 'agendar', opts(cliente))
+    expect(r.tipo).toBe('bloqueado')
+    if (r.tipo === 'bloqueado') expect(r.itens.some((i) => i.id === 'agendamento' && i.texto.includes('data futura'))).toBe(true)
+    expect(chamadas.criar).toHaveLength(0)
+  })
+
+  it('agendar ok -> agendado e dataGmt sem Z', async () => {
+    const a = await criarArtigo({ agendadoPara: new Date('2026-11-05T13:30:00Z') })
+    const { cliente, chamadas } = fake()
+    const r = await enviarArtigo(a.id, 'agendar', opts(cliente))
+    expect(r.tipo).toBe('ok')
+    expect(chamadas.criar[0].status).toBe('future')
+    expect(chamadas.criar[0].dataGmt).toBe('2026-11-05T13:30:00')
+    expect((await obterArtigo(a.id, db))?.situacao).toBe('agendado')
+  })
+})
+
+describe('sincronizarAgendados', () => {
+  it('publica o que o WP publicou e desvincula o apagado', async () => {
+    const a = await criarArtigo({ situacao: 'agendado', wpPostId: 10, wpStatus: 'future', wpLink: 'https://site.test/a/', wpModificadoGmt: '2026-10-29T10:00:00' })
+    const { cliente } = fake({
+      lerPost: async () => ({ id: 10, status: 'publish', link: 'https://site.test/a/', modificadoGmt: '2026-11-05T13:30:00', metaGravada: true }),
+    })
+    expect(await sincronizarAgendados(cliente, db)).toBe(1)
+    const s = await obterArtigo(a.id, db)
+    expect(s?.situacao).toBe('publicado')
+    expect(s?.wpStatus).toBe('publish')
+
+    const b = await db.insert(topics).values({ titulo: 'U', keyword: 'u', keywordNormalizada: 'u', intencao: 'informacional', prioridade: 'media', origem: 'ia' }).returning()
+    const [c] = await db.insert(artigos).values({ topicId: b[0].id, situacao: 'agendado', wpPostId: 11, wpStatus: 'future', revisado: true }).returning()
+    const { cliente: c2 } = fake({ lerPost: async () => null })
+    expect(await sincronizarAgendados(c2, db)).toBe(0)
+    expect((await obterArtigo(c.id, db))?.wpPostId).toBeNull()
+  })
+
+  it('ainda agendado no WP não muda; erro em um não derruba o resto', async () => {
+    const a = await criarArtigo({ situacao: 'agendado', wpPostId: 10, wpStatus: 'future' })
+    const { cliente } = fake({
+      lerPost: async () => ({ id: 10, status: 'future', link: 'l', modificadoGmt: 'm', metaGravada: true }),
+    })
+    expect(await sincronizarAgendados(cliente, db)).toBe(0)
+    expect((await obterArtigo(a.id, db))?.situacao).toBe('agendado')
+    const { cliente: ruim } = fake({
+      lerPost: async () => {
+        throw new ErroWp('rede')
+      },
+    })
+    expect(await sincronizarAgendados(ruim, db)).toBe(0)
+  })
+})

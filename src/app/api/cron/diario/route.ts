@@ -1,9 +1,11 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { executarCronDiario, registrarSincronizacao, type ExecutorFonte } from '@/lib/cron-diario'
+import { sincronizarAgendados } from '@/lib/artigos/enviar'
 import { executarEtapaFunis } from '@/lib/crm/funis-cron'
 import { buscarGa4, executarGa4, transacaoGa4 } from '@/lib/ga4'
 import { buscarSearchAnalytics, executarCronGsc, transacaoGsc } from '@/lib/gsc'
+import { configWp, criarClienteWp } from '@/lib/wordpress'
 
 export const runtime = 'nodejs'
 // Search Console (2 janelas paginadas) + GA4 (série de 90 dias e até 1 000 páginas) + funis do CRM.
@@ -55,6 +57,12 @@ export async function GET(request: Request) {
     return { linhas: r.linhas, detalhes: r.detalhes, mensagem: r.mensagem }
   }
 
-  const relatorio = await executarCronDiario({ hoje, gsc, ga4, funis, registrar: registrarSincronizacao })
+  // Artigos agendados no WordPress: só roda com as credenciais do WP; só lê, nunca escreve no site.
+  const cfgWp = configWp()
+  const artigos: ExecutorFonte | null = cfgWp
+    ? async () => ({ linhas: await sincronizarAgendados(criarClienteWp(cfgWp)) })
+    : null
+
+  const relatorio = await executarCronDiario({ hoje, gsc, ga4, funis, artigos, registrar: registrarSincronizacao })
   return NextResponse.json(relatorio)
 }

@@ -2,7 +2,7 @@ import { getDb } from '@/lib/db'
 import { sincronizacoes } from '@/lib/db/schema'
 
 export type StatusFonte = 'ok' | 'nao_configurado' | 'sem_permissao' | 'erro'
-export type FonteDiaria = 'gsc' | 'ga4' | 'funis'
+export type FonteDiaria = 'gsc' | 'ga4' | 'funis' | 'artigos'
 
 export type RelatorioFonte = {
   status: StatusFonte
@@ -13,7 +13,7 @@ export type RelatorioFonte = {
   erro?: string
   mensagem?: string
 }
-export type RelatorioDiario = Record<'gsc' | 'ga4', RelatorioFonte> & { funis?: RelatorioFonte }
+export type RelatorioDiario = Record<'gsc' | 'ga4', RelatorioFonte> & { funis?: RelatorioFonte; artigos?: RelatorioFonte }
 
 /** Uma fonte pronta para rodar; `null` = não configurada. `mensagem` não pode ter dado pessoal. */
 export type ExecutorFonte = () => Promise<{ linhas: number; detalhes?: Record<string, number | string>; mensagem?: string }>
@@ -81,12 +81,15 @@ export async function executarCronDiario(d: {
   ga4: ExecutorFonte | null
   /** Etapa dos funis do CRM (E9); ausente = não roda (testes antigos). */
   funis?: ExecutorFonte | null
+  /** Sincronização dos artigos agendados no WordPress; ausente = não roda. */
+  artigos?: ExecutorFonte | null
   registrar: (r: RegistroSincronizacao) => Promise<void>
 }): Promise<RelatorioDiario> {
   const fontes: [FonteDiaria, ExecutorFonte | null][] = [
     ['gsc', d.gsc],
     ['ga4', d.ga4],
     ...(d.funis !== undefined ? [['funis', d.funis] as [FonteDiaria, ExecutorFonte | null]] : []),
+    ...(d.artigos !== undefined ? [['artigos', d.artigos] as [FonteDiaria, ExecutorFonte | null]] : []),
   ]
   // Em paralelo: uma chamada do Google pendurada numa fonte não atrasa a outra.
   const resultados = await Promise.all(
