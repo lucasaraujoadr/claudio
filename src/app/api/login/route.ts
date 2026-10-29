@@ -2,8 +2,12 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { COOKIE_SESSAO, DURACAO_SESSAO_MS, criarTokenSessao, isCorrectPassword } from '@/lib/auth'
 
 export async function POST(request: NextRequest) {
-  const form = await request.formData()
-  const senha = form.get('senha')
+  let senha: FormDataEntryValue | null = null
+  try {
+    senha = (await request.formData()).get('senha')
+  } catch {
+    // Corpo que não é formulário: mesma resposta de uma senha errada.
+  }
 
   if (typeof senha !== 'string' || !isCorrectPassword(senha)) {
     return NextResponse.redirect(new URL('/login?erro=1', request.url), 303)
