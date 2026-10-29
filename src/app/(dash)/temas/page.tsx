@@ -17,6 +17,12 @@ const AVISOS: Record<string, Record<string, Aviso>> = {
     'sem-chave': { texto: 'OPENAI_API_KEY não configurada. Defina a chave nas variáveis de ambiente para pesquisar temas.', classe: VERMELHO, role: 'alert' },
     erro: { texto: 'Não foi possível pesquisar temas. Nada foi gravado; tente novamente.', classe: VERMELHO, role: 'alert' },
   },
+  briefing: {
+    'sem-chave': { texto: 'OPENAI_API_KEY não configurada. Defina a chave nas variáveis de ambiente para gerar briefings.', classe: VERMELHO, role: 'alert' },
+    'ja-briefado': { texto: 'Este tema já tinha briefing. Nada novo foi gravado.', classe: AZUL, role: 'status' },
+    'nao-escolhido': { texto: 'Só temas escolhidos podem receber briefing.', classe: VERMELHO, role: 'alert' },
+    erro: { texto: 'Não foi possível gerar o briefing. Nada foi gravado; tente novamente.', classe: VERMELHO, role: 'alert' },
+  },
   status: {
     escolhido: { texto: 'Tema marcado como escolhido.', classe: VERDE, role: 'status' },
     publicado: { texto: 'Tema marcado como publicado.', classe: VERDE, role: 'status' },
@@ -49,8 +55,21 @@ function Acao({ t }: { t: Topic }) {
       </form>
     )
   }
+  if (t.status === 'escolhido') {
+    return (
+      <form method="POST" action="/api/briefings/gerar" className="text-right">
+        <input type="hidden" name="id" value={t.id} />
+        <button type="submit" className="rounded border border-gray-400 px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800">
+          Gerar briefing
+        </button>
+        <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">Leva alguns segundos.</p>
+      </form>
+    )
+  }
   if (t.status === 'briefado') {
     return (
+      <div className="space-y-2">
+        <a href={`/briefings?tema=${t.id}`} className="text-blue-700 underline">Ver briefing</a>
       <form method="POST" action="/api/temas/status" className="flex flex-wrap items-center gap-2">
         <input type="hidden" name="id" value={t.id} />
         <input type="hidden" name="para" value="publicado" />
@@ -68,6 +87,7 @@ function Acao({ t }: { t: Topic }) {
           Marcar como publicado
         </button>
       </form>
+      </div>
     )
   }
   if (t.status === 'publicado' && t.urlPublicada) {
@@ -111,7 +131,9 @@ export default async function TemasPage({
       ? AVISOS.pesquisa[sp.pesquisa]
       : typeof sp.status === 'string'
         ? AVISOS.status[sp.status]
-        : undefined
+        : typeof sp.briefing === 'string'
+          ? AVISOS.briefing[sp.briefing]
+          : undefined
   const filtro = ehStatus(sp.filtro) ? sp.filtro : undefined
 
   const db = getDb()

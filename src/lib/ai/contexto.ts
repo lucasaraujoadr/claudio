@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db'
 import { auditIssues, auditPages, auditRuns, gscSnapshots, topics } from '@/lib/db/schema'
 import { SERVICOS, type ContextoTemas } from './temas'
@@ -49,4 +49,25 @@ export async function carregarContexto(): Promise<ContextoTemas> {
     temasExistentes: existentes.map((t) => t.keyword),
     lacunasAuditoria: lacunas.map((l) => l.url),
   }
+}
+
+const MAX_URLS_SITE = 80
+
+// URLs 2xx da última auditoria concluída: as únicas permitidas como link interno em um briefing.
+export async function carregarUrlsDoSite(): Promise<string[]> {
+  const db = getDb()
+  const [rodada] = await db
+    .select({ id: auditRuns.id })
+    .from(auditRuns)
+    .where(eq(auditRuns.status, 'concluido'))
+    .orderBy(desc(auditRuns.id))
+    .limit(1)
+  if (!rodada) return []
+  const paginas = await db
+    .select({ url: auditPages.url })
+    .from(auditPages)
+    .where(and(eq(auditPages.runId, rodada.id), gte(auditPages.statusCode, 200), lt(auditPages.statusCode, 300)))
+    .orderBy(auditPages.url)
+    .limit(MAX_URLS_SITE)
+  return paginas.map((p) => p.url)
 }
