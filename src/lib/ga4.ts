@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm'
+import { lt, sql } from 'drizzle-orm'
 import { google } from 'googleapis'
 import { getDb } from '@/lib/db'
 import { ga4Diario, ga4Paginas } from '@/lib/db/schema'
@@ -6,6 +6,8 @@ import { iso, meiaNoiteUtc } from './janelas-gsc'
 import { normalizarChavePrivada } from './gsc'
 
 const DIA_MS = 24 * 60 * 60 * 1000
+const RETENCAO_DIAS = 90
+const TIMEOUT_MS = 60_000
 const DIAS_SERIE = 90
 const DIAS_PAGINAS = 28
 const MAX_PAGINAS = 1000
@@ -65,7 +67,10 @@ function clienteReal(): ClienteGa4 {
   })
   const ga = google.analyticsdata({ version: 'v1beta', auth })
   return async (p) => {
-    const r = await ga.properties.runReport({ property: p.property, requestBody: p.requestBody })
+    const r = await ga.properties.runReport(
+      { property: p.property, requestBody: p.requestBody },
+      { timeout: TIMEOUT_MS },
+    )
     return { rows: r.data.rows, rowCount: r.data.rowCount }
   }
 }
@@ -152,7 +157,7 @@ export async function buscarGa4(
 }
 
 type Db = ReturnType<typeof getDb>
-type Executor = Pick<Db, 'insert'>
+type Executor = Pick<Db, 'insert' | 'delete'>
 
 export async function gravarGa4Diario(linhas: LinhaDiariaGa4[], exec: Executor = getDb()): Promise<void> {
   const unicas = [...new Map(linhas.map((l) => [l.data, l])).values()]
@@ -193,7 +198,16 @@ export async function gravarGa4Paginas(
   }
 }
 
+export async function removerGa4PaginasAntigas(corte: string, exec: Executor = getDb()): Promise<number> {
+  const apagadas = await exec
+    .delete(ga4Paginas)
+    .where(lt(ga4Paginas.snapshotDate, corte))
+    .returning({ pagina: ga4Paginas.pagina })
+  return apagadas.length
+}
+
 export type EscritaGa4 = {
+  limpar: (corte: string) => Promise<number>
   diario: (l: LinhaDiariaGa4[]) => Promise<void>
   paginas: (l: LinhaPaginaGa4[], snapshotDate: string) => Promise<void>
 }
@@ -204,6 +218,7 @@ export const transacaoGa4: TransacaoGa4 = (fn) =>
     fn({
       diario: (l) => gravarGa4Diario(l, tx),
       paginas: (l, d) => gravarGa4Paginas(l, d, tx),
+      limpar: (c) => removerGa4PaginasAntigas(c, tx),
     }),
   )
 
@@ -218,6 +233,7 @@ export async function executarGa4(d: {
   await d.transacao(async (e) => {
     await e.diario(r.diario)
     await e.paginas(r.paginas, r.snapshotDate)
+    await e.limpar(iso(meiaNoiteUtc(d.hoje) - RETENCAO_DIAS * DIA_MS))
   })
   return { snapshotDate: r.snapshotDate, dias: r.diario.length, paginas: r.paginas.length }
 }

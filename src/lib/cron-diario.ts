@@ -50,12 +50,17 @@ export function classificarErro(e: unknown): RelatorioFonte {
   return { status: 'erro', erro: nome, mensagem: MSG_ERRO }
 }
 
-async function rodar(executor: ExecutorFonte | null): Promise<RelatorioFonte> {
+async function rodar(fonte: FonteDiaria, executor: ExecutorFonte | null): Promise<RelatorioFonte> {
   if (!executor) return { status: 'nao_configurado', mensagem: MSG_NAO_CONFIGURADO }
   try {
     const r = await executor()
     return { status: 'ok', linhas: r.linhas, detalhes: r.detalhes }
   } catch (e) {
+    // Mensagem só no log do servidor: nunca na resposta HTTP nem em `sincronizacoes`.
+    console.error(
+      `cron diario: ${fonte} falhou:`,
+      e instanceof Error ? `${e.name}: ${e.message}` : 'erro',
+    )
     return classificarErro(e)
   }
 }
@@ -70,23 +75,29 @@ export async function executarCronDiario(d: {
     ['gsc', d.gsc],
     ['ga4', d.ga4],
   ]
-  const relatorio = {} as RelatorioDiario
-  for (const [fonte, executor] of fontes) {
-    const r = await rodar(executor)
-    relatorio[fonte] = r
-    try {
-      await d.registrar({
-        fonte,
-        status: r.status,
-        mensagem: r.mensagem ?? null,
-        executadoEm: d.hoje,
-        linhas: r.linhas ?? null,
-      })
-    } catch (e) {
-      // Falha ao registrar não pode derrubar a outra fonte.
-      console.error('sincronizacoes: falha ao registrar:', e instanceof Error ? e.name : 'erro')
-    }
-  }
+  // Em paralelo: uma chamada do Google pendurada numa fonte não atrasa a outra.
+  const resultados = await Promise.all(
+    fontes.map(async ([fonte, executor]) => {
+      const r = await rodar(fonte, executor)
+      try {
+        await d.registrar({
+          fonte,
+          status: r.status,
+          mensagem: r.mensagem ?? null,
+          executadoEm: d.hoje,
+          linhas: r.linhas ?? null,
+        })
+      } catch (e) {
+        // Falha ao registrar não pode derrubar a outra fonte.
+        console.error(
+          `sincronizacoes: falha ao registrar ${fonte}:`,
+          e instanceof Error ? `${e.name}: ${e.message}` : 'erro',
+        )
+      }
+      return [fonte, r] as const
+    }),
+  )
+  const relatorio = Object.fromEntries(resultados) as RelatorioDiario
   return relatorio
 }
 

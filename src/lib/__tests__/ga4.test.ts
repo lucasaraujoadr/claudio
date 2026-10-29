@@ -114,10 +114,17 @@ describe('gravação idempotente', () => {
       },
       transacao: async (fn) => {
         ordem.push('tx')
-        return fn({ diario: async () => void ordem.push('d'), paginas: async () => void ordem.push('p') })
+        return fn({
+          diario: async () => void ordem.push('d'),
+          paginas: async () => void ordem.push('p'),
+          limpar: async (c) => {
+            ordem.push(`l:${c}`)
+            return 0
+          },
+        })
       },
     })
-    expect(ordem).toEqual(['busca', 'tx', 'd', 'p'])
+    expect(ordem).toEqual(['busca', 'tx', 'd', 'p', 'l:2026-07-31'])
     expect(r).toEqual({ snapshotDate: '2026-10-29', dias: 0, paginas: 0 })
   })
 })
@@ -142,6 +149,14 @@ describe('classificarErro', () => {
     expect(r.erro).toBe('TypeError')
     expect(JSON.stringify(r)).not.toContain('BEGIN')
   })
+  it.each([
+    ['status', { status: 403 }],
+    ['response.status', { response: { status: 403 } }],
+    ['code string', { code: '403' }],
+  ])('reconhece 403 por %s', (_n, extra) => {
+    const e = Object.assign(new Error('The caller does not have permission'), extra)
+    expect(classificarErro(e).status).toBe('sem_permissao')
+  })
   it('403 que não é de permissão continua erro', () => {
     expect(classificarErro(Object.assign(new Error('quota exceeded'), { code: 403 })).status).toBe('erro')
   })
@@ -158,7 +173,7 @@ describe('executarCronDiario', () => {
     const r = await executarCronDiario({ hoje: HOJE, gsc: ok, ga4: null, registrar })
     expect(r.gsc).toMatchObject({ status: 'ok', linhas: 3 })
     expect(r.ga4.status).toBe('nao_configurado')
-    expect(regs.map((x) => [x.fonte, x.status])).toEqual([['gsc', 'ok'], ['ga4', 'nao_configurado']])
+    expect(regs.map((x) => [x.fonte, x.status]).sort()).toEqual([['ga4', 'nao_configurado'], ['gsc', 'ok']])
   })
   it('GSC não configurado não impede o GA4', async () => {
     const { registrar } = registrador()
@@ -174,9 +189,38 @@ describe('executarCronDiario', () => {
     const r = await executarCronDiario({ hoje: HOJE, gsc: falha, ga4: ok, registrar })
     expect(r.gsc.status).toBe('sem_permissao')
     expect(r.ga4.status).toBe('ok')
-    expect(regs[0]).toMatchObject({ fonte: 'gsc', status: 'sem_permissao', linhas: null, executadoEm: HOJE })
-    expect(regs[0].mensagem).toContain('conta de serviço')
-    expect(regs[1]).toMatchObject({ fonte: 'ga4', status: 'ok', linhas: 3 })
+    const porFonte = Object.fromEntries(regs.map((x) => [x.fonte, x]))
+    expect(porFonte.gsc).toMatchObject({ fonte: 'gsc', status: 'sem_permissao', linhas: null, executadoEm: HOJE })
+    expect(porFonte.gsc.mensagem).toContain('conta de serviço')
+    expect(porFonte.ga4).toMatchObject({ fonte: 'ga4', status: 'ok', linhas: 3 })
+  })
+  it('roda as fontes em paralelo: GSC pendurado não bloqueia o GA4', async () => {
+    const { regs, registrar } = registrador()
+    let soltar: () => void = () => {}
+    const preso = new Promise<{ linhas: number }>((res) => (soltar = () => res({ linhas: 1 })))
+    const p = executarCronDiario({ hoje: HOJE, gsc: () => preso, ga4: ok, registrar })
+    await new Promise((r) => setTimeout(r, 10))
+    expect(regs.map((x) => x.fonte)).toEqual(['ga4'])
+    soltar()
+    const r = await p
+    expect(r.gsc.status).toBe('ok')
+    expect(Object.keys(r)).toEqual(['gsc', 'ga4'])
+  })
+  it('registra no log do servidor o nome e a mensagem, mas não os devolve', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { regs, registrar } = registrador()
+    const r = await executarCronDiario({
+      hoje: HOJE,
+      gsc: null,
+      ga4: async () => {
+        throw new TypeError('detalhe-interno')
+      },
+      registrar,
+    })
+    expect(String(log.mock.calls[0].join(' '))).toContain('ga4')
+    expect(String(log.mock.calls[0].join(' '))).toContain('TypeError')
+    expect(JSON.stringify(r)).not.toContain('detalhe-interno')
+    expect(JSON.stringify(regs)).not.toContain('detalhe-interno')
   })
   it('falha do GA4 não impede o GSC; falha ao registrar não propaga', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
