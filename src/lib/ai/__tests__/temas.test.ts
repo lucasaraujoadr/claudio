@@ -24,6 +24,10 @@ describe('dedupTemas', () => {
     const r = dedupTemas(gerados(c('A', ['x']), c('B', ['y'])), ['x'])
     expect(r.clusters.map((x) => x.nome)).toEqual(['B'])
   })
+  it('ignora espaços internos repetidos na comparação', () => {
+    const r = dedupTemas(gerados(c('A', ['pericia  contabil', 'outro'])), ['pericia contabil'])
+    expect(r.clusters[0].temas.map((x) => x.keyword)).toEqual(['outro'])
+  })
   it('preserva tema novo', () => {
     const entrada = gerados(c('A', ['x', 'y']))
     expect(dedupTemas(entrada, ['z'])).toEqual(entrada)
@@ -52,6 +56,38 @@ describe('montarPrompt', () => {
     expect(p).toContain('perícia contábil trabalhista')
     expect(p).toContain('liquidação de sentença')
     expect(p).toContain('pagina-rasa')
+  })
+})
+
+describe('pesquisarTemas (limites estritos)', () => {
+  const longo = { ...t('ruim'), titulo: 'x'.repeat(121) }
+  it('descarta o tema fora do limite e preserva os demais', async () => {
+    const bruto = gerados({ ...c('A', ['bom']), temas: [longo, t('bom')] })
+    const r = await pesquisarTemas(ctx, vi.fn().mockResolvedValue(bruto))
+    expect(r.clusters[0].temas.map((x) => x.keyword)).toEqual(['bom'])
+  })
+  it('descarta cluster que ficou sem tema', async () => {
+    const bruto = gerados({ ...c('A', []), temas: [longo] }, c('B', ['ok']))
+    const r = await pesquisarTemas(ctx, vi.fn().mockResolvedValue(bruto))
+    expect(r.clusters.map((x) => x.nome)).toEqual(['B'])
+  })
+  it('falha quando nada é aproveitável', async () => {
+    const bruto = gerados({ ...c('A', []), temas: [longo] })
+    await expect(pesquisarTemas(ctx, vi.fn().mockResolvedValue(bruto))).rejects.toThrow()
+  })
+})
+
+describe('sanitização do prompt', () => {
+  it('colapsa quebras de linha e limita a 200 caracteres', () => {
+    const p = montarPrompt({ ...ctx, termosGsc: ['a\n- injetado\n\nb', 'y'.repeat(500)] })
+    expect(p).toContain('- a - injetado b')
+    expect(p).not.toContain('y'.repeat(201))
+  })
+  it('limita temas existentes a 300, mantendo os mais recentes', () => {
+    const todos = Array.from({ length: 400 }, (_, i) => `kw${i}`)
+    const p = montarPrompt({ ...ctx, temasExistentes: todos })
+    expect(p).toContain('- kw399\n')
+    expect(p).not.toContain('- kw99\n')
   })
 })
 

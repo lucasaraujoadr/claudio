@@ -1,5 +1,5 @@
 import { gerarObjetoPadrao, type GerarObjeto } from './cliente'
-import { clustersSchema, type ClustersGerados } from './schemas'
+import { clusterEstritoSchema, clustersSchemaModelo, temaEstritoSchema, type ClustersGerados } from './schemas'
 
 export const SERVICOS = [
   'Perícia Contábil Judicial',
@@ -21,18 +21,26 @@ export type ContextoTemas = {
   lacunasAuditoria: string[]
 }
 
+const MAX_EXISTENTES_NO_PROMPT = 300
+
+function limpar(s: string): string {
+  return s.replace(/\s+/g, ' ').trim().slice(0, 200)
+}
+
 function lista(itens: string[]): string {
-  return itens.map((i) => `- ${i}`).join('\n')
+  return itens.map((i) => `- ${limpar(i)}`).join('\n')
 }
 
 export function montarPrompt(ctx: ContextoTemas): string {
+  // temasExistentes cresce sem parar: no prompt entram só os mais recentes (o fim da lista, por id).
+  const recentes = ctx.temasExistentes.slice(-MAX_EXISTENTES_NO_PROMPT).reverse()
   const gsc =
     ctx.termosGsc.length > 0
       ? `Termos que já geram impressões no Search Console (por impressões, do maior para o menor):\n${lista(ctx.termosGsc)}`
       : 'Ainda não há dados do Search Console. Não invente termos de busca nem métricas; proponha temas apenas a partir dos serviços e do público.'
   const existentes =
-    ctx.temasExistentes.length > 0
-      ? `Temas que já existem (não repita nem proponha variações triviais):\n${lista(ctx.temasExistentes)}`
+    recentes.length > 0
+      ? `Temas que já existem (não repita nem proponha variações triviais):\n${lista(recentes)}`
       : 'Ainda não há temas cadastrados.'
   const lacunas =
     ctx.lacunasAuditoria.length > 0
@@ -59,11 +67,23 @@ export async function pesquisarTemas(
   ctx: ContextoTemas,
   gerar: GerarObjeto = gerarObjetoPadrao,
 ): Promise<ClustersGerados> {
-  return gerar({ schema: clustersSchema, prompt: montarPrompt(ctx) })
+  const bruto = await gerar({ schema: clustersSchemaModelo, prompt: montarPrompt(ctx) })
+  // Descarta tema a tema o que viola os limites estritos, em vez de perder a chamada inteira.
+  const clusters: ClustersGerados['clusters'] = []
+  for (const c of bruto.clusters) {
+    const temas = c.temas.flatMap((t) => {
+      const r = temaEstritoSchema.safeParse(t)
+      return r.success ? [r.data] : []
+    })
+    const r = clusterEstritoSchema.safeParse({ ...c, temas: temas.length > 0 ? temas : [] })
+    if (r.success) clusters.push(r.data)
+  }
+  if (clusters.length === 0) throw new Error('A resposta do modelo não trouxe nenhum tema válido')
+  return { clusters }
 }
 
 export function normalizarKeyword(s: string): string {
-  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
+  return s.normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').toLowerCase().trim()
 }
 
 export function dedupTemas(gerados: ClustersGerados, existentes: string[]): ClustersGerados {

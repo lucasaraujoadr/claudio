@@ -23,3 +23,32 @@ export const clustersSchema = z.object({
 })
 
 export type ClustersGerados = z.infer<typeof clustersSchema>
+
+// Versão enviada ao modelo: a API estrita da OpenAI pode rejeitar minLength/maxLength,
+// então os limites de texto ficam só em clustersSchema, aplicado depois da resposta.
+const temaModelo = z.object({
+  titulo: z.string().trim(),
+  keyword: z.string().trim(),
+  intencao: intencaoSchema,
+  prioridade: prioridadeSchema,
+})
+
+export const clustersSchemaModelo = z.object({
+  clusters: z
+    .array(
+      z.object({
+        nome: z.string().trim(),
+        keywordPilar: z.string().trim(),
+        intencao: intencaoSchema,
+        prioridade: prioridadeSchema,
+        temas: z.array(temaModelo).min(1).max(12),
+      }),
+    )
+    .min(1)
+    .max(8),
+})
+
+export type ClustersModelo = z.infer<typeof clustersSchemaModelo>
+
+export const temaEstritoSchema = temaSchema
+export const clusterEstritoSchema = clusterSchema

@@ -1,5 +1,5 @@
 import { connection } from 'next/server'
-import { asc, desc, eq } from 'drizzle-orm'
+import { asc, desc } from 'drizzle-orm'
 import { getDb } from '@/lib/db'
 import { clusters, topics, type Topic } from '@/lib/db/schema'
 

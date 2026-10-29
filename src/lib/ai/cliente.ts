@@ -26,6 +26,7 @@ export const gerarObjetoPadrao: GerarObjeto = async ({ schema, prompt }) => {
     model: openai(process.env.OPENAI_MODEL || MODELO_PADRAO),
     output: Output.object({ schema }),
     prompt,
+    abortSignal: AbortSignal.timeout(100_000),
   })
   return output
 }
