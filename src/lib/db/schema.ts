@@ -27,7 +27,7 @@ export const topicStatus = pgEnum('topic_status', [
   'briefado',
   'publicado',
 ])
-export const topicOrigem = pgEnum('topic_origem', ['ia', 'gsc'])
+export const topicOrigem = pgEnum('topic_origem', ['ia', 'gsc', 'tendencia'])
 export const severidade = pgEnum('severidade', ['critico', 'aviso', 'info'])
 export const runStatus = pgEnum('run_status', ['rodando', 'concluido', 'falhou'])
 
@@ -179,3 +179,41 @@ export const sincronizacoes = pgTable('sincronizacoes', {
   executadoEm: timestamp('executado_em', { withTimezone: true }).notNull(),
   linhas: integer('linhas'),
 })
+
+export const potencial = pgEnum('potencial', ['alto', 'medio', 'baixo'])
+export const teseStatus = pgEnum('tese_status', ['nova', 'virou_tema', 'descartada'])
+
+/** Fatos recentes (decisões, leis, índices) coletados pela busca diária; só com fonte verificada. */
+export const tendencias = pgTable('tendencias', {
+  id: serial('id').primaryKey(),
+  titulo: text('titulo').notNull(),
+  resumo: text('resumo').notNull(),
+  fonteUrl: text('fonte_url').notNull(),
+  publicadoEm: date('publicado_em'),
+  palavrasChave: jsonb('palavras_chave').notNull().$type<string[]>(),
+  coletadoEm: timestamp('coletado_em').notNull().defaultNow(),
+  /** sha256 da URL normalizada: a mesma fonte não entra duas vezes. */
+  hash: text('hash').notNull().unique(),
+})
+
+export const tesesSugeridas = pgTable(
+  'teses_sugeridas',
+  {
+    id: serial('id').primaryKey(),
+    tendenciaId: integer('tendencia_id').references(() => tendencias.id),
+    titulo: text('titulo').notNull(),
+    keyword: text('keyword').notNull(),
+    keywordNormalizada: text('keyword_normalizada').notNull(),
+    intencao: intencao('intencao').notNull(),
+    justificativa: text('justificativa').notNull(),
+    /** Estimativa qualitativa do modelo, não medição. */
+    potencial: potencial('potencial').notNull(),
+    sinais: jsonb('sinais').notNull().$type<string[]>(),
+    status: teseStatus('status').notNull().default('nova'),
+    criadoEm: timestamp('criado_em').notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('teses_keyword_normalizada_idx').on(t.keywordNormalizada)],
+)
+
+export type Tendencia = typeof tendencias.$inferSelect
+export type TeseSugerida = typeof tesesSugeridas.$inferSelect

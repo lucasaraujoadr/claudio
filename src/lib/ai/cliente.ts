@@ -179,7 +179,7 @@ export type ResultadoBusca<T> = {
 }
 
 // Só http(s) vale como fonte; a chave ignora caixa do host, fragmento e barra final.
-function chaveDeFonte(url: string): string | null {
+export function chaveDeFonte(url: string): string | null {
   try {
     const u = new URL(url)
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
