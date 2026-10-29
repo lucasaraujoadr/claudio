@@ -1,15 +1,12 @@
 'use client'
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { useFormStatus } from 'react-dom'
+import type { ReactNode } from 'react'
+import { useEnvioPendente } from '@/components/ui/botao-enviar'
 
 /**
- * Botão de envio que se desabilita assim que o formulário é enviado, para que um
- * segundo clique não dispare outra chamada paga à IA.
- *
- * useFormStatus só fica `pending` quando a action do formulário é uma função; os
- * formulários do painel postam para rotas (action="/api/..."), então o envio nativo
- * é observado também pelo evento `submit` do formulário pai.
+ * Versão antiga, sem estilo próprio: as páginas ainda passam as classes em `className`.
+ * A lógica de "enviando" vive em `@/components/ui/botao-enviar`; páginas novas devem
+ * usar o `BotaoEnviar` de lá (com variantes do sistema de design).
  */
 export function BotaoEnviar({
   children,
@@ -20,28 +17,7 @@ export function BotaoEnviar({
   rotuloEnviando: string
   className?: string
 }) {
-  const { pending } = useFormStatus()
-  const [enviado, setEnviado] = useState(false)
-  const ref = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    const form = ref.current?.form
-    if (!form) return
-    // Só dispara depois da validação nativa: um campo inválido não trava o botão.
-    const aoEnviar = () => setEnviado(true)
-    // Voltar pelo histórico pode restaurar a página com o botão ainda desabilitado.
-    const aoMostrar = (e: PageTransitionEvent) => {
-      if (e.persisted) setEnviado(false)
-    }
-    form.addEventListener('submit', aoEnviar)
-    window.addEventListener('pageshow', aoMostrar)
-    return () => {
-      form.removeEventListener('submit', aoEnviar)
-      window.removeEventListener('pageshow', aoMostrar)
-    }
-  }, [])
-
-  const ocupado = pending || enviado
+  const { ref, ocupado } = useEnvioPendente()
   return (
     <button ref={ref} type="submit" disabled={ocupado} aria-busy={ocupado} className={className}>
       {ocupado ? rotuloEnviando : children}

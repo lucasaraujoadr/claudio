@@ -1,25 +1,201 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/*
+ * Sistema de design — Oliveira Guimarães, cálculos e perícias.
+ *
+ * O tema vive em <html data-theme="escuro|claro">: o servidor escreve o atributo quando há
+ * cookie, e o script inline do <head> o resolve antes da primeira pintura quando não há.
+ * Sem JavaScript e sem cookie, o bloco @media abaixo segue o sistema.
+ *
+ * Regra: nenhuma cor fixa que só funcione num tema. Tudo passa pelos tokens --og-*; os
+ * dois blocos do tema escuro precisam ser idênticos (o teste de contraste confere) e
+ * cada token precisa existir nos dois temas.
+ */
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* A variante `dark:` do Tailwind segue o atributo de tema, não só a mídia do sistema. */
+@custom-variant dark {
+  &:where([data-theme="escuro"], [data-theme="escuro"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme]), :root:not([data-theme]) *) {
+      @slot;
+    }
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
+/* ── Tema claro (padrão) ─────────────────────────────────────────────── */
+:root,
+[data-theme="claro"] {
+  color-scheme: light;
+  --og-fundo: #f5f3ee;
+  --og-superficie: #ffffff;
+  --og-elevada: #faf8f4;
+  --og-borda: #e4dfd5;
+  --og-borda-forte: #cfc7b8;
+  --og-tinta: #1b1a17;
+  --og-tinta-suave: #5f5a51;
+  --og-acento: #daa522;
+  --og-acento-forte: #c8941a;
+  --og-sobre-acento: #1b1a17;
+  --og-acento-texto: #8a6410;
+  --og-acento-suave: #f6ebd0;
+  --og-foco: #8a6410;
+  --og-critico: #b42318;
+  --og-critico-fundo: #fdf0ee;
+  --og-critico-borda: #f2c7c1;
+  --og-aviso: #a14a06;
+  --og-aviso-fundo: #fdf3e7;
+  --og-aviso-borda: #f1cfa6;
+  --og-info: #1f5aa6;
+  --og-info-fundo: #eef4fc;
+  --og-info-borda: #c3d6f2;
+  --og-sucesso: #1d7044;
+  --og-sucesso-fundo: #ecf7f0;
+  --og-sucesso-borda: #b9dfc7;
+  --og-sombra: 0 1px 2px rgb(27 26 23 / 0.05), 0 1px 1px rgb(27 26 23 / 0.03);
+}
+
+/* ── Tema escuro ─────────────────────────────────────────────────────── */
+[data-theme="escuro"] {
+  color-scheme: dark;
+  --og-fundo: #0e0f11;
+  --og-superficie: #16181b;
+  --og-elevada: #1e2125;
+  --og-borda: #2a2e33;
+  --og-borda-forte: #3b4048;
+  --og-tinta: #ece8e1;
+  --og-tinta-suave: #a7a29a;
+  --og-acento: #daa522;
+  --og-acento-forte: #e6b53f;
+  --og-sobre-acento: #15130e;
+  --og-acento-texto: #daa522;
+  --og-acento-suave: #2a2312;
+  --og-foco: #e6b53f;
+  --og-critico: #f28b82;
+  --og-critico-fundo: #2a1715;
+  --og-critico-borda: #5a2a25;
+  --og-aviso: #f5a65b;
+  --og-aviso-fundo: #2a1d10;
+  --og-aviso-borda: #5a3d1c;
+  --og-info: #8ab4f8;
+  --og-info-fundo: #12202f;
+  --og-info-borda: #24415f;
+  --og-sucesso: #6dd49b;
+  --og-sucesso-fundo: #10241a;
+  --og-sucesso-borda: #1f4a33;
+  --og-sombra: 0 1px 2px rgb(0 0 0 / 0.4);
+}
+
+/* Sem JavaScript e sem cookie: segue o sistema. Cópia exata do bloco acima. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --og-fundo: #0e0f11;
+    --og-superficie: #16181b;
+    --og-elevada: #1e2125;
+    --og-borda: #2a2e33;
+    --og-borda-forte: #3b4048;
+    --og-tinta: #ece8e1;
+    --og-tinta-suave: #a7a29a;
+    --og-acento: #daa522;
+    --og-acento-forte: #e6b53f;
+    --og-sobre-acento: #15130e;
+    --og-acento-texto: #daa522;
+    --og-acento-suave: #2a2312;
+    --og-foco: #e6b53f;
+    --og-critico: #f28b82;
+    --og-critico-fundo: #2a1715;
+    --og-critico-borda: #5a2a25;
+    --og-aviso: #f5a65b;
+    --og-aviso-fundo: #2a1d10;
+    --og-aviso-borda: #5a3d1c;
+    --og-info: #8ab4f8;
+    --og-info-fundo: #12202f;
+    --og-info-borda: #24415f;
+    --og-sucesso: #6dd49b;
+    --og-sucesso-fundo: #10241a;
+    --og-sucesso-borda: #1f4a33;
+    --og-sombra: 0 1px 2px rgb(0 0 0 / 0.4);
+  }
+}
+
+/* Tokens → utilitários do Tailwind: bg-superficie, text-tinta-suave, border-borda, … */
+@theme inline {
+  --color-fundo: var(--og-fundo);
+  --color-superficie: var(--og-superficie);
+  --color-elevada: var(--og-elevada);
+  --color-borda: var(--og-borda);
+  --color-borda-forte: var(--og-borda-forte);
+  --color-tinta: var(--og-tinta);
+  --color-tinta-suave: var(--og-tinta-suave);
+  --color-acento: var(--og-acento);
+  --color-acento-forte: var(--og-acento-forte);
+  --color-sobre-acento: var(--og-sobre-acento);
+  --color-acento-texto: var(--og-acento-texto);
+  --color-acento-suave: var(--og-acento-suave);
+  --color-foco: var(--og-foco);
+  --color-critico: var(--og-critico);
+  --color-critico-fundo: var(--og-critico-fundo);
+  --color-critico-borda: var(--og-critico-borda);
+  --color-aviso: var(--og-aviso);
+  --color-aviso-fundo: var(--og-aviso-fundo);
+  --color-aviso-borda: var(--og-aviso-borda);
+  --color-info: var(--og-info);
+  --color-info-fundo: var(--og-info-fundo);
+  --color-info-borda: var(--og-info-borda);
+  --color-sucesso: var(--og-sucesso);
+  --color-sucesso-fundo: var(--og-sucesso-fundo);
+  --color-sucesso-borda: var(--og-sucesso-borda);
+
+  --shadow-cartao: var(--og-sombra);
+
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-titulo: var(--font-source-serif), ui-serif, Georgia, serif;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--og-fundo);
+    color: var(--og-tinta);
+    font-family: var(--font-sans);
+    font-feature-settings: "kern";
+  }
+
+  /* Títulos em serifa: o tom de escritório técnico, não de startup. */
+  h1,
+  h2 {
+    font-family: var(--font-titulo);
+    font-optical-sizing: auto;
+    letter-spacing: -0.01em;
+  }
+
+  /* Números em colunas alinham dígito a dígito. */
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background: var(--og-acento-suave);
+    color: var(--og-tinta);
+  }
+
+  /* Anel de foco visível e no tom da marca em qualquer elemento focável. */
+  :focus-visible {
+    outline: 2px solid var(--og-foco);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+    }
+  }
 }
