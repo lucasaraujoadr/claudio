@@ -124,6 +124,16 @@ describe('gerarBriefing: nova tentativa', () => {
     expect(p).toContain('200 caracteres')
     expect(p).toContain('entre 70 e 160')
   })
+  it('FAQ curto: tenta de novo informando a contagem; 5 na segunda salva', async () => {
+    const faq = (n: number) => Array.from({ length: n }, (_, i) => ({ pergunta: `P${i}?`, resposta: `R${i}.` }))
+    const { fn, gerar } = fake(modelo({ faq: faq(3) }), modelo({ faq: faq(5) }))
+    const r = await gerarBriefing({ topico, urlsDoSite }, gerar)
+    expect(r.faq).toHaveLength(5)
+    expect(fn).toHaveBeenCalledTimes(2)
+    const p = (fn.mock.calls as unknown as [{ prompt: string }][])[1][0].prompt
+    expect(p).toContain('3 perguntas')
+    expect(p).toContain('entre 4 e 6')
+  })
   it('outline vazio também recebe uma nova tentativa', async () => {
     const { fn, gerar } = fake(modelo({ outline: [] as never }), modelo())
     await gerarBriefing({ topico, urlsDoSite }, gerar)
@@ -173,11 +183,19 @@ describe('briefingParaMarkdown', () => {
     expect(md).toContain('### Escopo')
     expect(md).toContain('Pergunta 1?')
     expect(md).toContain('Resposta 4.')
+    expect(md).toContain('---\n\n## Notas para o redator\n\n### Perguntas frequentes (FAQ)')
+    expect(md).toContain('### Links internos')
+    expect(md).toContain('### Keywords secundárias')
+    expect(md).not.toMatch(/^## (Perguntas|Links|Keywords)/m)
   })
   it('lista links internos e keywords secundárias', () => {
     const md = briefingParaMarkdown(b)
     expect(md).toContain(`- [Perícia contábil](${SITE}/pericia-contabil/)`)
     expect(md).toContain('- perícia judicial')
+  })
+  it('escapa colchetes na âncora', () => {
+    const md = briefingParaMarkdown({ ...b, linksInternos: [{ ancora: 'a] b [c', url: `${SITE}/x` }] })
+    expect(md).toContain(`- [a\\] b \\[c](${SITE}/x)`)
   })
   it('sem links, indica ausência', () => {
     expect(briefingParaMarkdown({ ...b, linksInternos: [] })).toContain('Nenhum link interno sugerido')

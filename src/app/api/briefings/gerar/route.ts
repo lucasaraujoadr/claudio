@@ -7,7 +7,7 @@ import { getDb } from '@/lib/db'
 import { briefings, topics } from '@/lib/db/schema'
 
 export const runtime = 'nodejs'
-export const maxDuration = 120 // até duas chamadas ao modelo (100 s cada, no pior caso a nova tentativa)
+export const maxDuration = 300 // 2 chamadas x 100 s (timeout de gerarObjetoPadrao) = 200 s + margem
 
 type Flag = 'sem-chave' | 'erro' | 'ja-briefado' | 'nao-escolhido'
 

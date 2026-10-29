@@ -72,7 +72,9 @@ function descreverFalhas(bruto: BriefingModelo, erros: { path: PropertyKey[]; me
   if (m < META_MIN || m > META_MAX) {
     linhas.push(`- A meta description anterior tinha ${m} caracteres; ela deve ter entre ${META_MIN} e ${META_MAX}.`)
   }
-  const outros = erros.filter((e) => e.path[0] !== 'title' && e.path[0] !== 'metaDescription')
+  const n = bruto.faq.length
+  if (n < 4 || n > 6) linhas.push(`- O FAQ anterior tinha ${n} perguntas; ele deve ter entre 4 e 6.`)
+  const outros = erros.filter((e) => !['title', 'metaDescription', 'faq'].includes(String(e.path[0])))
   for (const e of outros) linhas.push(`- Campo "${e.path.join('.') || 'resposta'}" inválido: ${e.message}.`)
   return linhas.join('\n')
 }
@@ -119,15 +121,15 @@ export function briefingParaMarkdown(b: BriefingGerado): string {
     partes.push(`## ${s.h2}`)
     if (s.h3.length > 0) partes.push(s.h3.map((h) => `### ${h}`).join('\n\n'))
   }
-  partes.push('## Perguntas frequentes (FAQ)')
+  partes.push('---', '## Notas para o redator', '### Perguntas frequentes (FAQ)')
   for (const f of b.faq) partes.push(`**${f.pergunta}**\n\n${f.resposta}`)
-  partes.push('## Links internos')
+  partes.push('### Links internos')
   partes.push(
     b.linksInternos.length > 0
-      ? b.linksInternos.map((l) => `- [${l.ancora}](${l.url})`).join('\n')
+      ? b.linksInternos.map((l) => `- [${l.ancora.replace(/[\\\[\]]/g, '\\$&')}](${l.url})`).join('\n')
       : '_Nenhum link interno sugerido._',
   )
-  partes.push('## Keywords secundárias')
+  partes.push('### Keywords secundárias')
   partes.push(
     b.keywordsSecundarias.length > 0 ? b.keywordsSecundarias.map((k) => `- ${k}`).join('\n') : '_Nenhuma._',
   )

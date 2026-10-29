@@ -82,7 +82,7 @@ export const briefingSchema = z.object({
   title: z.string().trim().min(TITLE_MIN).max(TITLE_MAX),
   metaDescription: z.string().trim().min(META_MIN).max(META_MAX),
   outline: z.array(secaoSchema).min(1).max(15),
-  faq: z.array(perguntaSchema).min(1).max(8),
+  faq: z.array(perguntaSchema).min(4).max(6),
   linksInternos: z.array(linkInternoSchema).max(10),
   keywordsSecundarias: z.array(z.string().trim().min(1).max(80)).max(15),
 })
