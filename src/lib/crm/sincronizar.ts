@@ -83,7 +83,7 @@ export function atributosDoContato(c: Pick<Contato, 'nome' | 'telefone' | 'escri
 }
 
 /** `bloqueado`: o contato já existia no Brevo e está bloqueado lá (descadastro feito no Brevo). */
-type Envio = { ok: true; brevoId: string | null; bloqueado?: boolean } | { ok: false; erro: ErroBrevo }
+type Envio = { ok: true; bloqueado?: boolean } | { ok: false; erro: ErroBrevo }
 
 async function enviarContato(cliente: ClienteBrevo, c: Contato): Promise<Envio> {
   const email = c.emailNormalizado
@@ -99,23 +99,18 @@ async function enviarContato(cliente: ClienteBrevo, c: Contato): Promise<Envio> 
       const u = await cliente.atualizarContato(email, { unlinkListIds: atual.dados.listIds, emailBlacklisted: true })
       if (!u.ok) return { ok: false, erro: u }
     }
-    const id = r.dados.id ?? atual.dados?.id ?? null
-    return { ok: true, brevoId: id !== null ? String(id) : c.brevoId }
+    return { ok: true }
   }
 
   const r = await cliente.upsertContato({ email, atributos })
   if (!r.ok) return { ok: false, erro: r }
   // Contato criado agora no Brevo: não tem como estar bloqueado lá.
-  if (r.dados.id !== null) return { ok: true, brevoId: String(r.dados.id) }
+  if (r.dados.id !== null) return { ok: true }
   // Já existia no Brevo: lê de volta para saber se a pessoa se descadastrou por lá (o
   // webhook do Brevo pode não chegar, por exemplo com a proteção da Vercel ligada).
   const atual = await cliente.obterContato(email)
   if (!atual.ok) return { ok: false, erro: atual }
-  return {
-    ok: true,
-    brevoId: atual.dados ? String(atual.dados.id) : c.brevoId,
-    bloqueado: atual.dados?.emailBlacklisted === true,
-  }
+  return { ok: true, bloqueado: atual.dados?.emailBlacklisted === true }
 }
 
 const MOTIVO_BLOQUEIO_BREVO = 'bloqueado no Brevo (descadastro, bounce ou spam registrado lá)'
@@ -133,7 +128,7 @@ async function descadastrarBloqueado(db: BancoCrm, id: number) {
  * Grava o resultado só se o contato não mudou desde a leitura: uma edição no meio da
  * sincronização deixa o contato `pendente` para a próxima rodada.
  */
-async function marcar(db: BancoCrm, c: Contato, set: Partial<Pick<Contato, 'syncStatus' | 'syncErro' | 'brevoId'>>) {
+async function marcar(db: BancoCrm, c: Contato, set: Partial<Pick<Contato, 'syncStatus' | 'syncErro'>>) {
   await db
     .update(contatos)
     .set(set)
@@ -228,8 +223,7 @@ export async function sincronizarPendentes(opts: OpcoesSincronizacao = {}): Prom
           const c = grupo[j]
           const r = resultados[j]
           if (r.ok) {
-            // Dados apagados a pedido: o id do Brevo também não volta a ser guardado.
-            await marcar(db, c, { syncStatus: 'sincronizado', syncErro: null, brevoId: c.dadosApagadosEm ? null : r.brevoId })
+            await marcar(db, c, { syncStatus: 'sincronizado', syncErro: null })
             if (r.bloqueado) await descadastrarBloqueado(db, c.id)
             enviados++
           } else if (erroGeral(r.erro)) {
@@ -308,7 +302,6 @@ export function dadosDoContatoBrevo(c: ContatoBrevo, baseLegal: BaseLegal): Dado
     cidade: texto('CIDADE'),
     uf: texto('UF'),
     baseLegal,
-    brevoId: String(c.id),
     // Bloqueado no Brevo (descadastro, bounce, spam) entra/fica como descadastrado.
     status: c.emailBlacklisted ? 'descadastrado' : null,
   }

@@ -10,7 +10,7 @@ import { resumoFunis, type ResumoFunil } from '@/lib/crm/funis'
 import { ehSlugFunil } from '@/lib/crm/funis-regras'
 import { sincronizacoes } from '@/lib/db/schema'
 import { formatarQuando } from '../contatos/_compartilhado'
-import { SeloFunil, SeloLista } from './_compartilhado'
+import { SeloFunil } from './_compartilhado'
 
 export const metadata = { title: 'Funis' }
 
@@ -94,8 +94,6 @@ export default async function FunisPage({ searchParams }: { searchParams: Promis
                       <Numero rotulo="Saíram" valor={f.sairam} />
                     </dl>
                     <div className="flex flex-wrap items-center gap-2 text-sm">
-                      <SeloLista f={f} conectado={conectado} />
-                      {f.pendentesBrevo > 0 && <Selo variante="neutro">{f.pendentesBrevo.toLocaleString('pt-BR')} pendente(s) no Brevo</Selo>}
                       {f.slug === 'prospeccao-fria' && f.tetoDiario !== null && <Selo variante="neutro">Teto: {f.tetoDiario}/dia</Selo>}
                     </div>
                     <Link href={`/crm/funis/${f.slug}`} className="text-sm font-medium text-acento-texto underline-offset-2 hover:underline">

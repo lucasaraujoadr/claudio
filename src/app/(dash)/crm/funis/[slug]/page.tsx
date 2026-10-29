@@ -20,7 +20,7 @@ import { MAX_EMAILS_INSCRICAO } from '@/lib/crm/funis-formulario'
 import { DEFINICAO_SEM_INTERACAO, ehSlugFunil, ROTULO_RECUSA, TETO_MAXIMO_PROSPECCAO, type MotivoRecusa, type SlugFunil } from '@/lib/crm/funis-regras'
 import type { Funil, FunilInscricao } from '@/lib/db/schema'
 import { formatarQuando, SeloStatus } from '../../contatos/_compartilhado'
-import { ROTULO_CAMINHO, ROTULO_INSCRICAO, SeloFunil, SeloLista } from '../_compartilhado'
+import { ROTULO_CAMINHO, ROTULO_INSCRICAO, SeloFunil } from '../_compartilhado'
 import { TextoCopiavel } from '../copiar'
 
 export const metadata = { title: 'Funil' }
@@ -37,16 +37,11 @@ const AVISOS: Record<string, { texto: string; tipo: TipoAviso }> = {
   'lista-invalida': { texto: 'Informe o número da lista (só dígitos).', tipo: 'erro' },
   'nao-conectado': { texto: 'Brevo não conectado: para criar a lista pelo painel, configure BREVO_API_KEY. Você pode informar o número de uma lista existente.', tipo: 'alerta' },
   brevo: { texto: 'O Brevo recusou o pedido. Tente de novo mais tarde.', tipo: 'erro' },
-  removido: { texto: 'Contato removido do funil (sai da lista do Brevo na próxima atualização).', tipo: 'sucesso' },
+  removido: { texto: 'Contato removido do funil.', tipo: 'sucesso' },
   'nada-para-inscrever': { texto: 'Informe emails (um por linha) ou uma tag.', tipo: 'erro' },
   erro: { texto: 'Não foi possível concluir a ação. Tente de novo.', tipo: 'erro' },
 }
 
-const SYNC: Record<FunilInscricao['listaSync'], { texto: string; variante: 'neutro' | 'sucesso' | 'aviso' }> = {
-  pendente: { texto: 'pendente', variante: 'neutro' },
-  sincronizado: { texto: 'em dia', variante: 'sucesso' },
-  erro: { texto: 'erro', variante: 'aviso' },
-}
 
 function numero(v: string | string[] | undefined): number {
   const n = typeof v === 'string' ? Number.parseInt(v, 10) : NaN
@@ -154,10 +149,7 @@ function Brevo({ f, conectado }: { f: Funil; conectado: boolean }) {
   return (
     <div className="space-y-4">
       <p className="flex flex-wrap items-center gap-2 text-sm text-tinta">
-        <SeloLista f={f} conectado={conectado} />
-        {f.brevoListaId === null
-          ? 'Sem lista: as inscrições ficam guardadas e entram na lista quando ela for conectada.'
-          : `Inscrições entram na lista ${f.brevoListaId} do Brevo.`}
+        As listas do Brevo deixaram de ser usadas: os funis passam a sair pelo Resend.
       </p>
       <div className="grid gap-4 sm:grid-cols-2">
         <form method="POST" action={`/api/crm/funis/${f.slug}/brevo`} className="space-y-2 rounded-lg border border-borda p-4">
@@ -209,7 +201,6 @@ function Membros({ f, itens, total, status, pagina }: { f: Funil; itens: MembroF
               <th>Situação</th>
               <th>Entrou em</th>
               <th>Por</th>
-              <th>Brevo</th>
               <th><span className="sr-only">Ações</span></th>
             </tr>
           </thead>
@@ -234,9 +225,6 @@ function Membros({ f, itens, total, status, pagina }: { f: Funil; itens: MembroF
                 </td>
                 <td className="whitespace-nowrap">{formatarQuando(i.entrouEm)}</td>
                 <td>{ROTULO_CAMINHO[i.origem] ?? i.origem}</td>
-                <td>
-                  <Selo variante={SYNC[i.listaSync].variante}>{SYNC[i.listaSync].texto}</Selo>
-                </td>
                 <td className="text-right">
                   {i.status === 'ativo' && (
                     <form method="POST" action={`/api/crm/funis/${f.slug}/remover`}>
@@ -278,7 +266,7 @@ export default async function FunilPage({
   const conectado = brevoConfigurado()
   const def = definicaoFunil(slug)
   const dados = await carregar(slug, status, pagina)
-  const nomeLista = dados?.funil.brevoListaId ? `${nomeListaBrevo(def.nome)} (lista ${dados.funil.brevoListaId})` : nomeListaBrevo(def.nome)
+  const nomeLista = nomeListaBrevo(def.nome)
   const whatsapp = linkWhatsapp()
   const emails = EMAILS_FUNIS[slug].map((e) => ({ ...e, corpo: aplicarMarcadores(e.corpo, { whatsapp }) }))
   const pendentes = marcadoresPendentes(emails.flatMap((e) => [e.assunto, e.preCabecalho, e.corpo]))

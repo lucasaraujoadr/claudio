@@ -73,7 +73,7 @@ describe('consultas e exportação', () => {
     const l = linhaExportacao({
       id: 1, nome: 'Ana', email: 'Ana@example.com', emailNormalizado: 'ana@example.com', telefone: null, escritorio: null,
       cidade: 'Natal', uf: 'RN', origem: 'site', baseLegal: 'legitimo_interesse', consentimentoEm: null, status: 'lead',
-      tags: ['a', 'b'], notas: null, brevoId: null, syncStatus: 'pendente', syncErro: null, dadosApagadosEm: null,
+      tags: ['a', 'b'], notas: null, resendContatoId: null, syncStatus: 'pendente', syncErro: null, dadosApagadosEm: null,
       criadoEm: new Date('2026-10-29T02:30:00Z'), atualizadoEm: new Date('2026-10-29T02:30:00Z'),
     })
     expect(l).toEqual(['Ana', 'Ana@example.com', '', '', 'Natal', 'RN', 'Lead', 'Site', 'Legítimo interesse', '', 'a, b', '', '28/10/2026 23:30', '28/10/2026 23:30'])

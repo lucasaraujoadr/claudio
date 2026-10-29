@@ -27,7 +27,7 @@ export type EstadoContato = {
   status: StatusContato
   tags: string[]
   notas: string | null
-  brevoId: string | null
+  resendContatoId: string | null
 }
 
 export type Mescla = {
@@ -56,7 +56,7 @@ export function estadoDe(c: Contato): EstadoContato {
     status: c.status,
     tags: [...c.tags],
     notas: c.notas,
-    brevoId: c.brevoId,
+    resendContatoId: c.resendContatoId,
   }
 }
 
@@ -67,7 +67,7 @@ function mesmaData(a: Date | null, b: Date | null): boolean {
 /** Diferenças campo a campo entre dois estados. */
 export function diferencas(a: EstadoContato, b: EstadoContato): CampoContato[] {
   const campos: CampoContato[] = []
-  for (const k of ['nome', 'telefone', 'escritorio', 'cidade', 'uf', 'baseLegal', 'status', 'notas', 'brevoId'] as const) {
+  for (const k of ['nome', 'telefone', 'escritorio', 'cidade', 'uf', 'baseLegal', 'status', 'notas', 'resendContatoId'] as const) {
     if (a[k] !== b[k]) campos.push(k)
   }
   if (!mesmaData(a.consentimentoEm, b.consentimentoEm)) campos.push('consentimentoEm')
@@ -100,7 +100,7 @@ export function criarEstado(dados: DadosContato, emailNormalizado: string, orige
     status,
     tags: normalizarTags(dados.tags).slice(0, LIMITE_TAGS),
     notas: textoOuNulo(dados.notas)?.slice(0, LIMITE_NOTAS) ?? null,
-    brevoId: textoOuNulo(dados.brevoId),
+    resendContatoId: textoOuNulo(dados.resendContatoId),
   }
 }
 
@@ -141,8 +141,8 @@ export function mesclarEstado(atual: EstadoContato, dados: DadosContato, origem:
     if (!atual[k] || SOBRESCREVE[origem].includes(k)) novo[k] = v
     else mantidos.push(k)
   }
-  const brevoId = textoOuNulo(dados.brevoId)
-  if (brevoId) novo.brevoId = brevoId
+  const resendContatoId = textoOuNulo(dados.resendContatoId)
+  if (resendContatoId) novo.resendContatoId = resendContatoId
 
   for (const t of normalizarTags(dados.tags)) {
     if (novo.tags.includes(t)) continue

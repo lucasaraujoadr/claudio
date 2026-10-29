@@ -16,7 +16,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/crm/fun
     const listaId = existente ? (lerInteiro(form.get('lista_id')) ?? -1) : null
     const r = await conectarListaBrevo(slug, { listaIdExistente: listaId })
     if (r.ok) return voltar(r.criada ? 'lista-criada' : r.verificada ? 'lista-ok' : 'lista-nao-verificada')
-    if (r.motivo === 'lista_em_uso') return voltar(`lista-em-uso&outro=${encodeURIComponent(r.funil)}`)
+    if (r.motivo === 'lista_em_uso') return voltar(`lista-em-uso&outro=${encodeURIComponent(r.funil ?? '')}`)
     if (r.motivo === 'brevo') console.error('crm: conectar lista do Brevo falhou:', r.mensagem ?? 'brevo')
     return voltar(r.motivo === 'nao_conectado' ? 'nao-conectado' : r.motivo === 'lista_nao_encontrada' ? 'lista-nao-encontrada' : r.motivo === 'lista_invalida' ? 'lista-invalida' : 'brevo')
   } catch (e) {

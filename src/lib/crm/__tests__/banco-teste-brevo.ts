@@ -15,12 +15,14 @@ export async function criarBancoTesteBrevo(): Promise<{ db: BancoCrm; fechar: ()
     eventoContatoTipo: schema.eventoContatoTipo,
     contatos: schema.contatos,
     eventosContato: schema.eventosContato,
-    brevoEventosRecebidos: schema.brevoEventosRecebidos,
+    webhookEventosRecebidos: schema.webhookEventosRecebidos,
     sincronizacoes: schema.sincronizacoes,
     // Funis (E9): os ganchos chamados pelos webhooks gravam aqui.
     funilInscricaoStatus: schema.funilInscricaoStatus,
     funis: schema.funis,
     funilInscricoes: schema.funilInscricoes,
+    envioStatus: schema.envioStatus,
+    enviosFunil: schema.enviosFunil,
   }
   const comandos = await generateMigration(generateDrizzleJson({}), generateDrizzleJson(tabelas))
   for (const c of comandos) await pg.exec(c)

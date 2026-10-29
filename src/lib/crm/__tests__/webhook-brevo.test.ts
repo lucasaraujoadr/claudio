@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { asc, eq } from 'drizzle-orm'
-import { brevoEventosRecebidos, contatos, eventosContato } from '@/lib/db/schema'
+import { webhookEventosRecebidos, contatos, eventosContato } from '@/lib/db/schema'
 import type { BancoCrm } from '../banco'
 import { upsertContato } from '../contatos'
 import { tratarWebhookBrevo } from '../webhook-brevo'
@@ -173,7 +173,7 @@ describe('webhook do Brevo: replay é idempotente (Review Focus 1)', () => {
     const r = await chamar(req(corpo))
     expect(await r.json()).toEqual({ ok: true, processados: 0, repetidos: 1, ignorados: 0 })
     expect(await eventos(id)).toEqual(antes)
-    expect(await db.select().from(brevoEventosRecebidos)).toHaveLength(1)
+    expect(await db.select().from(webhookEventosRecebidos)).toHaveLength(1)
   })
 
   it('o mesmo evento repetido dentro do mesmo lote também', async () => {

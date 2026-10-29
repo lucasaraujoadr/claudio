@@ -1,9 +1,9 @@
-import { and, asc, desc, eq, gte, inArray, isNotNull, ne, notExists, or, sql } from 'drizzle-orm'
-import { criarClienteBrevo, MENSAGEM_NAO_CONECTADO, type ClienteBrevo, type ErroBrevo } from '@/lib/brevo'
+import { and, asc, desc, eq, gte, inArray, ne, notExists, sql } from 'drizzle-orm'
+import { MENSAGEM_NAO_CONECTADO, type ClienteBrevo } from '@/lib/brevo'
 import { contatos, eventosContato, funilInscricoes, funis, type Funil, type FunilInscricao } from '@/lib/db/schema'
 import { bancoPadrao, type BancoCrm } from './banco'
 import type { StatusContato } from './campos'
-import { DEFINICOES_FUNIS, duracaoSequenciaDias, nomeListaBrevo, PASTA_BREVO } from './funis-conteudo'
+import { DEFINICOES_FUNIS, duracaoSequenciaDias } from './funis-conteudo'
 import {
   EVENTOS_INTERACAO,
   ORIGEM_ATUALIZADO_INTERACAO,
@@ -22,7 +22,6 @@ import {
   type MotivoRecusa,
   type SlugFunil,
 } from './funis-regras'
-import { adicionarContatosALista, sincronizarPendentes } from './sincronizar'
 
 /**
  * Funis do CRM (E9). O CRM decide quem está em qual funil; cada funil corresponde a uma
@@ -162,10 +161,10 @@ export async function inscrever(
       }
       await tx
         .insert(funilInscricoes)
-        .values({ contatoId: c.id, funilId: funil.id, status: 'ativo', origem: opts.caminho, entrouEm: agora, listaSync: 'pendente' })
+        .values({ contatoId: c.id, funilId: funil.id, status: 'ativo', origem: opts.caminho, entrouEm: agora, })
         .onConflictDoUpdate({
           target: [funilInscricoes.contatoId, funilInscricoes.funilId],
-          set: { status: 'ativo', origem: opts.caminho, entrouEm: agora, saiuEm: null, motivoSaida: null, listaSync: 'pendente', listaSyncErro: null, naListaEm: null },
+          set: { status: 'ativo', origem: opts.caminho, entrouEm: agora, saiuEm: null, motivoSaida: null },
         })
       await tx.insert(eventosContato).values({
         contatoId: c.id,
@@ -202,7 +201,7 @@ async function encerrar(db: BancoCrm, filtro: ReturnType<typeof and>, motivo: st
   const texto = motivo.trim().slice(0, 200) || 'saída'
   const encerradas = await db
     .update(funilInscricoes)
-    .set({ status: 'saiu', saiuEm: agora, motivoSaida: texto, listaSync: 'pendente', listaSyncErro: null })
+    .set({ status: 'saiu', saiuEm: agora, motivoSaida: texto })
     .where(and(filtro, eq(funilInscricoes.status, 'ativo')))
     .returning({ contatoId: funilInscricoes.contatoId, funilId: funilInscricoes.funilId })
   if (encerradas.length === 0) return 0
@@ -331,13 +330,12 @@ export async function concluirSequencias(opts: { db?: BancoCrm; agora?: Date } =
     const limite = new Date(agora.getTime() - dias * 86_400_000)
     const concluidas = await db
       .update(funilInscricoes)
-      .set({ status: 'concluido', saiuEm: agora, motivoSaida: 'sequência concluída', listaSync: 'pendente', listaSyncErro: null })
+      .set({ status: 'concluido', saiuEm: agora, motivoSaida: 'sequência concluída' })
       .where(
         and(
           eq(funilInscricoes.funilId, f.id),
           eq(funilInscricoes.status, 'ativo'),
-          isNotNull(funilInscricoes.naListaEm),
-          sql`${funilInscricoes.naListaEm} <= ${limite.toISOString()}::timestamptz`,
+          sql`${funilInscricoes.entrouEm} <= ${limite.toISOString()}::timestamptz`,
         ),
       )
       .returning({ contatoId: funilInscricoes.contatoId })
@@ -361,283 +359,38 @@ export async function contatosPorEmail(emails: readonly string[], opts: { db?: B
 }
 
 // ---------------------------------------------------------------------------
-// Sincronização das inscrições com as listas do Brevo
+// Listas do Brevo (fora do schema; os stubs somem com a lógica de funis do Task 4 e o Brevo do Task 7)
 // ---------------------------------------------------------------------------
 
 export type ResultadoSyncInscricoes =
   | { conectado: false; mensagem: typeof MENSAGEM_NAO_CONECTADO }
   | { conectado: true; adicionados: number; removidos: number; erros: number; semLista: number; aguardandoContato: number; interrompido: string | null }
 
-/** Erro que vale para todas as chamadas (chave, permissão, limite, Brevo fora): parar. */
-function erroGeral(e: ErroBrevo): boolean {
-  if (e.motivo !== 'http') return true
-  return e.status === 401 || e.status === 403 || e.status === 425 || e.status === 429 || (e.status ?? 0) >= 500
-}
-
-const PENDENTE_OU_ERRO = or(eq(funilInscricoes.listaSync, 'pendente'), eq(funilInscricoes.listaSync, 'erro'))
-
-/**
- * Leva ao Brevo as inscrições pendentes: adiciona as ativas (só de contatos que já existem
- * no Brevo, com `brevo_id`) e remove as encerradas. Funil sem lista conectada fica pendente.
- */
+/** Stub: as inscrições já não têm lista do Brevo para sincronizar. */
 export async function sincronizarInscricoes(
-  opts: {
+  _opts: {
     db?: BancoCrm
     cliente?: ClienteBrevo
     limite?: number
     tamanhoLote?: number
     contatoIds?: readonly number[]
-    /** Gravado em `na_lista_em` de quem entra na lista agora. */
     agora?: Date
-    /** Checado entre lotes: `true` para parar (prazo da rotina diária). */
     deveParar?: () => boolean
   } = {},
 ): Promise<ResultadoSyncInscricoes> {
-  const cliente = opts.cliente ?? criarClienteBrevo()
-  if (!cliente.conectado) return { conectado: false, mensagem: MENSAGEM_NAO_CONECTADO }
-  const db = opts.db ?? bancoPadrao()
-  const limite = opts.limite ?? 500
-  const tamanhoLote = Math.max(1, opts.tamanhoLote ?? 100)
-  const r = { conectado: true as const, adicionados: 0, removidos: 0, erros: 0, semLista: 0, aguardandoContato: 0, interrompido: null as string | null }
-
-  const [{ n: semLista }] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(funilInscricoes)
-    .innerJoin(funis, eq(funis.id, funilInscricoes.funilId))
-    .where(and(PENDENTE_OU_ERRO, sql`${funis.brevoListaId} is null`))
-  r.semLista = Number(semLista)
-
-  const pendentes = await db
-    .select({
-      inscricao: funilInscricoes,
-      listaId: funis.brevoListaId,
-      email: contatos.emailNormalizado,
-      brevoId: contatos.brevoId,
-      statusContato: contatos.status,
-    })
-    .from(funilInscricoes)
-    .innerJoin(funis, eq(funis.id, funilInscricoes.funilId))
-    .innerJoin(contatos, eq(contatos.id, funilInscricoes.contatoId))
-    .where(
-      and(
-        PENDENTE_OU_ERRO,
-        isNotNull(funis.brevoListaId),
-        opts.contatoIds ? inArray(funilInscricoes.contatoId, opts.contatoIds.length > 0 ? [...opts.contatoIds] : [-1]) : undefined,
-      ),
-    )
-    // Por último o que já falhou (inscrição com erro, contato com erro de sincronização), para
-    // que falhas repetidas não tomem o teto da execução.
-    .orderBy(
-      sql`(${funilInscricoes.listaSync} = 'erro')`,
-      sql`(${contatos.syncStatus} = 'erro')`,
-      asc(funilInscricoes.id),
-    )
-    .limit(limite)
-
-  const marcar = (ids: number[], listaSync: 'sincronizado' | 'erro', erro: string | null = null) =>
-    ids.length === 0
-      ? Promise.resolve()
-      : db.update(funilInscricoes).set({ listaSync, listaSyncErro: erro?.slice(0, 200) ?? null }).where(inArray(funilInscricoes.id, ids)).then(() => undefined)
-  // Entrou na lista: a automação do Brevo começa a enviar agora, e a conclusão conta daqui.
-  const marcarNaLista = (ids: number[]) =>
-    ids.length === 0
-      ? Promise.resolve()
-      : db
-          .update(funilInscricoes)
-          .set({ listaSync: 'sincronizado', listaSyncErro: null, naListaEm: opts.agora ?? new Date() })
-          .where(inArray(funilInscricoes.id, ids))
-          .then(() => undefined)
-
-  let ultimoErro: ErroBrevo | null = null
-  const espiao: ClienteBrevo = {
-    ...cliente,
-    async adicionarALista(listaId, emails) {
-      const x = await cliente.adicionarALista(listaId, emails)
-      ultimoErro = x.ok ? null : x
-      return x
-    },
-  }
-
-  type Item = (typeof pendentes)[number]
-  const grupos = new Map<string, Item[]>()
-  for (const p of pendentes) {
-    const listaId = p.listaId as number
-    const acao = p.inscricao.status === 'ativo' ? 'add' : 'remove'
-    if (acao === 'add' && p.statusContato === 'descadastrado') continue // será encerrada; nunca vai para lista
-    if (!p.brevoId) {
-      // Contato ainda não existe no Brevo: adicionar espera a sincronização do contato;
-      // remover não tem o que tirar.
-      if (acao === 'remove') await marcar([p.inscricao.id], 'sincronizado')
-      else r.aguardandoContato++
-      continue
-    }
-    const chave = `${acao}:${listaId}`
-    grupos.set(chave, [...(grupos.get(chave) ?? []), p])
-  }
-
-  for (const [chave, itens] of grupos) {
-    if (r.interrompido) break
-    const [acao, lista] = chave.split(':')
-    const listaId = Number(lista)
-    for (let i = 0; i < itens.length && !r.interrompido; i += tamanhoLote) {
-      if (opts.deveParar?.()) {
-        r.interrompido = INTERROMPIDO_POR_TEMPO
-        break
-      }
-      const lote = itens.slice(i, i + tamanhoLote)
-      if (acao === 'add') {
-        // Sempre por `adicionarContatosALista` (filtra descadastrados). O espião só guarda o
-        // erro tipado do cliente, que o resultado dela não devolve.
-        const tentar = async (ids: number[]) => {
-          ultimoErro = null
-          const res = await adicionarContatosALista(listaId, ids, { db, cliente: espiao })
-          return { res, erro: ultimoErro as ErroBrevo | null }
-        }
-        const { res, erro } = await tentar(lote.map((x) => x.inscricao.contatoId))
-        if (res.ok && res.falhas === 0) {
-          await marcarNaLista(lote.map((x) => x.inscricao.id))
-          r.adicionados += res.adicionados
-          continue
-        }
-        if (!res.ok && (!erro || erroGeral(erro))) {
-          r.interrompido = res.mensagem
-          continue
-        }
-        // Lote recusado pelos dados (400) ou com falhas: um por um, para saber qual falhou.
-        for (const x of lote) {
-          if (r.interrompido) break
-          const um = await tentar([x.inscricao.contatoId])
-          if (um.res.ok && um.res.falhas === 0) {
-            await marcarNaLista([x.inscricao.id])
-            r.adicionados += um.res.adicionados
-          } else if (!um.res.ok && (!um.erro || erroGeral(um.erro))) {
-            r.interrompido = um.res.mensagem
-          } else {
-            await marcar([x.inscricao.id], 'erro', um.res.ok ? 'O Brevo não aceitou o contato na lista.' : um.res.mensagem)
-            r.erros++
-          }
-        }
-      } else {
-        const res = await cliente.removerDaLista(listaId, lote.map((x) => x.email))
-        if (res.ok) {
-          await marcar(lote.map((x) => x.inscricao.id), 'sincronizado')
-          r.removidos += lote.length
-          continue
-        }
-        if (erroGeral(res)) {
-          r.interrompido = res.mensagem
-          continue
-        }
-        // 400/404 no lote: um por um; recusado sozinho = já não está na lista.
-        for (const x of lote) {
-          if (r.interrompido) break
-          const um = await cliente.removerDaLista(listaId, [x.email])
-          if (um.ok || !erroGeral(um)) {
-            await marcar([x.inscricao.id], 'sincronizado')
-            r.removidos++
-          } else {
-            r.interrompido = um.mensagem
-          }
-        }
-      }
-    }
-  }
-  return r
+  return { conectado: false, mensagem: MENSAGEM_NAO_CONECTADO }
 }
-
-// ---------------------------------------------------------------------------
-// Configuração dos funis (tela)
-// ---------------------------------------------------------------------------
 
 export type ResultadoConexao =
   | { ok: true; listaId: number; verificada: boolean; criada: boolean }
-  | { ok: false; motivo: 'nao_conectado' | 'lista_nao_encontrada' | 'lista_invalida' | 'brevo'; mensagem?: string }
-  /** A lista já é de outro funil (`funil` = slug dele). */
-  | { ok: false; motivo: 'lista_em_uso'; funil: string }
+  | { ok: false; motivo: 'nao_conectado' | 'lista_nao_encontrada' | 'lista_invalida' | 'brevo' | 'lista_em_uso'; mensagem?: string; funil?: string }
 
-type Gravacao = { ok: true } | { ok: false; motivo: 'lista_em_uso'; funil: string }
-
-function violacaoUnica(e: unknown): boolean {
-  for (let x: unknown = e, i = 0; x && typeof x === 'object' && i < 5; x = (x as { cause?: unknown }).cause, i++) {
-    if ((x as { code?: unknown }).code === '23505') return true
-  }
-  return false
-}
-
-/**
- * Liga a lista ao funil. Uma lista serve a um funil só: concluir ou sair de um funil tira o
- * contato da lista, o que o cortaria em silêncio do outro funil (que continuaria `ativo` no
- * CRM). O índice único parcial `funis_brevo_lista_id_uq` garante isso também com dois
- * pedidos simultâneos.
- */
-async function gravarLista(db: BancoCrm, funilId: number, listaId: number): Promise<Gravacao> {
-  try {
-    return await db.transaction(async (tx) => {
-      const [dono] = await tx.select({ slug: funis.slug }).from(funis).where(and(eq(funis.brevoListaId, listaId), ne(funis.id, funilId)))
-      if (dono) return { ok: false, motivo: 'lista_em_uso', funil: dono.slug } as const
-      const [antes] = await tx.select().from(funis).where(eq(funis.id, funilId)).for('update')
-      await tx.update(funis).set({ brevoListaId: listaId, atualizadoEm: new Date() }).where(eq(funis.id, funilId))
-      if (antes && antes.brevoListaId !== listaId) {
-        // Lista nova: as inscrições ativas precisam ser adicionadas a ela (e a contagem da
-        // sequência recomeça quando entrarem); as encerradas não têm o que remover nela.
-        await tx
-          .update(funilInscricoes)
-          .set({ listaSync: 'pendente', listaSyncErro: null, naListaEm: null })
-          .where(and(eq(funilInscricoes.funilId, funilId), eq(funilInscricoes.status, 'ativo')))
-        await tx
-          .update(funilInscricoes)
-          .set({ listaSync: 'sincronizado', listaSyncErro: null, naListaEm: null })
-          .where(and(eq(funilInscricoes.funilId, funilId), ne(funilInscricoes.status, 'ativo')))
-      }
-      return { ok: true } as const
-    })
-  } catch (e) {
-    if (!violacaoUnica(e)) throw e
-    const [dono] = await db.select({ slug: funis.slug }).from(funis).where(and(eq(funis.brevoListaId, listaId), ne(funis.id, funilId)))
-    return { ok: false, motivo: 'lista_em_uso', funil: dono?.slug ?? '' }
-  }
-}
-
-/**
- * "Conectar ao Brevo": com `listaIdExistente`, usa essa lista (conferida no Brevo quando há
- * chave; sem chave, guardada sem conferir). Sem ela, cria a lista na pasta do painel (a API
- * exige pasta: usa a que já existir com o nome do painel ou cria uma).
- */
+/** Stub: o funil não guarda mais lista do Brevo. */
 export async function conectarListaBrevo(
-  slug: SlugFunil,
-  opts: { db?: BancoCrm; cliente?: ClienteBrevo; listaIdExistente?: number | null },
+  _slug: SlugFunil,
+  _opts: { db?: BancoCrm; cliente?: ClienteBrevo; listaIdExistente?: number | null },
 ): Promise<ResultadoConexao> {
-  const db = opts.db ?? bancoPadrao()
-  const cliente = opts.cliente ?? criarClienteBrevo()
-  const funil = await obterFunil(slug, { db })
-
-  if (opts.listaIdExistente !== undefined && opts.listaIdExistente !== null) {
-    const id = opts.listaIdExistente
-    if (!Number.isInteger(id) || id <= 0) return { ok: false, motivo: 'lista_invalida' }
-    if (!cliente.conectado) {
-      const g = await gravarLista(db, funil.id, id)
-      return g.ok ? { ok: true, listaId: id, verificada: false, criada: false } : g
-    }
-    const l = await cliente.obterLista(id)
-    if (!l.ok) return { ok: false, motivo: 'brevo', mensagem: l.mensagem }
-    if (!l.dados) return { ok: false, motivo: 'lista_nao_encontrada' }
-    const g = await gravarLista(db, funil.id, id)
-    return g.ok ? { ok: true, listaId: id, verificada: true, criada: false } : g
-  }
-
-  if (!cliente.conectado) return { ok: false, motivo: 'nao_conectado' }
-  const pastas = await cliente.listarPastas()
-  if (!pastas.ok) return { ok: false, motivo: 'brevo', mensagem: pastas.mensagem }
-  let pastaId = pastas.dados.find((p) => p.nome === PASTA_BREVO)?.id ?? null
-  if (pastaId === null) {
-    const p = await cliente.criarPasta(PASTA_BREVO)
-    if (!p.ok) return { ok: false, motivo: 'brevo', mensagem: p.mensagem }
-    pastaId = p.dados.id
-  }
-  const l = await cliente.criarLista(nomeListaBrevo(funil.nome), pastaId)
-  if (!l.ok) return { ok: false, motivo: 'brevo', mensagem: l.mensagem }
-  const g = await gravarLista(db, funil.id, l.dados.id)
-  return g.ok ? { ok: true, listaId: l.dados.id, verificada: true, criada: true } : g
+  return { ok: false, motivo: 'nao_conectado' }
 }
 
 /** Liga ou desliga um funil. A prospecção fria só liga por `ligarProspeccaoFria`. */
@@ -672,7 +425,6 @@ export type ResumoFunil = Funil & {
   ativos: number
   concluidos: number
   sairam: number
-  pendentesBrevo: number
 }
 
 export async function resumoFunis(opts: { db?: BancoCrm } = {}): Promise<ResumoFunil[]> {
@@ -682,7 +434,6 @@ export async function resumoFunis(opts: { db?: BancoCrm } = {}): Promise<ResumoF
     .select({
       funilId: funilInscricoes.funilId,
       status: funilInscricoes.status,
-      pendentes: sql<number>`count(*) filter (where ${funilInscricoes.listaSync} <> 'sincronizado')::int`,
       n: sql<number>`count(*)::int`,
     })
     .from(funilInscricoes)
@@ -690,7 +441,7 @@ export async function resumoFunis(opts: { db?: BancoCrm } = {}): Promise<ResumoF
   return lista.map((f) => {
     const doFunil = contagens.filter((c) => c.funilId === f.id)
     const de = (s: FunilInscricao['status']) => Number(doFunil.find((c) => c.status === s)?.n ?? 0)
-    return { ...f, ativos: de('ativo'), concluidos: de('concluido'), sairam: de('saiu'), pendentesBrevo: doFunil.reduce((a, c) => a + Number(c.pendentes), 0) }
+    return { ...f, ativos: de('ativo'), concluidos: de('concluido'), sairam: de('saiu') }
   })
 }
 
@@ -734,19 +485,7 @@ export type ResultadoBoasVindasAgora = 'nao_conectado' | 'sem_lista' | 'sem_insc
  * rota), em vez de esperar a rotina diária: envia o contato ao Brevo e depois a inscrição.
  * Use um cliente com timeout curto. Qualquer falha deixa tudo pendente para a rotina.
  */
-export async function enviarBoasVindasAgora(contatoId: number, opts: { db?: BancoCrm; cliente: ClienteBrevo }): Promise<ResultadoBoasVindasAgora> {
-  const { cliente } = opts
-  if (!cliente.conectado) return 'nao_conectado'
-  const db = opts.db ?? bancoPadrao()
-  const funil = await obterFunil('boas-vindas', { db })
-  if (!funil.brevoListaId) return 'sem_lista'
-  const [i] = await db
-    .select({ status: funilInscricoes.status, listaSync: funilInscricoes.listaSync })
-    .from(funilInscricoes)
-    .where(and(eq(funilInscricoes.funilId, funil.id), eq(funilInscricoes.contatoId, contatoId)))
-  if (!i || i.status !== 'ativo' || i.listaSync === 'sincronizado') return 'sem_inscricao'
-  const c = await sincronizarPendentes({ db, cliente, ids: [contatoId], limite: 1, registrar: false })
-  if (c.conectado && c.interrompido) return 'pendente'
-  const r = await sincronizarInscricoes({ db, cliente, contatoIds: [contatoId], limite: 5 })
-  return r.conectado && r.adicionados > 0 ? 'adicionado' : 'pendente'
+export async function enviarBoasVindasAgora(_contatoId: number, _opts: { db?: BancoCrm; cliente: ClienteBrevo }): Promise<ResultadoBoasVindasAgora> {
+  // Stub: o envio imediato pelo Resend é do Task 4.
+  return 'nao_conectado'
 }

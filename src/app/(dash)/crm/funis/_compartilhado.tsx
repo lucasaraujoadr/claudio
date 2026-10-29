@@ -7,8 +7,3 @@ export const ROTULO_CAMINHO: Record<string, string> = { site: 'Formulário do si
 export function SeloFunil({ f }: { f: Pick<Funil, 'ativo'> }) {
   return f.ativo ? <Selo variante="sucesso">Ligado</Selo> : <Selo variante="neutro">Desligado</Selo>
 }
-
-export function SeloLista({ f, conectado }: { f: Pick<Funil, 'brevoListaId'>; conectado: boolean }) {
-  if (f.brevoListaId === null) return <Selo variante="aviso">Sem lista no Brevo</Selo>
-  return <Selo variante={conectado ? 'sucesso' : 'neutro'}>Lista {f.brevoListaId}</Selo>
-}

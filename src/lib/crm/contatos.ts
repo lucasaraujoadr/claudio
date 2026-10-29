@@ -227,7 +227,7 @@ async function processarBloco(
           status: sql`case when ${contatos.status} = 'descadastrado' then ${contatos.status} else excluded.status end`,
           tags: sql`excluded.tags`,
           notas: sql`excluded.notas`,
-          brevoId: sql`excluded.brevo_id`,
+          resendContatoId: sql`excluded.resend_contato_id`,
           syncStatus: sql`excluded.sync_status`,
           atualizadoEm: sql`excluded.atualizado_em`,
         },

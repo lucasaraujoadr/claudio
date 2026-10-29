@@ -30,24 +30,13 @@ describe('executarEtapaFunis', () => {
     expect(r.detalhes).toMatchObject({ reativacao: 1, prospeccao: 0, brevo: 'não conectado' })
     expect(r.mensagem).toContain('Brevo não conectado')
     const [i] = await db.select().from(funilInscricoes)
-    expect(i).toMatchObject({ status: 'ativo', origem: 'cron', listaSync: 'pendente' })
-  })
-
-  it('com chave: envia o contato ao Brevo e depois o põe na lista do funil', async () => {
-    await db.insert(contatos).values({ nome: 'C', email: 'c@example.com', emailNormalizado: 'c@example.com', origem: 'planilha', baseLegal: 'contrato', status: 'cliente', criadoEm: ANTIGO })
-    await executarEtapaFunis({ db, cliente: criarClienteBrevo({ apiKey: null }), agora: AGORA })
-    await db.update(funis).set({ brevoListaId: 5 }).where(eq(funis.slug, 'reativacao'))
-    const b = brevoFalso()
-    const r = await executarEtapaFunis({ db, cliente: b.cliente, agora: AGORA })
-    expect(r.detalhes).toMatchObject({ contatosEnviados: 1, listasAdicionados: 1 })
-    expect(b.contatos.get('c@example.com')?.listIds).toEqual([5])
+    expect(i).toMatchObject({ status: 'ativo', origem: 'cron' })
   })
 
   it('uma subetapa que falha não impede as outras; o erro só traz nomes de etapas', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {})
     await db.insert(contatos).values({ nome: 'C', email: 'segredo@example.com', emailNormalizado: 'segredo@example.com', origem: 'planilha', baseLegal: 'contrato', status: 'cliente', criadoEm: ANTIGO })
     await executarEtapaFunis({ db, cliente: criarClienteBrevo({ apiKey: null }), agora: AGORA })
-    await db.update(funis).set({ brevoListaId: 5 }).where(eq(funis.slug, 'reativacao'))
     const b = brevoFalso()
     b.cliente.upsertContato = async () => {
       throw new Error('segredo@example.com explodiu')
@@ -56,7 +45,7 @@ describe('executarEtapaFunis', () => {
     expect(e).toBeInstanceOf(FalhaEtapaFunis)
     const f = e as FalhaEtapaFunis
     expect(f.falhas).toEqual(['contatos'])
-    expect(f.parcial.detalhes).toHaveProperty('listasAdicionados')
+    expect(f.parcial.detalhes).toHaveProperty('prospeccao')
     expect(f.mensagemSegura).not.toContain('segredo')
     expect(JSON.stringify(log.mock.calls)).not.toContain('segredo')
   })

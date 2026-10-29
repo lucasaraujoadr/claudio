@@ -1,13 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { and, asc, eq } from 'drizzle-orm'
 import { contatos, eventosContato, funilInscricoes, funis, type Contato } from '@/lib/db/schema'
-import { criarClienteBrevo } from '@/lib/brevo'
 import { LimitadorPorIp } from '@/lib/webhooks'
 import type { BancoCrm } from '../banco'
 import {
   concluirSequencias,
-  conectarListaBrevo,
-  enviarBoasVindasAgora,
   contatosComTag,
   definirAtivo,
   encerrarInscricoesDeDescadastrados,
@@ -19,13 +16,11 @@ import {
   obterFunil,
   resumoFunis,
   sair,
-  sincronizarInscricoes,
 } from '../funis'
 import { inscreverBoasVindasDoSite, sairDeTodosOsFunis } from '../ganchos-funis'
 import { tratarWebhookBrevo } from '../webhook-brevo'
 import { tratarWebhookSite } from '../webhook-site'
 import { criarBancoTesteFunis } from './banco-teste-funis'
-import { brevoFalso } from './brevo-fake'
 
 let db: BancoCrm
 let fechar: () => Promise<void>
@@ -52,10 +47,6 @@ async function criar(extra: Partial<typeof contatos.$inferInsert> = {}): Promise
 async function eventosDe(id: number) {
   return db.select().from(eventosContato).where(eq(eventosContato.contatoId, id)).orderBy(asc(eventosContato.id))
 }
-/** Simula a entrada na lista do Brevo (o que `sincronizarInscricoes` grava ao adicionar). */
-async function naLista(contatoIds: number[], quando: Date) {
-  for (const id of contatoIds) await db.update(funilInscricoes).set({ naListaEm: quando, listaSync: 'sincronizado' }).where(eq(funilInscricoes.contatoId, id))
-}
 async function inscricao(contatoId: number, slug: string) {
   const f = await db.select().from(funis).where(eq(funis.slug, slug))
   const [i] = await db.select().from(funilInscricoes).where(and(eq(funilInscricoes.contatoId, contatoId), eq(funilInscricoes.funilId, f[0].id)))
@@ -76,14 +67,14 @@ describe('garantirFunis', () => {
 
   it('é idempotente e não sobrescreve o estado do usuário', async () => {
     const a = await garantirFunis({ db })
-    await db.update(funis).set({ ativo: false, brevoListaId: 7, tetoDiario: 3 }).where(eq(funis.slug, 'boas-vindas'))
+    await db.update(funis).set({ ativo: false, tetoDiario: 3 }).where(eq(funis.slug, 'boas-vindas'))
     const antes = (await db.select().from(funis).where(eq(funis.slug, 'boas-vindas')))[0]
     const b = await garantirFunis({ db })
     await garantirFunis({ db })
     expect(b.map((f) => f.id)).toEqual(a.map((f) => f.id))
     expect(await db.select().from(funis)).toHaveLength(4)
     const depois = b.find((f) => f.slug === 'boas-vindas')!
-    expect(depois).toMatchObject({ ativo: false, brevoListaId: 7, tetoDiario: 3 })
+    expect(depois).toMatchObject({ ativo: false, tetoDiario: 3 })
     expect(depois.atualizadoEm.getTime()).toBe(antes.atualizadoEm.getTime())
   })
 })
@@ -94,7 +85,7 @@ describe('inscrição e saída', () => {
     await inscreverBoasVindasDoSite(c.id, { db })
     await inscreverBoasVindasDoSite(c.id, { db })
     const i = await inscricao(c.id, 'boas-vindas')
-    expect(i).toMatchObject({ status: 'ativo', origem: 'site', listaSync: 'pendente' })
+    expect(i).toMatchObject({ status: 'ativo', origem: 'site' })
     const ev = (await eventosDe(c.id)).filter((e) => e.tipo === 'entrou_funil')
     expect(ev).toHaveLength(1)
     expect(ev[0].dados).toMatchObject({ funil: 'boas-vindas', origem: 'site' })
@@ -128,7 +119,7 @@ describe('inscrição e saída', () => {
     const n = await sairDeTodosOsFunis(c.id, { db, motivo: 'descadastro no Brevo' })
     expect(n).toBe(2)
     const linhas = await db.select().from(funilInscricoes).where(eq(funilInscricoes.contatoId, c.id))
-    expect(linhas.every((l) => l.status === 'saiu' && l.listaSync === 'pendente' && l.motivoSaida === 'descadastro no Brevo')).toBe(true)
+    expect(linhas.every((l) => l.status === 'saiu' && l.motivoSaida === 'descadastro no Brevo')).toBe(true)
     expect((await eventosDe(c.id)).filter((e) => e.tipo === 'saiu_funil')).toHaveLength(2)
     // Repetir não grava nada novo.
     expect(await sairDeTodosOsFunis(c.id, { db, motivo: 'de novo' })).toBe(0)
@@ -273,154 +264,29 @@ describe('prospecção fria', () => {
   })
 })
 
-describe('listas do Brevo', () => {
-  async function inscritoBoasVindas(extra: Partial<typeof contatos.$inferInsert> = {}) {
-    const c = await criar(extra)
-    await inscreverBoasVindasDoSite(c.id, { db })
-    return c
-  }
-
-  it('sem chave: inscrição fica guardada como pendente, sem erro', async () => {
-    await inscritoBoasVindas({ brevoId: '1' })
-    const r = await sincronizarInscricoes({ db, cliente: criarClienteBrevo({ apiKey: null }) })
-    expect(r).toEqual({ conectado: false, mensagem: 'Brevo não conectado' })
-    expect((await db.select().from(funilInscricoes))[0].listaSync).toBe('pendente')
-  })
-
-  it('sem lista conectada: fica pendente e é contado', async () => {
-    await inscritoBoasVindas({ brevoId: '1' })
-    const b = brevoFalso()
-    const r = await sincronizarInscricoes({ db, cliente: b.cliente })
-    expect(r).toMatchObject({ conectado: true, adicionados: 0, semLista: 1 })
-    expect(b.chamadas.filter((c) => c.op === 'adicionarALista')).toHaveLength(0)
-    expect((await db.select().from(funilInscricoes))[0].listaSync).toBe('pendente')
-  })
-
-  it('com lista: adiciona os ativos, remove os que saíram, espera quem ainda não está no Brevo', async () => {
-    const b = brevoFalso()
-    await garantirFunis({ db })
-    await db.update(funis).set({ brevoListaId: 42 }).where(eq(funis.slug, 'boas-vindas'))
-    const a = await inscritoBoasVindas({ brevoId: '1' })
-    const semBrevo = await inscritoBoasVindas({ brevoId: null })
-    const saiu = await inscritoBoasVindas({ brevoId: '3' })
-    await sairDeTodosOsFunis(saiu.id, { db, motivo: 'manual' })
-    const r = await sincronizarInscricoes({ db, cliente: b.cliente })
-    expect(r).toMatchObject({ adicionados: 1, removidos: 1, aguardandoContato: 1, erros: 0, interrompido: null })
-    expect(b.chamadas.find((c) => c.op === 'adicionarALista')).toMatchObject({ listaId: 42, corpo: [a.emailNormalizado] })
-    expect(b.chamadas.find((c) => c.op === 'removerDaLista')).toMatchObject({ listaId: 42, corpo: [saiu.emailNormalizado] })
-    expect((await inscricao(a.id, 'boas-vindas')).listaSync).toBe('sincronizado')
-    expect((await inscricao(semBrevo.id, 'boas-vindas')).listaSync).toBe('pendente')
-    expect((await inscricao(saiu.id, 'boas-vindas')).listaSync).toBe('sincronizado')
-    // Nada reenviado na segunda rodada.
-    b.chamadas.length = 0
-    await sincronizarInscricoes({ db, cliente: b.cliente })
-    expect(b.chamadas.filter((c) => c.op === 'adicionarALista' || c.op === 'removerDaLista')).toHaveLength(0)
-  })
-
-  it('descadastrado com inscrição ativa (estado inconsistente) nunca é adicionado à lista', async () => {
-    const b = brevoFalso()
-    await garantirFunis({ db })
-    await db.update(funis).set({ brevoListaId: 42 }).where(eq(funis.slug, 'boas-vindas'))
-    const c = await inscritoBoasVindas({ brevoId: '1' })
-    await db.update(contatos).set({ status: 'descadastrado' }).where(eq(contatos.id, c.id))
-    await sincronizarInscricoes({ db, cliente: b.cliente })
-    expect(b.chamadas.filter((x) => x.op === 'adicionarALista')).toHaveLength(0)
-  })
-
-  it('erro geral do Brevo para e deixa pendente', async () => {
-    const b = brevoFalso()
-    await garantirFunis({ db })
-    await db.update(funis).set({ brevoListaId: 42 }).where(eq(funis.slug, 'boas-vindas'))
-    await inscritoBoasVindas({ brevoId: '1' })
-    b.falharTudo({ ok: false, motivo: 'http', status: 503, mensagem: 'O Brevo está indisponível (503). Tente de novo mais tarde.' })
-    const r = await sincronizarInscricoes({ db, cliente: b.cliente })
-    expect(r).toMatchObject({ interrompido: expect.stringContaining('503'), adicionados: 0 })
-    expect((await db.select().from(funilInscricoes))[0].listaSync).toBe('pendente')
-  })
-
-  it('erro de dados (400) marca só aquela inscrição como erro', async () => {
-    const b = brevoFalso()
-    await garantirFunis({ db })
-    await db.update(funis).set({ brevoListaId: 42 }).where(eq(funis.slug, 'boas-vindas'))
-    const ok = await inscritoBoasVindas({ brevoId: '1' })
-    const ruim = await inscritoBoasVindas({ brevoId: '2' })
-    const original = b.cliente.adicionarALista
-    b.cliente.adicionarALista = async (l, emails) =>
-      emails.includes(ruim.emailNormalizado) ? { ok: false, motivo: 'http', status: 400, mensagem: 'O Brevo recusou os dados (400).' } : original(l, emails)
-    const r = await sincronizarInscricoes({ db, cliente: b.cliente })
-    expect(r).toMatchObject({ adicionados: 1, erros: 1, interrompido: null })
-    expect((await inscricao(ok.id, 'boas-vindas')).listaSync).toBe('sincronizado')
-    expect(await inscricao(ruim.id, 'boas-vindas')).toMatchObject({ listaSync: 'erro', listaSyncErro: 'O Brevo recusou os dados (400).' })
-  })
-})
-
-describe('conectarListaBrevo', () => {
-  it('cria a pasta (uma vez) e a lista do funil', async () => {
-    const b = brevoFalso()
-    const r1 = await conectarListaBrevo('boas-vindas', { db, cliente: b.cliente })
-    const r2 = await conectarListaBrevo('reativacao', { db, cliente: b.cliente })
-    expect(r1).toMatchObject({ ok: true, criada: true, verificada: true })
-    expect(r2).toMatchObject({ ok: true, criada: true })
-    expect(b.pastas).toHaveLength(1)
-    expect([...b.listas.values()].map((l) => l.nome)).toEqual(['Painel OG — Boas-vindas', 'Painel OG — Reativação de clientes'])
-    expect((await obterFunil('boas-vindas', { db })).brevoListaId).toBe(r1.ok ? r1.listaId : -1)
-  })
-
-  it('aceita lista existente conferindo no Brevo; recusa a que não existe', async () => {
-    const b = brevoFalso()
-    b.listas.set(77, { id: 77, nome: 'Minha lista', pastaId: 1 })
-    expect(await conectarListaBrevo('nutricao-blog', { db, cliente: b.cliente, listaIdExistente: 77 })).toMatchObject({ ok: true, verificada: true, criada: false })
-    expect(await conectarListaBrevo('nutricao-blog', { db, cliente: b.cliente, listaIdExistente: 78 })).toEqual({ ok: false, motivo: 'lista_nao_encontrada' })
-    expect((await obterFunil('nutricao-blog', { db })).brevoListaId).toBe(77)
-  })
-
-  it('sem chave: guarda o id informado sem conferir; criar exige chave', async () => {
-    const semChave = criarClienteBrevo({ apiKey: null })
-    expect(await conectarListaBrevo('nutricao-blog', { db, cliente: semChave, listaIdExistente: 5 })).toMatchObject({ ok: true, verificada: false })
-    expect(await conectarListaBrevo('reativacao', { db, cliente: semChave })).toEqual({ ok: false, motivo: 'nao_conectado' })
-    expect(await conectarListaBrevo('reativacao', { db, cliente: semChave, listaIdExistente: -1 })).toEqual({ ok: false, motivo: 'lista_invalida' })
-  })
-
-  it('trocar de lista reabre as inscrições ativas para a lista nova', async () => {
-    const b = brevoFalso()
-    b.listas.set(1, { id: 1, nome: 'a', pastaId: 1 })
-    b.listas.set(2, { id: 2, nome: 'b', pastaId: 1 })
-    await conectarListaBrevo('boas-vindas', { db, cliente: b.cliente, listaIdExistente: 1 })
-    const c = await criar({ brevoId: '9' })
-    await inscreverBoasVindasDoSite(c.id, { db })
-    await sincronizarInscricoes({ db, cliente: b.cliente })
-    expect((await inscricao(c.id, 'boas-vindas')).listaSync).toBe('sincronizado')
-    await conectarListaBrevo('boas-vindas', { db, cliente: b.cliente, listaIdExistente: 2 })
-    expect((await inscricao(c.id, 'boas-vindas')).listaSync).toBe('pendente')
-  })
-})
-
 describe('resumoFunis', () => {
-  it('conta membros por status e pendências do Brevo', async () => {
+  it('conta membros por status', async () => {
     const a = await criar()
     const b = await criar()
     await inscreverBoasVindasDoSite(a.id, { db })
     await inscreverBoasVindasDoSite(b.id, { db })
     await sairDeTodosOsFunis(b.id, { db, motivo: 'x' })
     const r = await resumoFunis({ db })
-    expect(r.find((f) => f.slug === 'boas-vindas')).toMatchObject({ ativos: 1, sairam: 1, concluidos: 0, pendentesBrevo: 2 })
-    expect(r.find((f) => f.slug === 'reativacao')).toMatchObject({ ativos: 0, pendentesBrevo: 0 })
+    expect(r.find((f) => f.slug === 'boas-vindas')).toMatchObject({ ativos: 1, sairam: 1, concluidos: 0 })
+    expect(r.find((f) => f.slug === 'reativacao')).toMatchObject({ ativos: 0 })
   })
 })
 
 describe('sequências concluídas e reentrada', () => {
-  it('ativo além da duração vira concluido, sai da lista e conta no resumo; nutrição não conclui', async () => {
+  it('ativo além da duração vira concluido (contado da entrada) e conta no resumo; nutrição não conclui', async () => {
     const c = await criar()
     await inscrever('boas-vindas', [c.id], { db, caminho: 'site', agora: new Date(AGORA.getTime() - 14 * DIA) })
     const n = await criar({ status: 'cliente', baseLegal: 'contrato' })
     await inscrever('nutricao-blog', [n.id], { db, caminho: 'manual', agora: new Date(AGORA.getTime() - 400 * DIA) })
     const novo = await criar()
     await inscrever('boas-vindas', [novo.id], { db, caminho: 'site', agora: new Date(AGORA.getTime() - 12 * DIA) })
-    await naLista([c.id], new Date(AGORA.getTime() - 14 * DIA))
-    await naLista([n.id], new Date(AGORA.getTime() - 400 * DIA))
-    await naLista([novo.id], new Date(AGORA.getTime() - 12 * DIA))
     expect(await concluirSequencias({ db, agora: AGORA })).toBe(1)
-    expect(await inscricao(c.id, 'boas-vindas')).toMatchObject({ status: 'concluido', listaSync: 'pendente', motivoSaida: 'sequência concluída' })
+    expect(await inscricao(c.id, 'boas-vindas')).toMatchObject({ status: 'concluido', motivoSaida: 'sequência concluída' })
     expect((await inscricao(novo.id, 'boas-vindas')).status).toBe('ativo')
     expect((await inscricao(n.id, 'nutricao-blog')).status).toBe('ativo')
     expect((await eventosDe(c.id)).at(-1)).toMatchObject({ tipo: 'saiu_funil', dados: { concluido: true } })
@@ -433,10 +299,8 @@ describe('sequências concluídas e reentrada', () => {
     const removido = await criar({ status: 'cliente', baseLegal: 'contrato', criadoEm: antes(800) })
     const recemConcluido = await criar({ status: 'cliente', baseLegal: 'contrato', criadoEm: antes(800) })
     await inscrever('reativacao', [concluiu.id, removido.id], { db, caminho: 'cron', agora: antes(400) })
-    await naLista([concluiu.id, removido.id], antes(400))
     await concluirSequencias({ db, agora: antes(370) })
     await inscrever('reativacao', [recemConcluido.id], { db, caminho: 'cron', agora: antes(60) })
-    await naLista([recemConcluido.id], antes(60))
     await concluirSequencias({ db, agora: antes(30) })
     const f = await obterFunil('reativacao', { db })
     // `removido` voltou pela tela e o usuário o tirou à mão: a linha fica `saiu`.
@@ -449,169 +313,3 @@ describe('sequências concluídas e reentrada', () => {
   })
 })
 
-describe('boas-vindas na hora (after do webhook do site)', () => {
-  async function preparar() {
-    await garantirFunis({ db })
-    await db.update(funis).set({ brevoListaId: 42 }).where(eq(funis.slug, 'boas-vindas'))
-    const c = await criar()
-    await inscreverBoasVindasDoSite(c.id, { db })
-    return c
-  }
-
-  it('com chave e lista: envia o contato e o põe na lista', async () => {
-    const c = await preparar()
-    const b = brevoFalso()
-    expect(await enviarBoasVindasAgora(c.id, { db, cliente: b.cliente })).toBe('adicionado')
-    expect(b.contatos.get(c.emailNormalizado)?.listIds).toEqual([42])
-    expect((await inscricao(c.id, 'boas-vindas')).listaSync).toBe('sincronizado')
-    const [linha] = await db.select().from(contatos).where(eq(contatos.id, c.id))
-    expect(linha.syncStatus).toBe('sincronizado')
-  })
-
-  it('timeout do Brevo: tudo fica pendente para a rotina', async () => {
-    const c = await preparar()
-    const b = brevoFalso()
-    b.falharTudo({ ok: false, motivo: 'timeout', mensagem: 'O Brevo não respondeu em 5 s.' })
-    expect(await enviarBoasVindasAgora(c.id, { db, cliente: b.cliente })).toBe('pendente')
-    expect((await inscricao(c.id, 'boas-vindas')).listaSync).toBe('pendente')
-    const [linha] = await db.select().from(contatos).where(eq(contatos.id, c.id))
-    expect(linha.syncStatus).toBe('pendente')
-  })
-
-  it('sem chave: nenhuma chamada; sem lista: nenhuma chamada', async () => {
-    const c = await preparar()
-    expect(await enviarBoasVindasAgora(c.id, { db, cliente: criarClienteBrevo({ apiKey: null }) })).toBe('nao_conectado')
-    await db.update(funis).set({ brevoListaId: null }).where(eq(funis.slug, 'boas-vindas'))
-    const b = brevoFalso()
-    expect(await enviarBoasVindasAgora(c.id, { db, cliente: b.cliente })).toBe('sem_lista')
-    expect(b.chamadas).toHaveLength(0)
-  })
-
-  it('webhook do site chama o agendador com o id do contato', async () => {
-    const ids: number[] = []
-    const corpo = new URLSearchParams({ Nome: 'X', 'E-mail': 'agenda.e9@example.com' }).toString()
-    await tratarWebhookSite(
-      new Request('http://localhost/api/webhooks/site?token=t', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: corpo }),
-      { db, token: 't', limitador: new LimitadorPorIp(100, 60_000), depoisDeGravar: (id) => ids.push(id) },
-    )
-    const [c] = await db.select().from(contatos)
-    expect(ids).toEqual([c.id])
-  })
-})
-
-describe('fila sem inanição', () => {
-  it('inscrições de contatos com erro de sincronização vão por último', async () => {
-    await garantirFunis({ db })
-    await db.update(funis).set({ brevoListaId: 42 }).where(eq(funis.slug, 'boas-vindas'))
-    const ruim = await criar({ brevoId: '1', syncStatus: 'erro' })
-    const bom = await criar({ brevoId: '2' })
-    await inscreverBoasVindasDoSite(ruim.id, { db })
-    await inscreverBoasVindasDoSite(bom.id, { db })
-    const b = brevoFalso()
-    await sincronizarInscricoes({ db, cliente: b.cliente, limite: 1 })
-    expect(b.chamadas.find((c) => c.op === 'adicionarALista')?.corpo).toEqual([bom.emailNormalizado])
-  })
-})
-
-describe('conclusão conta da entrada na lista do Brevo, não da inscrição', () => {
-  const antes = (dias: number) => new Date(AGORA.getTime() - dias * DIA)
-
-  it('sem conta no Brevo: ninguém conclui, nem um ano depois', async () => {
-    const c = await criar({ brevoId: '1' })
-    await inscrever('boas-vindas', [c.id], { db, caminho: 'site', agora: antes(365) })
-    await sincronizarInscricoes({ db, cliente: criarClienteBrevo({ apiKey: null }), agora: antes(300) })
-    expect(await concluirSequencias({ db, agora: AGORA })).toBe(0)
-    expect(await inscricao(c.id, 'boas-vindas')).toMatchObject({ status: 'ativo', naListaEm: null })
-  })
-
-  it('com lista mas sem o contato no Brevo ainda: não conclui', async () => {
-    await garantirFunis({ db })
-    await db.update(funis).set({ brevoListaId: 42 }).where(eq(funis.slug, 'boas-vindas'))
-    const c = await criar({ brevoId: null })
-    await inscrever('boas-vindas', [c.id], { db, caminho: 'site', agora: antes(100) })
-    await sincronizarInscricoes({ db, cliente: brevoFalso().cliente, agora: antes(99) })
-    expect(await concluirSequencias({ db, agora: AGORA })).toBe(0)
-  })
-
-  it('entrou na lista no dia N: conclui só depois da sequência contada de N', async () => {
-    await garantirFunis({ db })
-    await db.update(funis).set({ brevoListaId: 42 }).where(eq(funis.slug, 'boas-vindas'))
-    const c = await criar({ brevoId: '1' })
-    await inscrever('boas-vindas', [c.id], { db, caminho: 'site', agora: antes(100) })
-    // O Brevo só foi conectado 12 dias atrás.
-    await sincronizarInscricoes({ db, cliente: brevoFalso().cliente, agora: antes(12) })
-    expect((await inscricao(c.id, 'boas-vindas')).naListaEm).toEqual(antes(12))
-    expect(await concluirSequencias({ db, agora: AGORA })).toBe(0)
-    expect(await concluirSequencias({ db, agora: new Date(AGORA.getTime() + 2 * DIA) })).toBe(1)
-    expect((await inscricao(c.id, 'boas-vindas')).status).toBe('concluido')
-  })
-
-  it('o caminho um por um (lote recusado) também grava a entrada na lista', async () => {
-    await garantirFunis({ db })
-    await db.update(funis).set({ brevoListaId: 42 }).where(eq(funis.slug, 'boas-vindas'))
-    const ok = await criar({ brevoId: '1' })
-    const ruim = await criar({ brevoId: '2' })
-    await inscrever('boas-vindas', [ok.id, ruim.id], { db, caminho: 'site', agora: antes(20) })
-    const b = brevoFalso()
-    const original = b.cliente.adicionarALista
-    b.cliente.adicionarALista = async (l, emails) =>
-      emails.includes(ruim.emailNormalizado) ? { ok: false, motivo: 'http', status: 400, mensagem: 'O Brevo recusou os dados (400).' } : original(l, emails)
-    await sincronizarInscricoes({ db, cliente: b.cliente, agora: antes(19) })
-    expect((await inscricao(ok.id, 'boas-vindas')).naListaEm).toEqual(antes(19))
-    expect((await inscricao(ruim.id, 'boas-vindas')).naListaEm).toBeNull()
-  })
-
-  it('trocar a lista do funil zera a entrada na lista: a contagem recomeça na lista nova', async () => {
-    const b = brevoFalso()
-    b.listas.set(1, { id: 1, nome: 'a', pastaId: 1 })
-    b.listas.set(2, { id: 2, nome: 'b', pastaId: 1 })
-    await conectarListaBrevo('boas-vindas', { db, cliente: b.cliente, listaIdExistente: 1 })
-    const c = await criar({ brevoId: '9' })
-    await inscrever('boas-vindas', [c.id], { db, caminho: 'site', agora: antes(30) })
-    await sincronizarInscricoes({ db, cliente: b.cliente, agora: antes(30) })
-    await conectarListaBrevo('boas-vindas', { db, cliente: b.cliente, listaIdExistente: 2 })
-    expect(await inscricao(c.id, 'boas-vindas')).toMatchObject({ naListaEm: null, listaSync: 'pendente' })
-    expect(await concluirSequencias({ db, agora: AGORA })).toBe(0)
-    await sincronizarInscricoes({ db, cliente: b.cliente, agora: antes(1) })
-    expect((await inscricao(c.id, 'boas-vindas')).naListaEm).toEqual(antes(1))
-  })
-
-  it('reentrada zera a entrada na lista anterior', async () => {
-    const c = await criar()
-    await inscrever('boas-vindas', [c.id], { db, caminho: 'site', agora: antes(60) })
-    await naLista([c.id], antes(60))
-    await concluirSequencias({ db, agora: antes(30) })
-    await inscrever('boas-vindas', [c.id], { db, caminho: 'manual', agora: antes(20) })
-    expect(await inscricao(c.id, 'boas-vindas')).toMatchObject({ status: 'ativo', naListaEm: null })
-    expect(await concluirSequencias({ db, agora: AGORA })).toBe(0)
-  })
-})
-
-describe('uma lista do Brevo por funil', () => {
-  it('recusa uma lista já usada por outro funil e diz qual', async () => {
-    const b = brevoFalso()
-    b.listas.set(7, { id: 7, nome: 'x', pastaId: 1 })
-    expect(await conectarListaBrevo('boas-vindas', { db, cliente: b.cliente, listaIdExistente: 7 })).toMatchObject({ ok: true })
-    expect(await conectarListaBrevo('nutricao-blog', { db, cliente: b.cliente, listaIdExistente: 7 })).toEqual({
-      ok: false,
-      motivo: 'lista_em_uso',
-      funil: 'boas-vindas',
-    })
-    expect((await obterFunil('nutricao-blog', { db })).brevoListaId).toBeNull()
-  })
-
-  it('sem chave também recusa; reconectar a mesma lista no mesmo funil continua valendo', async () => {
-    const semChave = criarClienteBrevo({ apiKey: null })
-    expect(await conectarListaBrevo('reativacao', { db, cliente: semChave, listaIdExistente: 9 })).toMatchObject({ ok: true })
-    expect(await conectarListaBrevo('boas-vindas', { db, cliente: semChave, listaIdExistente: 9 })).toMatchObject({ ok: false, motivo: 'lista_em_uso', funil: 'reativacao' })
-    expect(await conectarListaBrevo('reativacao', { db, cliente: semChave, listaIdExistente: 9 })).toMatchObject({ ok: true })
-  })
-
-  it('o banco recusa duas linhas com a mesma lista (índice único parcial)', async () => {
-    await garantirFunis({ db })
-    await db.update(funis).set({ brevoListaId: 3 }).where(eq(funis.slug, 'boas-vindas'))
-    await expect(db.update(funis).set({ brevoListaId: 3 }).where(eq(funis.slug, 'reativacao'))).rejects.toThrow()
-    // Vários funis sem lista continuam permitidos.
-    expect((await db.select().from(funis)).filter((f) => f.brevoListaId === null)).toHaveLength(3)
-  })
-})

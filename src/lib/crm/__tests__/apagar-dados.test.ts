@@ -37,7 +37,7 @@ async function contatoCompleto() {
       uf: 'RN',
       notas: 'cliente antiga',
       tags: ['previdenciario', 'outubro'],
-      brevoId: '321',
+      resendContatoId: '321',
       origem: 'site',
       baseLegal: 'consentimento',
       status: 'lead',
@@ -73,7 +73,7 @@ describe('apagarDadosAPedido', () => {
       uf: null,
       notas: null,
       tags: [],
-      brevoId: null,
+      resendContatoId: null,
       status: 'descadastrado',
       syncStatus: 'pendente',
       dadosApagadosEm: AGORA,
@@ -94,7 +94,7 @@ describe('apagarDadosAPedido', () => {
     await inscrever('boas-vindas', [c.id], { db, caminho: 'site', agora: AGORA })
     await apagarDadosAPedido(c.id, 'pedido', { db, agora: AGORA })
     const [i] = await db.select().from(funilInscricoes).where(eq(funilInscricoes.contatoId, c.id))
-    expect(i).toMatchObject({ status: 'saiu', listaSync: 'pendente' })
+    expect(i).toMatchObject({ status: 'saiu' })
   })
 
   it('exige motivo; contato inexistente; não apaga duas vezes', async () => {
@@ -161,7 +161,7 @@ describe('apagarDadosAPedido', () => {
     expect(ultimo).toMatchObject({ tipo: 'clicado', dados: null })
   })
 
-  it('a sincronização bloqueia no Brevo e não guarda de volta o id do Brevo', async () => {
+  it('a sincronização bloqueia no Brevo e não grava id de contato', async () => {
     const c = await contatoCompleto()
     await apagarDadosAPedido(c.id, 'pedido', { db })
     const b = brevoFalso([{ id: 321, email: EMAIL, emailBlacklisted: false, listIds: [4], atributos: {} }])
@@ -169,6 +169,6 @@ describe('apagarDadosAPedido', () => {
     expect(b.contatos.get(EMAIL)).toMatchObject({ emailBlacklisted: true, listIds: [] })
     const upsert = b.chamadas.find((x) => x.op === 'upsert')
     expect(upsert?.corpo).toMatchObject({ atributos: {} })
-    expect(await linha(c.id)).toMatchObject({ syncStatus: 'sincronizado', brevoId: null })
+    expect(await linha(c.id)).toMatchObject({ syncStatus: 'sincronizado', resendContatoId: null })
   })
 })

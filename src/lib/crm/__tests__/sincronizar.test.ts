@@ -37,14 +37,13 @@ describe('sincronizarPendentes', () => {
     expect(await db.select().from(sincronizacoes)).toHaveLength(0)
   })
 
-  it('envia pendentes com atributos, grava sincronizado + brevo_id e registra a execução', async () => {
+  it('envia pendentes com atributos, grava sincronizado e registra a execução', async () => {
     const id = await criar('a@example.com', { telefone: '11 99999-0000', escritorio: 'Silva Adv', cidade: 'Campinas', uf: 'SP' })
     const b = brevoFalso()
     const r = await sincronizarPendentes({ db, cliente: b.cliente })
     expect(r).toEqual({ conectado: true, enviados: 1, erros: 0, restantes: 0, interrompido: null })
     const c = await linha(id)
     expect(c.syncStatus).toBe('sincronizado')
-    expect(c.brevoId).toBe('100')
     expect(b.contatos.get('a@example.com')?.atributos).toEqual({
       NOME: 'Fulano', TELEFONE: '11 99999-0000', ESCRITORIO: 'Silva Adv', CIDADE: 'Campinas', UF: 'SP',
     })
@@ -57,13 +56,6 @@ describe('sincronizarPendentes', () => {
     const b = brevoFalso()
     await sincronizarPendentes({ db, cliente: b.cliente })
     expect(b.contatos.get('sem-nome@example.com')?.atributos).toEqual({ CIDADE: 'Santos' })
-  })
-
-  it('contato que já existe no Brevo (204): busca o id', async () => {
-    const id = await criar('a@example.com')
-    const b = brevoFalso([{ id: 55, email: 'a@example.com', emailBlacklisted: false, listIds: [], atributos: {} }])
-    await sincronizarPendentes({ db, cliente: b.cliente })
-    expect((await linha(id)).brevoId).toBe('55')
   })
 
   it('em lotes: respeita o teto por execução e continua na próxima', async () => {
@@ -182,7 +174,7 @@ describe('importarDoBrevo', () => {
     const todos = await db.select().from(contatos)
     const a = todos.find((c) => c.emailNormalizado === 'a@example.com')!
     const bb = todos.find((c) => c.emailNormalizado === 'b@example.com')!
-    expect(a).toMatchObject({ origem: 'brevo', baseLegal: 'legitimo_interesse', nome: 'Ana', uf: 'SP', brevoId: '1', status: 'lead' })
+    expect(a).toMatchObject({ origem: 'brevo', baseLegal: 'legitimo_interesse', nome: 'Ana', uf: 'SP', status: 'lead' })
     expect(bb).toMatchObject({ nome: 'Bia Lima', status: 'descadastrado' })
   })
 
@@ -225,7 +217,7 @@ describe('estadoIntegracao', () => {
 describe('leitura de volta do bloqueio no Brevo', () => {
   it('contato já existente no Brevo e bloqueado lá vira descadastrado (origem brevo) e sai dos funis', async () => {
     const id = await criar('bloq@example.com')
-    await db.update(contatos).set({ brevoId: '55', status: 'cliente' }).where(eq(contatos.id, id))
+    await db.update(contatos).set({ status: 'cliente' }).where(eq(contatos.id, id))
     await inscrever('nutricao-blog', [id], { db, caminho: 'manual' })
     const b = brevoFalso([{ id: 55, email: 'bloq@example.com', emailBlacklisted: true, listIds: [3], atributos: {} }])
     const r = await sincronizarPendentes({ db, cliente: b.cliente, registrar: false })
@@ -246,7 +238,7 @@ describe('leitura de volta do bloqueio no Brevo', () => {
     const id = await criar('livre@example.com')
     const b = brevoFalso([{ id: 56, email: 'livre@example.com', emailBlacklisted: false, listIds: [], atributos: {} }])
     await sincronizarPendentes({ db, cliente: b.cliente, registrar: false })
-    expect(await linha(id)).toMatchObject({ status: 'lead', syncStatus: 'sincronizado', brevoId: '56' })
+    expect(await linha(id)).toMatchObject({ status: 'lead', syncStatus: 'sincronizado' })
   })
 })
 

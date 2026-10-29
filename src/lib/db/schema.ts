@@ -296,6 +296,57 @@ export const artigos = pgTable('artigos', {
 export type Artigo = typeof artigos.$inferSelect
 
 // ---------------------------------------------------------------------------
+// Distribuição do artigo: newsletter (Resend) e peças (LinkedIn, carrossel, newsletter).
+// ---------------------------------------------------------------------------
+
+export const newsletterSituacao = pgEnum('newsletter_situacao', ['rascunho', 'agendado', 'enviado', 'erro'])
+
+export const newslettersEnvios = pgTable('newsletters_envios', {
+  id: serial('id').primaryKey(),
+  artigoId: integer('artigo_id')
+    .notNull()
+    .references(() => artigos.id),
+  resendBroadcastId: text('resend_broadcast_id'),
+  situacao: newsletterSituacao('situacao').notNull().default('rascunho'),
+  destinatarios: integer('destinatarios'),
+  agendadoPara: timestamp('agendado_para', { withTimezone: true }),
+  enviadoEm: timestamp('enviado_em', { withTimezone: true }),
+  erro: text('erro'),
+  criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
+  atualizadoEm: timestamp('atualizado_em', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export type NewsletterEnvio = typeof newslettersEnvios.$inferSelect
+
+export const pecaTipo = pgEnum('peca_tipo', ['linkedin_artigo', 'linkedin_post', 'carrossel', 'newsletter'])
+export const pecaSituacao = pgEnum('peca_situacao', ['gerando', 'rascunho', 'erro', 'publicado'])
+
+export const pecasDistribuicao = pgTable(
+  'pecas_distribuicao',
+  {
+    id: serial('id').primaryKey(),
+    artigoId: integer('artigo_id')
+      .notNull()
+      .references(() => artigos.id),
+    tipo: pecaTipo('tipo').notNull(),
+    situacao: pecaSituacao('situacao').notNull().default('gerando'),
+    /** Validado pelo schema do tipo da peça. */
+    conteudo: jsonb('conteudo'),
+    /** `escura` | `clara`; só no carrossel. */
+    variacao: text('variacao'),
+    erro: text('erro'),
+    publicadoEm: timestamp('publicado_em', { withTimezone: true }),
+    urlPublicada: text('url_publicada'),
+    modelo: text('modelo'),
+    criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
+    atualizadoEm: timestamp('atualizado_em', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('pecas_distribuicao_artigo_tipo_uq').on(t.artigoId, t.tipo)],
+)
+
+export type PecaDistribuicao = typeof pecasDistribuicao.$inferSelect
+
+// ---------------------------------------------------------------------------
 // CRM (E7): contatos, linha do tempo e lotes de importação de planilha.
 // ---------------------------------------------------------------------------
 
@@ -342,7 +393,8 @@ export const contatos = pgTable(
     status: contatoStatus('status').notNull().default('lead'),
     tags: jsonb('tags').notNull().$type<string[]>().default([]),
     notas: text('notas'),
-    brevoId: text('brevo_id'),
+    /** Id do contato no Resend (preenchido pela sincronização do segmento da newsletter). */
+    resendContatoId: text('resend_contato_id'),
     syncStatus: syncStatus('sync_status').notNull().default('pendente'),
     syncErro: text('sync_erro'),
     /**
@@ -389,18 +441,12 @@ export const importacoesContatos = pgTable('importacoes_contatos', {
 })
 
 // ---------------------------------------------------------------------------
-// Brevo (E8): eventos do webhook já processados, para que a repetição não grave nada.
+// Webhooks: eventos já processados, para que a repetição não grave nada.
 // ---------------------------------------------------------------------------
 
-/**
- * Chave = sha256 de evento + email + id da mensagem/campanha + instante do evento. O mesmo
- * evento entregue de novo pelo Brevo bate na chave primária e é ignorado.
- */
-export const brevoEventosRecebidos = pgTable('brevo_eventos_recebidos', {
-  chave: text('chave').primaryKey(),
-  contatoId: integer('contato_id')
-    .notNull()
-    .references(() => contatos.id, { onDelete: 'cascade' }),
+/** Chave = `svix-id` do evento (Resend). O mesmo evento entregue de novo bate na chave e é ignorado. */
+export const webhookEventosRecebidos = pgTable('webhook_eventos_recebidos', {
+  id: text('id').primaryKey(),
   recebidoEm: timestamp('recebido_em', { withTimezone: true }).notNull().defaultNow(),
 })
 
@@ -409,14 +455,13 @@ export type EventoContato = typeof eventosContato.$inferSelect
 export type ImportacaoContatos = typeof importacoesContatos.$inferSelect
 
 // ---------------------------------------------------------------------------
-// Funis (E9): cada funil corresponde a uma lista do Brevo; o CRM decide quem está em qual.
+// Funis (E9): o CRM decide quem está em qual funil.
 // ---------------------------------------------------------------------------
 
 export const funilInscricaoStatus = pgEnum('funil_inscricao_status', ['ativo', 'concluido', 'saiu'])
 
 /**
- * Os quatro funis são criados por `garantirFunis()` (upsert por `slug`). `ativo`, a lista do
- * Brevo, o teto diário e o checklist são estado do usuário: o upsert nunca os sobrescreve.
+ * Os quatro funis são criados por `garantirFunis()` (upsert por `slug`). `ativo`, o teto diário e o checklist são estado do usuário: o upsert nunca os sobrescreve.
  */
 export const funis = pgTable(
   'funis',
@@ -426,7 +471,6 @@ export const funis = pgTable(
     nome: text('nome').notNull(),
     descricao: text('descricao').notNull(),
     ativo: boolean('ativo').notNull().default(false),
-    brevoListaId: integer('brevo_lista_id'),
     /** Máximo de inscrições por dia (fuso de Brasília); null = sem teto próprio. */
     tetoDiario: integer('teto_diario'),
     /** Base legal exigida para entrar (prospecção fria: legítimo interesse). */
@@ -436,15 +480,11 @@ export const funis = pgTable(
     criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
     atualizadoEm: timestamp('atualizado_em', { withTimezone: true }).notNull().defaultNow(),
   },
-  // Uma lista do Brevo serve a um funil só: concluir ou sair de um funil tira o contato da
-  // lista, o que o cortaria em silêncio de outro funil que usasse a mesma lista.
-  (t) => [uniqueIndex('funis_brevo_lista_id_uq').on(t.brevoListaId).where(sql`${t.brevoListaId} is not null`)],
 )
 
 /**
  * Participação de um contato num funil. Uma linha por contato e funil (reentrada reabre a
- * linha). `lista_sync` diz se o Brevo já reflete o estado: `pendente` com status `ativo` =
- * falta adicionar à lista; `pendente` com `saiu`/`concluido` = falta remover.
+ * linha).
  */
 export const funilInscricoes = pgTable(
   'funil_inscricoes',
@@ -462,14 +502,6 @@ export const funilInscricoes = pgTable(
     entrouEm: timestamp('entrou_em', { withTimezone: true }).notNull().defaultNow(),
     saiuEm: timestamp('saiu_em', { withTimezone: true }),
     motivoSaida: text('motivo_saida'),
-    listaSync: syncStatus('lista_sync').notNull().default('pendente'),
-    listaSyncErro: text('lista_sync_erro'),
-    /**
-     * Quando o contato entrou de fato na lista do Brevo (a automação só envia a partir daí).
-     * Null enquanto não entrou; volta a null quando o funil troca de lista. A conclusão da
-     * sequência conta daqui, não da inscrição.
-     */
-    naListaEm: timestamp('na_lista_em', { withTimezone: true }),
   },
   (t) => [
     unique('funil_inscricoes_contato_funil_uq').on(t.contatoId, t.funilId),
@@ -479,3 +511,25 @@ export const funilInscricoes = pgTable(
 
 export type Funil = typeof funis.$inferSelect
 export type FunilInscricao = typeof funilInscricoes.$inferSelect
+
+export const envioStatus = pgEnum('envio_status', ['enviado', 'erro'])
+
+/** Um email de etapa de funil enviado (ou que falhou). Único por (inscrição, etapa): a etapa nunca sai duas vezes. */
+export const enviosFunil = pgTable(
+  'envios_funil',
+  {
+    id: serial('id').primaryKey(),
+    inscricaoId: integer('inscricao_id')
+      .notNull()
+      .references(() => funilInscricoes.id, { onDelete: 'cascade' }),
+    /** Índice da etapa na sequência do funil. */
+    etapa: integer('etapa').notNull(),
+    status: envioStatus('status').notNull(),
+    resendEmailId: text('resend_email_id'),
+    erro: text('erro'),
+    enviadoEm: timestamp('enviado_em', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('envios_funil_inscricao_etapa_uq').on(t.inscricaoId, t.etapa)],
+)
+
+export type EnvioFunil = typeof enviosFunil.$inferSelect

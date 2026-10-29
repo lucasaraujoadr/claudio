@@ -24,11 +24,13 @@ export async function criarBancoTesteFunis(): Promise<{ db: BancoCrm; pg: PGlite
     contatos: schema.contatos,
     importacoesContatos: schema.importacoesContatos,
     eventosContato: schema.eventosContato,
-    brevoEventosRecebidos: schema.brevoEventosRecebidos,
+    webhookEventosRecebidos: schema.webhookEventosRecebidos,
     sincronizacoes: schema.sincronizacoes,
     funilInscricaoStatus: schema.funilInscricaoStatus,
     funis: schema.funis,
     funilInscricoes: schema.funilInscricoes,
+    envioStatus: schema.envioStatus,
+    enviosFunil: schema.enviosFunil,
   }
   const comandos = await generateMigration(generateDrizzleJson({}), generateDrizzleJson(tabelas))
   for (const c of comandos) await pg.exec(c)

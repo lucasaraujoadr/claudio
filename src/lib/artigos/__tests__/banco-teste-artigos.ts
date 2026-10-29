@@ -19,12 +19,17 @@ export async function criarBancoTesteArtigos(): Promise<{ db: BancoCrm; fechar: 
     potencial: schema.potencial,
     teseStatus: schema.teseStatus,
     artigoSituacao: schema.artigoSituacao,
+    newsletterSituacao: schema.newsletterSituacao,
+    pecaTipo: schema.pecaTipo,
+    pecaSituacao: schema.pecaSituacao,
     clusters: schema.clusters,
     topics: schema.topics,
     briefings: schema.briefings,
     tendencias: schema.tendencias,
     tesesSugeridas: schema.tesesSugeridas,
     artigos: schema.artigos,
+    newslettersEnvios: schema.newslettersEnvios,
+    pecasDistribuicao: schema.pecasDistribuicao,
   }
   const comandos = await generateMigration(generateDrizzleJson({}), generateDrizzleJson(tabelas))
   for (const c of comandos) await pg.exec(c)

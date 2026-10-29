@@ -37,20 +37,6 @@ async function tema(extra: Partial<typeof topics.$inferInsert> = {}) {
 const REMETENTE = { nome: 'OG', email: 'contato@example.com' }
 
 describe('criarRascunhoCampanhaBlog', () => {
-  it('cria rascunho para a lista da nutrição, com título e resumo do briefing; nunca agenda nem envia', async () => {
-    const t = await tema()
-    await db.insert(briefings).values({ topicId: t.id, title: 'Revisão: o que conferir', metaDescription: 'Pontos de atenção.', outline: [], faq: [], linksInternos: [], keywordsSecundarias: [], modelo: 'x' })
-    await garantirFunis({ db })
-    await db.update(funis).set({ brevoListaId: 9 }).where(eq(funis.slug, 'nutricao-blog'))
-    const b = brevoFalso()
-    const r = await criarRascunhoCampanhaBlog(t.id, { db, cliente: b.cliente, remetente: REMETENTE })
-    expect(r.ok).toBe(true)
-    expect(b.campanhas).toHaveLength(1)
-    expect(b.campanhas[0]).toMatchObject({ assunto: 'Novo artigo: Revisão: o que conferir', previewText: 'Pontos de atenção.', listIds: [9], remetente: REMETENTE })
-    expect(Object.keys(b.campanhas[0])).not.toContain('scheduledAt')
-    expect(b.chamadas.map((c) => c.op)).toEqual(['campanha'])
-  })
-
   it('sem chave: devolve o texto composto para copiar', async () => {
     const t = await tema()
     const r = await criarRascunhoCampanhaBlog(t.id, { db, cliente: criarClienteBrevo({ apiKey: null }), remetente: REMETENTE })
@@ -58,12 +44,10 @@ describe('criarRascunhoCampanhaBlog', () => {
     if (!r.ok && 'composta' in r) expect(r.composta.texto).toContain('https://ogpericiacontabil.com.br/blog/revisao/?utm_source=brevo')
   })
 
-  it('sem lista da nutrição ou sem remetente: não chama o Brevo e devolve o texto', async () => {
+  it('sem lista da nutrição: não chama o Brevo e devolve o texto', async () => {
     const t = await tema()
     const b = brevoFalso()
     expect(await criarRascunhoCampanhaBlog(t.id, { db, cliente: b.cliente, remetente: REMETENTE })).toMatchObject({ ok: false, motivo: 'sem_lista' })
-    await db.update(funis).set({ brevoListaId: 9 }).where(eq(funis.slug, 'nutricao-blog'))
-    expect(await criarRascunhoCampanhaBlog(t.id, { db, cliente: b.cliente, remetente: null })).toMatchObject({ ok: false, motivo: 'sem_remetente' })
     expect(b.campanhas).toHaveLength(0)
   })
 

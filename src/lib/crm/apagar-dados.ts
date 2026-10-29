@@ -44,7 +44,7 @@ export async function apagarDadosAPedido(
         uf: null,
         notas: null,
         tags: [],
-        brevoId: null,
+        resendContatoId: null,
         status: 'descadastrado',
         syncStatus: 'pendente',
         syncErro: null,

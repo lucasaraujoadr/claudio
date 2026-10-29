@@ -62,7 +62,7 @@ export type CampoContato =
   | 'status'
   | 'tags'
   | 'notas'
-  | 'brevoId'
+  | 'resendContatoId'
 
 export const ROTULO_CAMPO: Record<CampoContato, string> = {
   nome: 'Nome',
@@ -75,7 +75,7 @@ export const ROTULO_CAMPO: Record<CampoContato, string> = {
   status: 'Status',
   tags: 'Tags',
   notas: 'Notas',
-  brevoId: 'Id no Brevo',
+  resendContatoId: 'Id no Resend',
 }
 
 /** Entrada de `upsertContato`. Campo ausente, `null` ou só espaços = "não informado". */
@@ -93,7 +93,7 @@ export type DadosContato = {
   status?: StatusContato | null
   tags?: readonly string[] | null
   notas?: string | null
-  brevoId?: string | null
+  resendContatoId?: string | null
 }
 
 const UFS = [

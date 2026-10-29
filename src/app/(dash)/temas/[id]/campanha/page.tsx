@@ -35,10 +35,10 @@ export default async function CampanhaTemaPage({
   const aviso = typeof sp.aviso === 'string' ? AVISOS[sp.aviso] : undefined
 
   let tema: Awaited<ReturnType<typeof comporCampanhaDoTema>> | null = null
-  let listaId: number | null = null
+  // O funil não guarda mais lista do Brevo; a campanha do blog sai com o Task 7.
+  const listaId: number | null = null
   try {
     tema = await comporCampanhaDoTema(id)
-    listaId = (await obterFunil('nutricao-blog')).brevoListaId
   } catch (e) {
     console.error('temas: leitura da campanha falhou:', e instanceof Error ? e.name : 'erro')
   }

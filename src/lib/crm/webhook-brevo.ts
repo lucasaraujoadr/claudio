@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { eq } from 'drizzle-orm'
-import { brevoEventosRecebidos, contatos } from '@/lib/db/schema'
+import { webhookEventosRecebidos, contatos } from '@/lib/db/schema'
 import { lerCorpoLimitado, tokenConfere, tokenDaRequisicao } from '@/lib/webhooks'
 import { bancoPadrao, type BancoCrm } from './banco'
 import { mudarStatus, registrarEvento, type TipoEvento } from './contatos'
@@ -21,7 +21,7 @@ import { sairDeTodosOsFunis } from './ganchos-funis'
  * - `opened`, `click`, `delivered` → só o evento na linha do tempo;
  * - qualquer outro evento → aceito (200) e ignorado;
  * - email que não está no CRM → aceito e ignorado (o Brevo nunca cria contato aqui);
- * - o mesmo evento entregue de novo → nada novo é gravado (chave em `brevo_eventos_recebidos`).
+ * - o mesmo evento entregue de novo → nada novo é gravado (chave em `webhook_eventos_recebidos`).
  */
 
 export const MAX_CORPO_BREVO = 1024 * 1024
@@ -127,10 +127,10 @@ export async function aplicarEventoBrevo(ev: EventoBrevo, opts: { db?: BancoCrm 
       .for('update')
     if (!c) return 'contato_desconhecido' as const
     const novo = await banco
-      .insert(brevoEventosRecebidos)
-      .values({ chave: ev.chave, contatoId: c.id })
-      .onConflictDoNothing({ target: brevoEventosRecebidos.chave })
-      .returning({ chave: brevoEventosRecebidos.chave })
+      .insert(webhookEventosRecebidos)
+      .values({ id: ev.chave })
+      .onConflictDoNothing({ target: webhookEventosRecebidos.id })
+      .returning({ id: webhookEventosRecebidos.id })
     if (novo.length === 0) return 'repetido' as const
     // Dados apagados a pedido: o evento entra (é a prova de que o envio foi barrado), sem dados.
     await registrarEvento(c.id, ev.tipo, c.dadosApagadosEm ? null : ev.dados, { db: banco, ...(ev.em ? { em: ev.em } : {}) })

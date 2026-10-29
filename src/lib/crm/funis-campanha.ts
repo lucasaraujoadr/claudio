@@ -3,7 +3,6 @@ import { criarClienteBrevo, type ClienteBrevo } from '@/lib/brevo'
 import { briefings, topics } from '@/lib/db/schema'
 import { bancoPadrao, type BancoCrm } from './banco'
 import { comporCampanhaBlog, type CampanhaComposta } from './funis-conteudo'
-import { obterFunil } from './funis'
 
 /**
  * Nutrição com o blog: rascunho de campanha no Brevo para a lista do funil `nutricao-blog`,
@@ -56,18 +55,6 @@ export async function criarRascunhoCampanhaBlog(
   const { composta } = tema
   const cliente = opts.cliente ?? criarClienteBrevo()
   if (!cliente.conectado) return { ok: false, motivo: 'nao_conectado', composta }
-  const funil = await obterFunil('nutricao-blog', { db })
-  if (!funil.brevoListaId) return { ok: false, motivo: 'sem_lista', composta }
-  const remetente = opts.remetente === undefined ? remetenteConfigurado() : opts.remetente
-  if (!remetente) return { ok: false, motivo: 'sem_remetente', composta }
-  const r = await cliente.criarRascunhoCampanha({
-    nome: composta.nome,
-    assunto: composta.assunto,
-    remetente,
-    html: composta.html,
-    previewText: composta.preCabecalho,
-    listIds: [funil.brevoListaId],
-  })
-  if (!r.ok) return { ok: false, motivo: 'brevo', composta, mensagem: r.mensagem }
-  return { ok: true, campanhaId: r.dados.id, composta }
+  // O funil não guarda mais lista do Brevo: sem lista, a campanha do blog não é criada (removida no Task 7).
+  return { ok: false, motivo: 'sem_lista', composta }
 }
