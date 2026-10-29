@@ -6,7 +6,6 @@ import { upsertContato } from '@/lib/crm/contatos'
 import { garantirFunis, inscrever } from '@/lib/crm/funis'
 import { apagarDadosAPedido } from '@/lib/crm/apagar-dados'
 import { criarBancoTesteFunis } from '@/lib/crm/__tests__/banco-teste-funis'
-import type { ClienteResend } from '@/lib/resend'
 import {
   descadastrarPorToken,
   gerarTokenDescadastro,
@@ -43,18 +42,6 @@ async function linha(id: number) {
 async function eventos(id: number) {
   return db.select().from(eventosContato).where(eq(eventosContato.contatoId, id)).orderBy(asc(eventosContato.id))
 }
-function clienteFalso(falha = false) {
-  const chamadas: { email: string; nome: string | null; descadastrado: boolean }[] = []
-  const cliente = {
-    salvarContato: async (c: { email: string; nome: string | null; descadastrado: boolean }) => {
-      chamadas.push(c)
-      if (falha) throw new Error('falhou')
-      return { id: 'c1' }
-    },
-  } as unknown as ClienteResend
-  return { cliente, chamadas }
-}
-
 describe('token de descadastro', () => {
   it('token válido volta o id', () => {
     const t = gerarTokenDescadastro(42, AGORA, SEGREDO)
@@ -80,6 +67,10 @@ describe('token de descadastro', () => {
     expect(lerTokenDescadastro(t, AGORA, '')).toBeNull()
     expect(lerTokenDescadastro(t, AGORA, undefined)).toBeNull()
   })
+  it('id acima de 2_147_483_647 → null', () => {
+    expect(lerTokenDescadastro(gerarTokenDescadastro(2_147_483_647, AGORA, SEGREDO), AGORA, SEGREDO)).toEqual({ contatoId: 2_147_483_647 })
+    expect(lerTokenDescadastro(gerarTokenDescadastro(2_147_483_648, AGORA, SEGREDO), AGORA, SEGREDO)).toBeNull()
+  })
   it('urlDescadastro usa a URL pública e o segredo do ambiente', () => {
     vi.stubEnv('DESCADASTRO_SEGREDO', SEGREDO)
     vi.stubEnv('URL_PUBLICA_PAINEL', '')
@@ -94,13 +85,12 @@ describe('descadastrarPorToken', () => {
   it('POST descadastra, sai dos funis e grava evento', async () => {
     const id = await criar()
     await inscrever('boas-vindas', [id], { db, caminho: 'site' })
-    const { cliente, chamadas } = clienteFalso()
     const t = gerarTokenDescadastro(id, AGORA, SEGREDO)
-    expect(await descadastrarPorToken(t, AGORA, { db, cliente, segredo: SEGREDO })).toBe('ok')
+    expect(await descadastrarPorToken(t, AGORA, { db, segredo: SEGREDO })).toBe('ok')
 
     const c = await linha(id)
     expect(c.status).toBe('descadastrado')
-    expect(c.syncStatus).toBe('sincronizado')
+    expect(c.syncStatus).toBe('pendente')
     const ins = await db.select().from(funilInscricoes).where(eq(funilInscricoes.contatoId, id))
     expect(ins.length).toBeGreaterThan(0)
     expect(ins.every((i) => i.status === 'saiu')).toBe(true)
@@ -110,31 +100,26 @@ describe('descadastrarPorToken', () => {
     expect(tipos).toContain('descadastrou')
     expect(tipos).toContain('saiu_funil')
     expect(ev.find((e) => e.tipo === 'mudou_status')?.dados).toMatchObject({ para: 'descadastrado', origem: 'descadastro', motivo: 'link de descadastro' })
-    expect(chamadas).toEqual([{ email: 'ana@example.com', nome: 'Ana', descadastrado: true }])
   })
 
   it('token inválido não mexe em nada', async () => {
     const id = await criar()
-    const { cliente, chamadas } = clienteFalso()
-    expect(await descadastrarPorToken('lixo', AGORA, { db, cliente, segredo: SEGREDO })).toBe('invalido')
+    expect(await descadastrarPorToken('lixo', AGORA, { db, segredo: SEGREDO })).toBe('invalido')
     expect((await linha(id)).status).toBe('lead')
-    expect(chamadas).toEqual([])
   })
 
   it('token de contato inexistente → invalido', async () => {
     const t = gerarTokenDescadastro(999, AGORA, SEGREDO)
-    expect(await descadastrarPorToken(t, AGORA, { db, cliente: null, segredo: SEGREDO })).toBe('invalido')
+    expect(await descadastrarPorToken(t, AGORA, { db, segredo: SEGREDO })).toBe('invalido')
   })
 
   it('POST de contato já descadastrado → ja, sem novo evento nem chamada', async () => {
     const id = await criar()
     const t = gerarTokenDescadastro(id, AGORA, SEGREDO)
-    await descadastrarPorToken(t, AGORA, { db, cliente: null, segredo: SEGREDO })
+    await descadastrarPorToken(t, AGORA, { db, segredo: SEGREDO })
     const antes = (await eventos(id)).length
-    const { cliente, chamadas } = clienteFalso()
-    expect(await descadastrarPorToken(t, AGORA, { db, cliente, segredo: SEGREDO })).toBe('ja')
+    expect(await descadastrarPorToken(t, AGORA, { db, segredo: SEGREDO })).toBe('ja')
     expect((await eventos(id)).length).toBe(antes)
-    expect(chamadas).toEqual([])
   })
 
   it('dados_apagados continua descadastrado e responde ja', async () => {
@@ -143,36 +128,26 @@ describe('descadastrarPorToken', () => {
     const c0 = await linha(id)
     expect(c0.dadosApagadosEm).not.toBeNull()
     expect(c0.status).toBe('descadastrado')
-    const { cliente, chamadas } = clienteFalso()
     const t = gerarTokenDescadastro(id, AGORA, SEGREDO)
-    expect(await descadastrarPorToken(t, AGORA, { db, cliente, segredo: SEGREDO })).toBe('ja')
+    expect(await descadastrarPorToken(t, AGORA, { db, segredo: SEGREDO })).toBe('ja')
     expect((await linha(id)).status).toBe('descadastrado')
-    expect(chamadas).toEqual([])
   })
 
-  it('sem cliente do Resend: descadastra localmente e deixa pendente', async () => {
+  it('contato já descadastrado com inscrição ativa: ja, encerra a inscrição, sem evento descadastrou novo', async () => {
     const id = await criar()
+    await inscrever('boas-vindas', [id], { db, caminho: 'site' })
+    // Simula resíduo: status virou descadastrado por outro caminho sem encerrar a inscrição.
+    await db.update(contatos).set({ status: 'descadastrado' }).where(eq(contatos.id, id))
     const t = gerarTokenDescadastro(id, AGORA, SEGREDO)
-    expect(await descadastrarPorToken(t, AGORA, { db, cliente: null, segredo: SEGREDO })).toBe('ok')
-    const c = await linha(id)
-    expect(c.status).toBe('descadastrado')
-    expect(c.syncStatus).toBe('pendente')
-  })
-
-  it('falha do Resend não derruba o descadastro e deixa pendente', async () => {
-    const id = await criar()
-    const { cliente, chamadas } = clienteFalso(true)
-    const t = gerarTokenDescadastro(id, AGORA, SEGREDO)
-    expect(await descadastrarPorToken(t, AGORA, { db, cliente, segredo: SEGREDO })).toBe('ok')
-    expect(chamadas.length).toBe(1)
-    const c = await linha(id)
-    expect(c.status).toBe('descadastrado')
-    expect(c.syncStatus).toBe('pendente')
+    expect(await descadastrarPorToken(t, AGORA, { db, segredo: SEGREDO })).toBe('ja')
+    const ins = await db.select().from(funilInscricoes).where(eq(funilInscricoes.contatoId, id))
+    expect(ins.every((i) => i.status === 'saiu')).toBe(true)
+    expect((await eventos(id)).map((e) => e.tipo)).not.toContain('descadastrou')
   })
 })
 
 describe('responderDescadastro (rota pública)', () => {
-  const opts = () => ({ db, cliente: null, segredo: SEGREDO, agora: AGORA })
+  const opts = () => ({ db, segredo: SEGREDO, agora: AGORA })
   const url = (t: string | null) => `http://localhost/api/publico/descadastro${t === null ? '' : `?t=${encodeURIComponent(t)}`}`
 
   it('GET da página não descadastra', async () => {

@@ -6,7 +6,9 @@
 
 export const URL_PUBLICA_PADRAO = 'https://claudio-psi-lime.vercel.app'
 const TIMEOUT_MS = 5_000
-const VALIDADE_MS = 10 * 60_000
+const VALIDADE_OK_MS = 10 * 60_000
+/** Falha vale pouco: quem acabou de liberar o acesso na Vercel não espera 10 min. */
+const VALIDADE_FALHA_MS = 60_000
 
 /** `URL_PUBLICA_PAINEL` sem barra no final; padrão: o domínio de produção. */
 export function urlPublicaPainel(env: NodeJS.ProcessEnv = process.env): string {
@@ -38,6 +40,6 @@ export async function acessoPublicoOk(f: typeof fetch = fetch): Promise<boolean>
   } catch {
     ok = false
   }
-  cache = { ate: agora + VALIDADE_MS, ok }
+  cache = { ate: agora + (ok ? VALIDADE_OK_MS : VALIDADE_FALHA_MS), ok }
   return ok
 }

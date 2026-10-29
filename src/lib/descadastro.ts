@@ -4,7 +4,6 @@ import { contatos } from '@/lib/db/schema'
 import { bancoPadrao, type BancoCrm } from '@/lib/crm/banco'
 import { mudarStatus, registrarEvento } from '@/lib/crm/contatos'
 import { sairDeTodosOsFunis } from '@/lib/crm/ganchos-funis'
-import { configResend, criarClienteResend, type ClienteResend } from '@/lib/resend'
 import { lerCorpoLimitado, tokenConfere } from '@/lib/webhooks'
 import { urlPublicaPainel } from './acesso-publico'
 
@@ -17,6 +16,8 @@ import { urlPublicaPainel } from './acesso-publico'
 const VALIDADE_S = 365 * 86_400
 const MOTIVO = 'link de descadastro'
 const MAX_CORPO = 4096
+/** Maior valor de `integer` do Postgres: id maior nunca existe (e estouraria a consulta). */
+const ID_MAX = 2_147_483_647
 
 export type ResultadoDescadastro = 'ok' | 'ja' | 'invalido'
 
@@ -45,7 +46,7 @@ export function lerTokenDescadastro(
   const m = /^(\d{1,15})\.(\d{1,15})$/.exec(Buffer.from(partes[0], 'base64url').toString('utf8'))
   if (!m) return null
   const contatoId = Number(m[1])
-  if (!Number.isSafeInteger(contatoId) || contatoId <= 0) return null
+  if (!Number.isSafeInteger(contatoId) || contatoId <= 0 || contatoId > ID_MAX) return null
   if (Number(m[2]) * 1000 < agora.getTime()) return null
   return { contatoId }
 }
@@ -56,50 +57,36 @@ export function urlDescadastro(contatoId: number, agora: Date): string {
 
 /**
  * Descadastra o contato do token. Idempotente: quem já está descadastrado (inclusive com dados apagados)
- * volta `'ja'`. O Resend é best-effort: sem cliente ou com falha, o descadastro local vale e o contato
- * fica `pendente` para a fila de sincronização repetir.
+ * volta `'ja'` (só reencerra inscrições de funil, sem evento novo). Não chama o Resend: `mudarStatus`
+ * deixa o contato `pendente` e a fila de sincronização cuida do Resend.
  */
 export async function descadastrarPorToken(
   token: string,
   agora: Date,
-  opts: { db?: BancoCrm; cliente?: ClienteResend | null; segredo?: string } = {},
+  opts: { db?: BancoCrm; segredo?: string } = {},
 ): Promise<ResultadoDescadastro> {
   const lido = lerTokenDescadastro(token, agora, opts.segredo ?? process.env.DESCADASTRO_SEGREDO)
   if (!lido) return 'invalido'
   const db = opts.db ?? bancoPadrao()
 
-  const feito = await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     const banco = tx as unknown as BancoCrm
     const [c] = await banco
-      .select({ id: contatos.id, email: contatos.email, nome: contatos.nome, status: contatos.status, dadosApagadosEm: contatos.dadosApagadosEm })
+      .select({ id: contatos.id, status: contatos.status, dadosApagadosEm: contatos.dadosApagadosEm })
       .from(contatos)
       .where(eq(contatos.id, lido.contatoId))
       .for('update')
     if (!c) return 'invalido' as const
-    if (c.status === 'descadastrado') return 'ja' as const
+    if (c.status === 'descadastrado') {
+      // Defesa em profundidade: garante que nenhuma inscrição ativa sobrou. Sem evento nem dado novo.
+      await sairDeTodosOsFunis(c.id, { db: banco, motivo: MOTIVO })
+      return 'ja' as const
+    }
     await mudarStatus(c.id, 'descadastrado', { db: banco, origem: 'descadastro', motivo: MOTIVO })
     await sairDeTodosOsFunis(c.id, { db: banco, motivo: MOTIVO })
     await registrarEvento(c.id, 'descadastrou', c.dadosApagadosEm ? null : { origem: 'descadastro' }, { db: banco })
-    return { email: c.email, nome: c.nome, apagado: c.dadosApagadosEm !== null }
+    return 'ok' as const
   })
-  if (feito === 'invalido' || feito === 'ja') return feito
-
-  // Fora da transação: uma chamada de rede nunca segura trava de linha.
-  const cliente = opts.cliente === undefined ? clientePadrao() : opts.cliente
-  if (cliente && !feito.apagado && feito.email) {
-    try {
-      await cliente.salvarContato({ email: feito.email, nome: feito.nome, descadastrado: true })
-      await db.update(contatos).set({ syncStatus: 'sincronizado' }).where(eq(contatos.id, lido.contatoId))
-    } catch {
-      // Segue 'pendente' (mudarStatus já marcou): a fila de sincronização tenta de novo.
-    }
-  }
-  return 'ok'
-}
-
-function clientePadrao(): ClienteResend | null {
-  const cfg = configResend()
-  return cfg ? criarClienteResend(cfg) : null
 }
 
 const ESTILO =
@@ -119,7 +106,7 @@ function pagina(titulo: string, texto: string, status: number): Response {
  */
 export async function responderDescadastro(
   request: Request,
-  opts: { db?: BancoCrm; cliente?: ClienteResend | null; segredo?: string; agora?: Date } = {},
+  opts: { db?: BancoCrm; segredo?: string; agora?: Date } = {},
 ): Promise<Response> {
   if (request.method !== 'POST') return pagina('Método não permitido', 'Use o botão da página de descadastro.', 405)
   let token = new URL(request.url).searchParams.get('t')

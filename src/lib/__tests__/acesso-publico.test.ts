@@ -41,4 +41,20 @@ describe('acessoPublicoOk', () => {
       vi.useRealTimers()
     }
   })
+  it('cacheia false por só 60 s', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-10-29T12:00:00Z'))
+      const f = vi.fn(async (_url: string, _init?: RequestInit) => resp('login', { status: 401 }))
+      expect(await acessoPublicoOk(f as unknown as typeof fetch)).toBe(false)
+      vi.setSystemTime(new Date('2026-10-29T12:00:30Z'))
+      await acessoPublicoOk(f as unknown as typeof fetch)
+      expect(f).toHaveBeenCalledTimes(1)
+      vi.setSystemTime(new Date('2026-10-29T12:01:01Z'))
+      await acessoPublicoOk(f as unknown as typeof fetch)
+      expect(f).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
