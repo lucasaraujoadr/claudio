@@ -7,7 +7,7 @@ import { condicaoFiltro, type FiltroContatos } from './filtros'
 
 export const CABECALHO_EXPORTACAO = [
   'Nome', 'E-mail', 'Telefone', 'Escritório', 'Cidade', 'UF', 'Status', 'Origem', 'Base legal',
-  'Consentimento em', 'Tags', 'Notas', 'Criado em', 'Atualizado em',
+  'Consentimento registrado em', 'Tags', 'Notas', 'Criado em', 'Atualizado em',
 ] as const
 
 const dataHora = new Intl.DateTimeFormat('pt-BR', {

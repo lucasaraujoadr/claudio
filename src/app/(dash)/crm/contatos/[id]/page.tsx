@@ -14,7 +14,7 @@ import {
 } from '@/lib/crm/campos'
 import { buscarContato } from '@/lib/crm/consultas'
 import { linhaDoTempo } from '@/lib/crm/contatos'
-import { lerId } from '@/lib/crm/formulario'
+import { lerId, mensagemCampoLongo } from '@/lib/crm/formulario'
 import type { Contato, EventoContato } from '@/lib/db/schema'
 import { CampoBaseLegal, CamposContato, SeloStatus, SeloSync, formatarQuando } from '../_compartilhado'
 
@@ -22,7 +22,8 @@ export const metadata = { title: 'Contato' }
 
 const AVISOS: Record<string, { texto: string; tipo: TipoAviso }> = {
   criado: { texto: 'Contato criado.', tipo: 'sucesso' },
-  existia: { texto: 'Esse e-mail já estava cadastrado: os dados novos foram mesclados neste contato.', tipo: 'info' },
+  existia: { texto: 'Esse e-mail já estava cadastrado: o que você digitou foi gravado neste contato, e o status dele não mudou (a menos que você tenha escolhido um).', tipo: 'info' },
+  'existia-descadastrado': { texto: 'Esse e-mail já estava cadastrado e está descadastrado: os dados foram gravados, mas o status continua descadastrado.', tipo: 'alerta' },
   salvo: { texto: 'Alterações salvas.', tipo: 'sucesso' },
   'sem-mudanca': { texto: 'Nada mudou.', tipo: 'info' },
   status: { texto: 'Status alterado.', tipo: 'sucesso' },
@@ -67,14 +68,18 @@ function detalheEvento(e: EventoContato): string | null {
     return `${rotuloStatus(d.de)} → ${rotuloStatus(d.para)}${d.reativacao ? ' (reativação manual)' : ''}${via}${motivo}`
   }
   if (e.tipo === 'atualizado' && Array.isArray(d.campos)) {
-    const campos = d.campos.filter((c): c is CampoContato => typeof c === 'string' && c in ROTULO_CAMPO).map((c) => ROTULO_CAMPO[c])
+    const rotulos = (v: unknown) =>
+      Array.isArray(v) ? v.filter((c): c is CampoContato => typeof c === 'string' && c in ROTULO_CAMPO).map((c) => ROTULO_CAMPO[c]) : []
+    const campos = rotulos(d.campos)
+    const mantidos = rotulos(d.mantidos)
+    const kept = mantidos.length > 0 ? ` · mantidos sem trocar (fonte menos confiável): ${mantidos.join(', ')}` : ''
     const bl = d.baseLegal as { de?: string; para?: string } | undefined
     const base = bl?.de && bl.para ? ` · base legal: ${ROTULO_BASE_LEGAL[bl.de as keyof typeof ROTULO_BASE_LEGAL] ?? bl.de} → ${ROTULO_BASE_LEGAL[bl.para as keyof typeof ROTULO_BASE_LEGAL] ?? bl.para}` : ''
-    return `${campos.join(', ')}${via}${base}`
+    return `Alterados: ${campos.join(', ')}${via}${base}${kept}`
   }
   if (e.tipo === 'importado') {
     const arquivo = typeof d.arquivo === 'string' ? d.arquivo : 'planilha'
-    return `${arquivo}${d.acao === 'criado' ? ' · contato novo' : ' · dados completados'}`
+    return `${arquivo}${d.acao === 'criado' ? ' · contato novo' : ' · contato já existia (só campos vazios foram preenchidos)'}`
   }
   if (e.tipo === 'criado') return origem ? `Origem: ${origem}` : null
   return null
@@ -162,7 +167,12 @@ export default async function ContatoPage({
   const id = lerId((await params).id)
   if (!id) notFound()
   const sp = await searchParams
-  const aviso = typeof sp.aviso === 'string' ? AVISOS[sp.aviso] : undefined
+  const aviso =
+    sp.aviso === 'longo'
+      ? { texto: mensagemCampoLongo(typeof sp.campo === 'string' ? sp.campo : undefined), tipo: 'erro' as const }
+      : typeof sp.aviso === 'string'
+        ? AVISOS[sp.aviso]
+        : undefined
 
   let c: Contato | null
   let eventos: EventoContato[]

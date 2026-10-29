@@ -77,31 +77,55 @@ describe('upsertContato — criação', () => {
 })
 
 describe('upsertContato — mescla', () => {
-  it('preenche campos vazios, troca por valor novo não vazio, nunca apaga com vazio', async () => {
-    await upsertContato(
-      { email: 'c@example.com', nome: 'Carla', telefone: '11 9999-0000', baseLegal: 'contrato' },
+  async function criarCurado() {
+    // Cadastrado à mão: dados curados pela equipe.
+    const r = await upsertContato(
+      { email: 'c@example.com', nome: 'Carla Souza', telefone: '11 9999-0000', escritorio: 'Souza Advogados', baseLegal: 'contrato' },
       'manual',
       { db },
     )
-    const r = await upsertContato(
-      { email: 'C@example.com', nome: '  ', telefone: null, escritorio: 'Souza Advogados', cidade: 'Campinas', uf: 'são paulo' },
-      'planilha',
-      { db },
-    )
+    return r.contatoId!
+  }
+  const mudanca = { nome: 'C. Souza', telefone: '11 1111-1111', escritorio: 'Outro Escritório', cidade: 'Campinas', uf: 'são paulo' }
+
+  it('planilha só preenche o que está vazio e registra o que manteve', async () => {
+    const id = await criarCurado()
+    const r = await upsertContato({ email: 'C@example.com', ...mudanca }, 'planilha', { db })
     expect(r.acao).toBe('atualizado')
-    expect(alt(r)?.sort()).toEqual(['cidade', 'escritorio', 'uf'])
-    const c = await contatoPorEmail('c@example.com')
-    expect(c).toMatchObject({
-      nome: 'Carla',
-      telefone: '11 9999-0000',
-      escritorio: 'Souza Advogados',
-      cidade: 'Campinas',
-      uf: 'SP',
-      origem: 'manual', // a origem é a do primeiro registro
+    expect(alt(r)?.sort()).toEqual(['cidade', 'uf'])
+    expect(await contatoPorEmail('c@example.com')).toMatchObject({
+      nome: 'Carla Souza', telefone: '11 9999-0000', escritorio: 'Souza Advogados', cidade: 'Campinas', uf: 'SP', origem: 'manual',
     })
-    const r2 = await upsertContato({ email: 'c@example.com', nome: 'Carla Souza' }, 'brevo', { db })
-    expect(alt(r2)).toEqual(['nome'])
+    expect((await eventos(id)).at(-1)).toMatchObject({
+      tipo: 'atualizado',
+      dados: { campos: ['cidade', 'uf'], mantidos: ['nome', 'telefone', 'escritorio'], origem: 'planilha' },
+    })
+  })
+
+  it('brevo também só preenche o que está vazio', async () => {
+    await criarCurado()
+    const r = await upsertContato({ email: 'c@example.com', ...mudanca }, 'brevo', { db })
+    expect(r).toMatchObject({ acao: 'atualizado', mantidos: ['nome', 'telefone', 'escritorio'] })
     expect((await contatoPorEmail('c@example.com')).nome).toBe('Carla Souza')
+  })
+
+  it('site sobrescreve só nome, telefone e escritório (informados pelo próprio contato)', async () => {
+    await criarCurado()
+    await upsertContato({ email: 'c@example.com', cidade: 'Campinas' }, 'manual', { db })
+    const r = await upsertContato({ email: 'c@example.com', ...mudanca, cidade: 'Jundiaí' }, 'site', { db })
+    expect(r).toMatchObject({ acao: 'atualizado', mantidos: ['cidade'] })
+    expect(await contatoPorEmail('c@example.com')).toMatchObject({
+      nome: 'C. Souza', telefone: '11 1111-1111', escritorio: 'Outro Escritório', cidade: 'Campinas', uf: 'SP',
+    })
+  })
+
+  it('cadastro manual sobrescreve com o que foi digitado, mas nunca apaga com vazio', async () => {
+    await criarCurado()
+    const r = await upsertContato({ email: 'c@example.com', ...mudanca, telefone: '  ' }, 'manual', { db })
+    expect(r).toMatchObject({ acao: 'atualizado', mantidos: [] })
+    expect(await contatoPorEmail('c@example.com')).toMatchObject({
+      nome: 'C. Souza', telefone: '11 9999-0000', escritorio: 'Outro Escritório', cidade: 'Campinas',
+    })
   })
 
   it('une as tags sem repetir e acrescenta notas sem duplicar', async () => {
@@ -132,13 +156,38 @@ describe('upsertContato — mescla', () => {
     expect((await contatoPorEmail('p@example.com')).syncStatus).toBe('pendente')
   })
 
-  it('registra "atualizado" com os campos e "mudou_status" com de/para', async () => {
+  it('upsert implícito nunca muda status, exceto para entrar em descadastrado', async () => {
     const { contatoId } = await upsertContato({ email: 'e@example.com', baseLegal: 'contrato' }, 'manual', { db })
-    await upsertContato({ email: 'e@example.com', cidade: 'Recife', status: 'cliente' }, 'brevo', { db })
+    await mudarStatus(contatoId!, 'cliente', { db })
+    for (const origem of ['manual', 'site', 'planilha', 'brevo'] as const) {
+      const r = await upsertContato({ email: 'e@example.com', status: 'lead', cidade: 'Recife' }, origem, { db })
+      expect(r.acao === 'ignorado').toBe(false)
+    }
+    expect((await contatoPorEmail('e@example.com')).status).toBe('cliente')
+    // na criação o status informado vale
+    await upsertContato({ email: 'novo-cliente@example.com', baseLegal: 'contrato', status: 'cliente' }, 'manual', { db })
+    expect((await contatoPorEmail('novo-cliente@example.com')).status).toBe('cliente')
+    // entrar em descadastrado pelo upsert (ex.: descadastro vindo do Brevo) pode, com evento
+    await upsertContato({ email: 'e@example.com', status: 'descadastrado' }, 'brevo', { db })
+    expect((await contatoPorEmail('e@example.com')).status).toBe('descadastrado')
     const ev = await eventos(contatoId!)
-    expect(ev.map((e) => e.tipo)).toEqual(['criado', 'atualizado', 'mudou_status'])
-    expect(ev[1].dados).toMatchObject({ campos: ['cidade'], origem: 'brevo' })
-    expect(ev[2].dados).toMatchObject({ de: 'lead', para: 'cliente', origem: 'brevo' })
+    expect(ev.map((e) => e.tipo)).toEqual(['criado', 'mudou_status', 'atualizado', 'mudou_status'])
+    expect(ev[2].dados).toMatchObject({ campos: ['cidade'], origem: 'manual' })
+    expect(ev[3].dados).toMatchObject({ de: 'cliente', para: 'descadastrado', origem: 'brevo' })
+  })
+
+  it('limites: no máximo 50 tags e 5 000 caracteres de notas; o excedente fica de fora e é registrado', async () => {
+    const tags = Array.from({ length: 60 }, (_, i) => `t${i}`)
+    await upsertContato({ email: 'lim@example.com', baseLegal: 'contrato', tags, notas: 'x'.repeat(6000) }, 'site', { db })
+    let c = await contatoPorEmail('lim@example.com')
+    expect(c.tags).toHaveLength(50)
+    expect(c.notas).toHaveLength(5000)
+    await upsertContato({ email: 'lim2@example.com', baseLegal: 'contrato', tags: tags.slice(0, 49), notas: 'a'.repeat(4990) }, 'site', { db })
+    const r = await upsertContato({ email: 'lim2@example.com', tags: ['nova1', 'nova2'], notas: 'b'.repeat(20) }, 'planilha', { db })
+    expect(r).toMatchObject({ acao: 'atualizado', alterados: ['tags'], mantidos: ['tags', 'notas'] })
+    c = await contatoPorEmail('lim2@example.com')
+    expect(c.tags).toHaveLength(50)
+    expect(c.notas).toBe('a'.repeat(4990))
   })
 })
 
@@ -166,6 +215,15 @@ describe('base legal', () => {
     expect((await contatoPorEmail('m@example.com')).baseLegal).toBe('legitimo_interesse')
     const ev = await eventos(contatoId!)
     expect(ev.at(-1)).toMatchObject({ tipo: 'atualizado', dados: { campos: ['baseLegal'], baseLegal: { de: 'consentimento', para: 'legitimo_interesse' } } })
+    // sem consentimento como base, a data do consentimento é apagada
+    expect((await contatoPorEmail('m@example.com')).consentimentoEm).toBeNull()
+  })
+
+  it('a edição manual recusa notas ou tags acima do limite, sem gravar', async () => {
+    const { contatoId } = await upsertContato({ email: 'n@example.com', baseLegal: 'contrato' }, 'manual', { db })
+    expect(await editarContato(contatoId!, { notas: 'x'.repeat(5001) }, { db })).toEqual({ ok: false, motivo: 'longo' })
+    expect(await editarContato(contatoId!, { tags: Array.from({ length: 51 }, (_, i) => `t${i}`) }, { db })).toEqual({ ok: false, motivo: 'longo' })
+    expect((await contatoPorEmail('n@example.com')).notas).toBeNull()
   })
 })
 
@@ -220,6 +278,9 @@ describe('descadastrado é definitivo', () => {
 })
 
 describe('concorrência e lote', () => {
+  // O PGlite tem uma conexão só: as transações daqui se enfileiram e este teste confere o
+  // caminho ON CONFLICT + FOR UPDATE, não a disputa real de travas. A disputa real foi
+  // verificada contra o Neon (12 upserts simultâneos; ver o relatório da E7).
   it('upserts simultâneos do mesmo email geram um contato só, sem perder tags', async () => {
     const rs = await Promise.all(
       Array.from({ length: 8 }, (_, i) =>

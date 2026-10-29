@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { and, eq, lt } from 'drizzle-orm'
+import { and, eq, lt, or, sql } from 'drizzle-orm'
 import { importacoesContatos, type ImportacaoContatos } from '@/lib/db/schema'
 import { bancoPadrao, type BancoCrm } from './banco'
 import { normalizarTags, semAcento, separarTags, type BaseLegal, type DadosContato } from './campos'
@@ -242,11 +242,21 @@ export type ResultadoConfirmar =
   | { ok: true; relatorio: Relatorio }
   | { ok: false; motivo: 'nao_encontrado' | 'ja_processado' | 'csv_invalido' | 'sem_email' | 'mapa_invalido' }
 
+/** Um `processando` mais velho que isto é de uma execução morta e pode ser retomado. */
+export const PROCESSANDO_EXPIRA_MS = 10 * 60 * 1000
+
 /**
- * Importa o lote guardado. Reivindica o lote (`pendente` → `processando`) num UPDATE
- * condicional: um segundo envio do mesmo formulário não importa de novo. Tudo numa
- * transação (via `upsertContatos`): ou o lote entra inteiro, ou nada entra e o lote volta
- * a `pendente`.
+ * Importa o lote guardado, numa transação só: reivindicar o lote (UPDATE condicional
+ * `pendente` → `processando`), gravar os contatos e marcar `concluida` com o relatório.
+ * - Função morta no meio (timeout, deploy): a transação é desfeita, o lote volta sozinho a
+ *   `pendente` e nenhum contato fica gravado pela metade; não há reimportação duplicada
+ *   porque nada foi confirmado.
+ * - Dois envios do mesmo formulário: o segundo espera a trava da linha do lote e, quando a
+ *   primeira transação termina, encontra `concluida` → `ja_processado`.
+ * - Um `processando` gravado e esquecido (não deveria existir, já que só fica visível
+ *   dentro da transação) é retomado depois de `PROCESSANDO_EXPIRA_MS`.
+ * - Sessão parada dentro da transação é encerrada pelo Postgres
+ *   (`idle_in_transaction_session_timeout`), e quem espera a trava desiste em 30 s.
  */
 export async function confirmarLote(
   id: string,
@@ -255,9 +265,10 @@ export async function confirmarLote(
   opts: { db?: BancoCrm; agora?: Date } = {},
 ): Promise<ResultadoConfirmar> {
   const db = opts.db ?? bancoPadrao()
+  const agora = opts.agora ?? new Date()
   const existente = await carregarLote(id, opts)
   if (!existente) return { ok: false, motivo: 'nao_encontrado' }
-  if (existente.status !== 'pendente' || existente.conteudo == null) return { ok: false, motivo: 'ja_processado' }
+  if (existente.conteudo == null || existente.status === 'concluida') return { ok: false, motivo: 'ja_processado' }
   const csv = lerCsv(existente.conteudo)
   if (!csv.ok) return { ok: false, motivo: 'csv_invalido' }
   if (mapa.email == null) return { ok: false, motivo: 'sem_email' }
@@ -265,29 +276,49 @@ export async function confirmarLote(
   if (colunas.some((c) => !Number.isInteger(c) || c < 0 || c >= csv.cabecalho.length) || new Set(colunas).size !== colunas.length) {
     return { ok: false, motivo: 'mapa_invalido' }
   }
-
-  const [reivindicado] = await db
-    .update(importacoesContatos)
-    .set({ status: 'processando' })
-    .where(and(eq(importacoesContatos.id, id), eq(importacoesContatos.status, 'pendente')))
-    .returning({ id: importacoesContatos.id })
-  if (!reivindicado) return { ok: false, motivo: 'ja_processado' }
+  const preparo = prepararImportacao(csv, mapa, lote)
 
   try {
-    const preparo = prepararImportacao(csv, mapa, lote)
-    const resultados = await upsertContatos(
-      preparo.itens.map((i) => i.dados),
-      'planilha',
-      { db, agora: opts.agora, seDescadastrado: 'ignorar', importacao: { lote: id, arquivo: existente.nomeArquivo } },
-    )
-    const relatorio = montarRelatorio(existente.nomeArquivo, lote.baseLegal, preparo, resultados)
-    await db
-      .update(importacoesContatos)
-      .set({ status: 'concluida', relatorio, conteudo: null, concluidoEm: opts.agora ?? new Date() })
-      .where(eq(importacoesContatos.id, id))
-    return { ok: true, relatorio }
+    return await db.transaction(async (tx) => {
+      const banco = tx as unknown as BancoCrm
+      await banco.execute(sql`set local lock_timeout = '30s'`)
+      await banco.execute(sql`set local idle_in_transaction_session_timeout = '60s'`)
+      const expirado = new Date(agora.getTime() - PROCESSANDO_EXPIRA_MS)
+      const [reivindicado] = await banco
+        .update(importacoesContatos)
+        .set({ status: 'processando', concluidoEm: agora })
+        .where(
+          and(
+            eq(importacoesContatos.id, id),
+            or(
+              eq(importacoesContatos.status, 'pendente'),
+              // `concluidoEm` guarda o início do processamento enquanto o lote não termina.
+              and(eq(importacoesContatos.status, 'processando'), lt(importacoesContatos.concluidoEm, expirado)),
+            ),
+          ),
+        )
+        .returning({ id: importacoesContatos.id })
+      if (!reivindicado) return { ok: false, motivo: 'ja_processado' } as const
+
+      const resultados = await upsertContatos(
+        preparo.itens.map((i) => i.dados),
+        'planilha',
+        { db: banco, agora, seDescadastrado: 'ignorar', importacao: { lote: id, arquivo: existente.nomeArquivo } },
+      )
+      const relatorio = montarRelatorio(existente.nomeArquivo, lote.baseLegal, preparo, resultados)
+      await banco
+        .update(importacoesContatos)
+        .set({ status: 'concluida', relatorio, conteudo: null, concluidoEm: agora })
+        .where(eq(importacoesContatos.id, id))
+      return { ok: true, relatorio } as const
+    })
   } catch (erro) {
-    await db.update(importacoesContatos).set({ status: 'pendente' }).where(eq(importacoesContatos.id, id))
+    // 55P03 = lock_not_available: outra confirmação do mesmo lote ainda está rodando.
+    const codigo = (e: unknown): unknown => (typeof e === 'object' && e !== null ? (e as { code?: unknown }).code : undefined)
+    const causa = typeof erro === 'object' && erro !== null ? (erro as { cause?: unknown }).cause : undefined
+    if (codigo(erro) === '55P03' || codigo(causa) === '55P03') {
+      return { ok: false, motivo: 'ja_processado' }
+    }
     throw erro
   }
 }

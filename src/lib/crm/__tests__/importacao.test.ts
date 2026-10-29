@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { contatos, importacoesContatos } from '@/lib/db/schema'
 import type { BancoCrm } from '../banco'
 import { mudarStatus, upsertContato } from '../contatos'
@@ -133,6 +133,47 @@ describe('lote de importação no banco', () => {
     expect(await confirmarLote(salvo.id, { ...mapa, nome: 9 }, { baseLegal: 'contrato', tags: [] }, { db })).toMatchObject({ ok: false, motivo: 'mapa_invalido' })
     // continua pendente: dá para corrigir e confirmar
     expect((await confirmarLote(salvo.id, mapa, { baseLegal: 'contrato', tags: [] }, { db })).ok).toBe(true)
+  })
+
+  it('falha no meio: nada é gravado e o lote volta a pendente na hora (transação única)', async () => {
+    const salvo = await preparar()
+    if (!salvo.ok) throw new Error('lote')
+    const antes = await db.select().from(contatos)
+    // Força um erro do banco ao inserir um dos contatos da planilha.
+    await db.execute(sql`create function falhar() returns trigger language plpgsql as $$
+      begin if new.email_normalizado = 'bruno@example.com' then raise exception 'falha simulada'; end if; return new; end $$`)
+    await db.execute(sql`create trigger falhar before insert on contatos for each row execute function falhar()`)
+    await expect(confirmarLote(salvo.id, mapa, { baseLegal: 'contrato', tags: [] }, { db })).rejects.toThrow()
+    expect(await db.select().from(contatos)).toEqual(antes) // Ana, criada antes de Bruno, também não ficou
+    const [lote] = await db.select().from(importacoesContatos).where(eq(importacoesContatos.id, salvo.id))
+    expect(lote).toMatchObject({ status: 'pendente', relatorio: null })
+    expect(lote.conteudo).not.toBeNull()
+    await db.execute(sql`drop trigger falhar on contatos`)
+    const r = await confirmarLote(salvo.id, mapa, { baseLegal: 'contrato', tags: [] }, { db })
+    expect(r.ok && r.relatorio.criados).toBe(2)
+  })
+
+  it('processando esquecido há mais de 10 minutos é retomado; recente, não', async () => {
+    const salvo = await preparar()
+    if (!salvo.ok) throw new Error('lote')
+    const agora = new Date()
+    const marcar = (minutos: number) =>
+      db.update(importacoesContatos)
+        .set({ status: 'processando', concluidoEm: new Date(agora.getTime() - minutos * 60_000) })
+        .where(eq(importacoesContatos.id, salvo.id))
+    await marcar(2)
+    expect(await confirmarLote(salvo.id, mapa, { baseLegal: 'contrato', tags: [] }, { db, agora })).toMatchObject({ ok: false, motivo: 'ja_processado' })
+    await marcar(11)
+    expect((await confirmarLote(salvo.id, mapa, { baseLegal: 'contrato', tags: [] }, { db, agora })).ok).toBe(true)
+  })
+
+  it('planilha não sobrescreve dado curado de quem já existe', async () => {
+    await upsertContato({ email: 'ana@example.com', nome: 'Ana Paula Lima', baseLegal: 'contrato' }, 'manual', { db })
+    const salvo = await salvarLote({ nomeArquivo: 'velha.csv', texto: 'Nome,E-mail\nAna,ana@example.com' }, { db })
+    if (!salvo.ok) throw new Error('lote')
+    const r = await confirmarLote(salvo.id, { ...mapa, tags: null }, { baseLegal: 'contrato', tags: [] }, { db })
+    expect(r.ok && r.relatorio).toMatchObject({ criados: 0, atualizados: 0, inalterados: 1 })
+    expect((await db.select().from(contatos).where(eq(contatos.emailNormalizado, 'ana@example.com')))[0].nome).toBe('Ana Paula Lima')
   })
 
   it('salvarLote recusa arquivo acima do limite de linhas sem gravar', async () => {

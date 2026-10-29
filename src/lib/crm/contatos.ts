@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
 import { contatos, eventosContato, type Contato, type EventoContato } from '@/lib/db/schema'
 import { bancoPadrao, type BancoCrm } from './banco'
 import {
@@ -12,7 +12,7 @@ import {
   type StatusContato,
 } from './campos'
 import { normalizarEmail } from './email'
-import { brevoMudou, criarEstado, diferencas, estadoDe, mesclarEstado, type EstadoContato } from './mesclar'
+import { LIMITE_NOTAS, LIMITE_TAGS, brevoMudou, criarEstado, diferencas, estadoDe, mesclarEstado, type EstadoContato } from './mesclar'
 
 /**
  * Núcleo do CRM. Contrato usado pela importação (E7), pelos webhooks e pela
@@ -40,8 +40,8 @@ export type MotivoIgnorado = 'email_invalido' | 'sem_base_legal' | 'descadastrad
 
 export type ResultadoUpsert =
   | { acao: 'criado'; contatoId: number }
-  | { acao: 'atualizado'; contatoId: number; alterados: CampoContato[] }
-  | { acao: 'inalterado'; contatoId: number }
+  | { acao: 'atualizado'; contatoId: number; alterados: CampoContato[]; mantidos: CampoContato[] }
+  | { acao: 'inalterado'; contatoId: number; mantidos: CampoContato[] }
   | { acao: 'ignorado'; motivo: MotivoIgnorado; contatoId?: number }
 
 const TAMANHO_BLOCO = 500
@@ -96,7 +96,12 @@ export async function upsertContatos(
 
 async function travar(db: BancoCrm, emails: string[]): Promise<Contato[]> {
   if (emails.length === 0) return []
-  return db.select().from(contatos).where(inArray(contatos.emailNormalizado, emails)).for('update')
+  return db
+    .select()
+    .from(contatos)
+    .where(inArray(contatos.emailNormalizado, emails))
+    .orderBy(asc(contatos.emailNormalizado))
+    .for('update')
 }
 
 async function processarBloco(
@@ -146,14 +151,16 @@ async function processarBloco(
     let estado = inicio
     let pendente = false
     for (const i of indices) {
-      const m = mesclarEstado(estado, itens[i], agora)
+      const m = mesclarEstado(estado, itens[i], origem, agora)
       if (m.alterados.length === 0) {
-        resultados[i] = { acao: 'inalterado', contatoId: linha.id }
+        resultados[i] = { acao: 'inalterado', contatoId: linha.id, mantidos: m.mantidos }
         continue
       }
-      resultados[i] = { acao: 'atualizado', contatoId: linha.id, alterados: m.alterados }
-      const campos = m.alterados.filter((c) => c !== 'status')
-      if (campos.length > 0) eventos.push({ contatoId: linha.id, tipo: 'atualizado', dados: { campos, origem } })
+      resultados[i] = { acao: 'atualizado', contatoId: linha.id, alterados: m.alterados, mantidos: m.mantidos }
+      const campos = m.alterados.filter((c) => c !== 'status' && c !== 'consentimentoEm')
+      if (campos.length > 0) {
+        eventos.push({ contatoId: linha.id, tipo: 'atualizado', dados: { campos, mantidos: m.mantidos, origem } })
+      }
       if (m.status) eventos.push({ contatoId: linha.id, tipo: 'mudou_status', dados: { ...m.status, origem } })
       eventoImportado(linha.id, 'atualizado')
       pendente ||= m.brevoMudou
@@ -313,8 +320,11 @@ export async function editarContato(
   id: number,
   edicao: EdicaoContato,
   opts: { db?: BancoCrm; agora?: Date } = {},
-): Promise<{ ok: true; alterados: CampoContato[] } | { ok: false; motivo: 'nao_encontrado' | 'uf_invalida' }> {
+): Promise<{ ok: true; alterados: CampoContato[] } | { ok: false; motivo: 'nao_encontrado' | 'uf_invalida' | 'longo' }> {
   if (edicao.uf != null && edicao.uf.trim() !== '' && !normalizarUf(edicao.uf)) return { ok: false, motivo: 'uf_invalida' }
+  // A edição explícita recusa o que passa do limite em vez de cortar calado.
+  if ((edicao.notas ?? '').trim().length > LIMITE_NOTAS) return { ok: false, motivo: 'longo' }
+  if (edicao.tags !== undefined && normalizarTags(edicao.tags).length > LIMITE_TAGS) return { ok: false, motivo: 'longo' }
   const db = opts.db ?? bancoPadrao()
   const agora = opts.agora ?? new Date()
   return db.transaction(async (tx) => {
@@ -331,6 +341,8 @@ export async function editarContato(
     if (edicao.baseLegal !== undefined) {
       novo.baseLegal = edicao.baseLegal
       if (edicao.baseLegal === 'consentimento' && atual.baseLegal !== 'consentimento') novo.consentimentoEm = agora
+      // Sem consentimento como base, não há data de consentimento a exibir.
+      if (edicao.baseLegal !== 'consentimento') novo.consentimentoEm = null
     }
     const alterados = diferencas(atual, novo)
     if (alterados.length === 0) return { ok: true, alterados } as const

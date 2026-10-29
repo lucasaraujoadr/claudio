@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { Aviso, BotaoEnviar, CabecalhoPagina, Cartao, classesBotao } from '@/components/ui'
 import { CLASSES_ROTULO, classesCampo } from '@/components/ui/campo'
-import { ROTULO_STATUS } from '@/lib/crm/campos'
+import { mensagemCampoLongo } from '@/lib/crm/formulario'
 import { CampoBaseLegal, CamposContato } from '../_compartilhado'
 
 export const metadata = { title: 'Novo contato' }
@@ -20,13 +20,14 @@ export default async function NovoContatoPage({
   searchParams: Promise<{ [chave: string]: string | string[] | undefined }>
 }) {
   const sp = await searchParams
-  const erro = typeof sp.erro === 'string' ? ERROS[sp.erro] : undefined
+  const erro =
+    sp.erro === 'longo' ? mensagemCampoLongo(typeof sp.campo === 'string' ? sp.campo : undefined) : typeof sp.erro === 'string' ? ERROS[sp.erro] : undefined
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <CabecalhoPagina
         secao="CRM"
         titulo="Novo contato"
-        subtitulo="Se o e-mail já estiver cadastrado, os dados novos completam o contato existente."
+        subtitulo="Se o e-mail já estiver cadastrado, o que você digitar aqui atualiza o contato existente, sem mudar o status dele (a menos que você escolha um status)."
         acoes={<Link href="/crm/contatos" className={classesBotao('fantasma')}>Voltar à lista</Link>}
       />
       {erro && <Aviso tipo="erro">{erro}</Aviso>}
@@ -41,9 +42,12 @@ export default async function NovoContatoPage({
             </div>
             <div className="space-y-1">
               <label htmlFor="c-status" className={CLASSES_ROTULO}>Status</label>
-              <select id="c-status" name="status" defaultValue="lead" className={classesCampo()}>
-                {(['lead', 'cliente', 'inativo'] as const).map((s) => <option key={s} value={s}>{ROTULO_STATUS[s]}</option>)}
+              <select id="c-status" name="status" defaultValue="" className={classesCampo()} aria-describedby="c-status-dica">
+                <option value="">Lead (padrão)</option>
+                <option value="cliente">Cliente</option>
+                <option value="inativo">Inativo</option>
               </select>
+              <p id="c-status-dica" className="text-xs text-tinta-suave">Num contato que já existe, o padrão não muda o status atual.</p>
             </div>
           </div>
           <CamposContato />

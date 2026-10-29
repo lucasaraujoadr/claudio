@@ -33,6 +33,8 @@ export type EstadoContato = {
 export type Mescla = {
   estado: EstadoContato
   alterados: CampoContato[]
+  /** Campos com valor novo recusado porque a origem não pode sobrescrevê-los (ou por limite). */
+  mantidos: CampoContato[]
   /** Presente quando o status mudou. */
   status?: { de: StatusContato; para: StatusContato }
   /** Algum campo que vai para o Brevo mudou. */
@@ -96,36 +98,67 @@ export function criarEstado(dados: DadosContato, emailNormalizado: string, orige
     baseLegal: dados.baseLegal,
     consentimentoEm: dados.baseLegal === 'consentimento' ? (dados.consentimentoEm ?? agora) : null,
     status,
-    tags: normalizarTags(dados.tags),
-    notas: textoOuNulo(dados.notas),
+    tags: normalizarTags(dados.tags).slice(0, LIMITE_TAGS),
+    notas: textoOuNulo(dados.notas)?.slice(0, LIMITE_NOTAS) ?? null,
     brevoId: textoOuNulo(dados.brevoId),
   }
 }
 
+export const LIMITE_NOTAS = 5000
+export const LIMITE_TAGS = 50
+
+/** Campos de dados que cada origem pode sobrescrever quando já estão preenchidos. */
+const CAMPOS_DADOS = ['nome', 'telefone', 'escritorio', 'cidade', 'uf'] as const
+type CampoDado = (typeof CAMPOS_DADOS)[number]
+const SOBRESCREVE: Record<Origem, readonly CampoDado[]> = {
+  // Cadastro manual: a pessoa do escritório digitou agora, vale o que ela digitou.
+  manual: CAMPOS_DADOS,
+  // Formulário do site: o próprio contato informou nome, telefone e escritório.
+  site: ['nome', 'telefone', 'escritorio'],
+  // Planilha antiga e Brevo: só preenchem o que está vazio.
+  planilha: [],
+  brevo: [],
+}
+
 /**
  * Regras de mescla de `upsertContato` sobre um contato existente:
- * - campo informado e não vazio substitui; vazio/ausente nunca apaga;
- * - tags: união (as existentes primeiro, na ordem);
- * - notas: a nova é acrescentada se ainda não estiver contida;
+ * - campos de dados conforme a confiança da origem (`SOBRESCREVE`): o que a origem não
+ *   pode sobrescrever só é preenchido se estiver vazio, e o valor diferente recusado vai
+ *   para `mantidos`; vazio/ausente nunca apaga;
+ * - tags: união (as existentes primeiro), até `LIMITE_TAGS`;
+ * - notas: a nova é acrescentada se ainda não estiver contida, até `LIMITE_NOTAS`;
  * - origem e email exibido: os do primeiro registro;
  * - base legal: só fortalece (ver `FORCA_BASE_LEGAL`), nunca rebaixa;
- * - status: `descadastrado` nunca sai daqui (só `reativarContato`); entrar nele pode.
+ * - status: o upsert implícito nunca muda status, exceto para entrar em `descadastrado`
+ *   (e nunca sai dele). Mudança de status é ação explícita (`mudarStatus`).
  */
-export function mesclarEstado(atual: EstadoContato, dados: DadosContato, agora: Date): Mescla {
+export function mesclarEstado(atual: EstadoContato, dados: DadosContato, origem: Origem, agora: Date): Mescla {
   const novo: EstadoContato = { ...atual, tags: [...atual.tags] }
-  const nome = textoOuNulo(dados.nome)
-  if (nome) novo.nome = nome
-  for (const k of ['telefone', 'escritorio', 'cidade', 'brevoId'] as const) {
-    const v = textoOuNulo(dados[k])
-    if (v) novo[k] = v
+  const mantidos: CampoContato[] = []
+  for (const k of CAMPOS_DADOS) {
+    const v = k === 'uf' ? normalizarUf(dados.uf) : textoOuNulo(dados[k])
+    if (!v || v === atual[k]) continue
+    if (!atual[k] || SOBRESCREVE[origem].includes(k)) novo[k] = v
+    else mantidos.push(k)
   }
-  const uf = normalizarUf(dados.uf)
-  if (uf) novo.uf = uf
+  const brevoId = textoOuNulo(dados.brevoId)
+  if (brevoId) novo.brevoId = brevoId
 
-  for (const t of normalizarTags(dados.tags)) if (!novo.tags.includes(t)) novo.tags.push(t)
+  for (const t of normalizarTags(dados.tags)) {
+    if (novo.tags.includes(t)) continue
+    if (novo.tags.length >= LIMITE_TAGS) {
+      if (!mantidos.includes('tags')) mantidos.push('tags')
+      continue
+    }
+    novo.tags.push(t)
+  }
 
   const notas = textoOuNulo(dados.notas)
-  if (notas && !(novo.notas ?? '').includes(notas)) novo.notas = novo.notas ? `${novo.notas}\n\n${notas}` : notas
+  if (notas && !(novo.notas ?? '').includes(notas)) {
+    const juntas = novo.notas ? `${novo.notas}\n\n${notas}` : notas
+    if (juntas.length <= LIMITE_NOTAS) novo.notas = juntas
+    else mantidos.push('notas')
+  }
 
   if (dados.baseLegal && FORCA_BASE_LEGAL[dados.baseLegal] > FORCA_BASE_LEGAL[atual.baseLegal]) {
     novo.baseLegal = dados.baseLegal
@@ -134,12 +167,13 @@ export function mesclarEstado(atual: EstadoContato, dados: DadosContato, agora: 
     novo.consentimentoEm = dados.consentimentoEm ?? agora
   }
 
-  if (dados.status && atual.status !== 'descadastrado') novo.status = dados.status
+  if (dados.status === 'descadastrado') novo.status = 'descadastrado'
 
   const alterados = diferencas(atual, novo)
   return {
     estado: novo,
     alterados,
+    mantidos,
     status: novo.status !== atual.status ? { de: atual.status, para: novo.status } : undefined,
     brevoMudou: brevoMudou(alterados),
   }

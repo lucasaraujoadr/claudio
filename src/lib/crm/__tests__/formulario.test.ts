@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { lerEdicao, lerId, lerMapeamento, lerNovoContato } from '../formulario'
+import { lerEdicao, lerId, lerMapeamento, lerNovoContato, mensagemCampoLongo } from '../formulario'
 
 function form(campos: Record<string, string>): FormData {
   const f = new FormData()
@@ -14,7 +14,17 @@ describe('formulários do CRM', () => {
     expect(lerNovoContato(form({ email: 'a@example.com', base_legal: 'contrato', uf: 'ZZ' }))).toEqual({ ok: false, erro: 'uf' })
     expect(lerNovoContato(form({ email: 'a@example.com', base_legal: 'contrato', status: 'descadastrado' }))).toEqual({ ok: false, erro: 'status' })
     const r = lerNovoContato(form({ email: ' a@example.com ', base_legal: 'consentimento', tags: 'x, y', nome: ' Ana ' }))
-    expect(r).toMatchObject({ ok: true, dados: { email: 'a@example.com', baseLegal: 'consentimento', status: 'lead', tags: ['x', 'y'], nome: 'Ana' } })
+    expect(r).toMatchObject({ ok: true, statusEscolhido: null, dados: { email: 'a@example.com', baseLegal: 'consentimento', status: 'lead', tags: ['x', 'y'], nome: 'Ana' } })
+    expect(lerNovoContato(form({ email: 'a@example.com', base_legal: 'contrato', status: 'cliente' }))).toMatchObject({ ok: true, statusEscolhido: 'cliente', dados: { status: 'cliente' } })
+  })
+
+  it('campo acima do limite é recusado com o nome do campo, não cortado', () => {
+    expect(lerNovoContato(form({ email: 'a@example.com', base_legal: 'contrato', notas: 'x'.repeat(5001) }))).toEqual({ ok: false, erro: 'longo', campo: 'notas' })
+    expect(lerEdicao(form({ base_legal: 'contrato', nome: 'x'.repeat(201) }))).toEqual({ ok: false, erro: 'longo', campo: 'nome' })
+    const muitas = Array.from({ length: 51 }, (_, i) => `t${i}`).join(',')
+    expect(lerEdicao(form({ base_legal: 'contrato', tags: muitas }))).toEqual({ ok: false, erro: 'longo', campo: 'tags' })
+    expect(lerEdicao(form({ base_legal: 'contrato', notas: 'x'.repeat(5000) })).ok).toBe(true)
+    expect(mensagemCampoLongo('notas')).toContain('5.000')
   })
 
   it('edição exige base legal e não aceita status nem email', () => {

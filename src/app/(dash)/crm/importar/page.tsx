@@ -55,6 +55,7 @@ function Envio({ erro }: { erro?: string }) {
           <li>Separador vírgula ou ponto e vírgula; a primeira linha precisa ser o cabeçalho (Nome, E-mail, Telefone, Escritório, Cidade, UF, Tags…).</li>
           <li>Até {LIMITE_LINHAS_IMPORTACAO.toLocaleString('pt-BR')} linhas por lote.</li>
           <li>E-mails repetidos, vazios ou inválidos são pulados e listados no relatório. Contatos descadastrados continuam descadastrados.</li>
+          <li>Contatos que já existem só ganham o que estiver vazio neles; nada já preenchido é sobrescrito pela planilha.</li>
         </ul>
         <div className="flex justify-end">
           <BotaoEnviar rotuloEnviando="Lendo arquivo…">Pré-visualizar</BotaoEnviar>
@@ -118,7 +119,9 @@ function Previa({ lote, cp1252 }: { lote: ImportacaoContatos; cp1252: boolean })
           </div>
           <CampoBaseLegal legenda="Base legal de todo o lote (LGPD)" />
           <p className="text-xs text-tinta-suave">
-            Para quem já está cadastrado, a base legal só é trocada se a do lote for mais forte (consentimento &gt; contrato &gt; legítimo interesse).
+            Para quem já está cadastrado, a planilha só preenche campos vazios (não troca nome, cidade etc. já gravados), não muda o status, e a
+            base legal só é trocada se a do lote for mais forte (consentimento &gt; contrato &gt; legítimo interesse). Com consentimento, a data
+            gravada é a da importação: &ldquo;consentimento registrado em&rdquo;.
           </p>
           <div className="space-y-1">
             <label htmlFor="m-tags-lote" className={CLASSES_ROTULO}>Tags para todo o lote (opcional)</label>
