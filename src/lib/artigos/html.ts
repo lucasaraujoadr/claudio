@@ -26,40 +26,131 @@ function hrefSeguro(bruto: string | undefined): string | null {
   return null
 }
 
-function reconstruir(nos: AnyNode[]): string {
+type Ctx = 'topo' | 'quote' | 'li' | 'texto'
+
+const BLOCOS = new Set(['p', 'h2', 'h3', 'ul', 'ol', 'blockquote', 'li'])
+
+function nomeFinal(no: { name: string }): string {
+  const n = no.name.toLowerCase()
+  return RENOMEAR[n] ?? n
+}
+
+function contemBloco(nos: AnyNode[]): boolean {
+  for (const no of nos) {
+    if (no.type !== 'tag') continue
+    if (DESCARTAR.has(no.name.toLowerCase())) continue
+    if (BLOCOS.has(nomeFinal(no))) return true
+    if (contemBloco(no.children as AnyNode[])) return true
+  }
+  return false
+}
+
+function vazio(s: string): boolean {
+  return s.replace(/<(?!br>)[^>]*>/g, '').trim() === '' && !s.includes('<br>')
+}
+
+function lista(no: AnyNode & { name: string; children: AnyNode[] }): string {
+  const tag = nomeFinal(no)
+  const itens: string[] = []
+  let buf = ''
+  const fecharBuf = () => {
+    const t = buf.trim()
+    if (!vazio(t)) itens.push(`<li>${t}</li>`)
+    buf = ''
+  }
+  for (const f of no.children) {
+    if (f.type === 'tag' && nomeFinal(f) === 'li') {
+      fecharBuf()
+      const dentro = emitir(f.children as AnyNode[], 'li').trim()
+      if (!vazio(dentro)) itens.push(`<li>${dentro}</li>`)
+    } else {
+      buf += emitir([f], 'li')
+    }
+  }
+  fecharBuf()
+  return itens.length ? `<${tag}>${itens.join('')}</${tag}>` : ''
+}
+
+// Reconstrução com lista branca, ciente da estrutura: blocos nunca ficam dentro de inline,
+// de parágrafo, título ou item; li solto vira lista; texto solto em lista vira item.
+function emitir(nos: AnyNode[], ctx: Ctx): string {
   let saida = ''
+  let corrida: string[] = []
+  const fecharCorrida = () => {
+    if (corrida.length) saida += `<ul>${corrida.join('')}</ul>`
+    corrida = []
+  }
+  const emBloco = ctx === 'topo' || ctx === 'quote'
   for (const no of nos) {
     if (no.type === 'text') {
+      if (corrida.length && !no.data.trim()) continue
+      fecharCorrida()
       saida += escTexto(no.data)
       continue
     }
-    if (no.type !== 'tag') continue // comentários, diretivas, cdata etc. somem
+    if (no.type !== 'tag') continue
     const nome = no.name.toLowerCase()
     if (DESCARTAR.has(nome)) continue
-    const tag = RENOMEAR[nome] ?? nome
-    const filhos = () => reconstruir(no.children as AnyNode[])
+    const tag = nomeFinal(no)
+    const filhos = no.children as AnyNode[]
+    if (tag === 'li' && emBloco) {
+      const dentro = emitir(filhos, 'li').trim()
+      if (!vazio(dentro)) corrida.push(`<li>${dentro}</li>`)
+      continue
+    }
+    fecharCorrida()
+    if (BLOCOS.has(tag)) {
+      if ((tag === 'ul' || tag === 'ol') && ctx !== 'texto') {
+        saida += lista(no as never)
+      } else if (!emBloco) {
+        saida += emitir(filhos, ctx) + ' '
+      } else if (tag === 'p' || (tag === 'h2' || tag === 'h3') && ctx === 'quote') {
+        if (tag === 'p' && contemBloco(filhos)) saida += emitir(filhos, ctx)
+        else {
+          const dentro = emitir(filhos, 'texto').trim()
+          if (!vazio(dentro)) saida += `<p>${dentro}</p>`
+        }
+      } else if (tag === 'h2' || tag === 'h3') {
+        const dentro = emitir(filhos, 'texto').trim()
+        if (!vazio(dentro)) saida += `<${tag}>${dentro}</${tag}>`
+      } else if (tag === 'blockquote') {
+        if (ctx === 'quote') saida += emitir(filhos, 'quote')
+        else {
+          const dentro = emitir(filhos, 'quote')
+          if (!vazio(dentro)) saida += `<blockquote>${dentro}</blockquote>`
+        }
+      } else {
+        saida += emitir(filhos, ctx) + ' '
+      }
+      continue
+    }
     if (!PERMITIDAS.has(tag)) {
-      saida += filhos()
+      saida += emitir(filhos, ctx)
       continue
     }
     if (tag === 'br') {
       saida += '<br>'
+    } else if (contemBloco(filhos)) {
+      saida += emitir(filhos, ctx)
     } else if (tag === 'a') {
       const href = hrefSeguro(no.attribs.href)
-      saida += href ? `<a href="${escAttr(href)}">${filhos()}</a>` : filhos()
+      const dentro = emitir(filhos, 'texto')
+      saida += href ? `<a href="${escAttr(href)}">${dentro}</a>` : dentro
     } else if (tag === 'mark') {
       const v = no.attribs['data-verificar']
-      saida += v !== undefined ? `<mark data-verificar="${escAttr(v)}">${filhos()}</mark>` : `<mark>${filhos()}</mark>`
+      const dentro = emitir(filhos, 'texto')
+      saida += v !== undefined ? `<mark data-verificar="${escAttr(v)}">${dentro}</mark>` : `<mark>${dentro}</mark>`
     } else {
-      saida += `<${tag}>${filhos()}</${tag}>`
+      saida += `<${tag}>${emitir(filhos, 'texto')}</${tag}>`
     }
   }
+  fecharCorrida()
   return saida
 }
 
 export function sanitizarHtml(html: string): string {
   const $ = cheerio.load(html ?? '', null, false)
-  return reconstruir($.root().contents().toArray() as AnyNode[])
+  return emitir($.root().contents().toArray() as AnyNode[], 'topo').trim()
 }
 
 export function removerVerificar(html: string): string {
@@ -75,62 +166,98 @@ export function contarVerificar(html: string): number {
   return $('mark[data-verificar]').length
 }
 
-const INLINE = new Set(['strong', 'em', 'a', 'mark', 'br'])
-
-export function paraGutenberg(htmlSanitizado: string): string {
-  const $ = cheerio.load(htmlSanitizado ?? '', null, false)
-  const blocos: string[] = []
-  let solto = ''
-  const paragrafo = (conteudo: string) => `<!-- wp:paragraph --><p>${conteudo}</p><!-- /wp:paragraph -->`
-  const fecharSolto = () => {
-    if (solto.trim()) blocos.push(paragrafo(solto.trim()))
-    solto = ''
+// Serializa nós já sanitizados com o mesmo escape do sanitizador.
+function serializar(nos: AnyNode[]): string {
+  let r = ''
+  for (const no of nos) {
+    if (no.type === 'text') r += escTexto(no.data)
+    else if (no.type === 'tag') {
+      const n = no.name
+      const f = no.children as AnyNode[]
+      if (n === 'br') r += '<br>'
+      else if (n === 'a') r += `<a href="${escAttr(no.attribs.href ?? '')}">${serializar(f)}</a>`
+      else if (n === 'mark') {
+        const v = no.attribs['data-verificar']
+        r += v !== undefined ? `<mark data-verificar="${escAttr(v)}">${serializar(f)}</mark>` : `<mark>${serializar(f)}</mark>`
+      } else r += `<${n}>${serializar(f)}</${n}>`
+    }
   }
-  for (const no of $.root().contents().toArray() as AnyNode[]) {
-    if (no.type === 'text') {
-      solto += escTexto(no.data)
-      continue
-    }
-    if (no.type !== 'tag') continue
-    const nome = no.name
-    const interno = $(no).html() ?? ''
-    if (INLINE.has(nome)) {
-      solto += $.html(no)
-      continue
-    }
-    fecharSolto()
-    if (nome === 'p') blocos.push(paragrafo(interno))
-    else if (nome === 'h2') blocos.push(`<!-- wp:heading --><h2 class="wp-block-heading">${interno}</h2><!-- /wp:heading -->`)
-    else if (nome === 'h3') blocos.push(`<!-- wp:heading {"level":3} --><h3 class="wp-block-heading">${interno}</h3><!-- /wp:heading -->`)
-    else if (nome === 'ul' || nome === 'ol') {
-      const itens = $(no)
-        .children('li')
-        .toArray()
-        .map((li) => `<!-- wp:list-item --><li>${$(li).html() ?? ''}</li><!-- /wp:list-item -->`)
-        .join('')
-      const attrs = nome === 'ol' ? ' {"ordered":true}' : ''
-      blocos.push(`<!-- wp:list${attrs} --><${nome} class="wp-block-list">${itens}</${nome}><!-- /wp:list -->`)
-    } else if (nome === 'blockquote') {
-      const sub = cheerio.load(interno, null, false)
-      const partes: string[] = []
-      let s = ''
+  return r
+}
+
+const paragrafoWp = (c: string) => `<!-- wp:paragraph --><p>${c}</p><!-- /wp:paragraph -->`
+
+function listaWp(no: AnyNode & { name: string; children: AnyNode[] }): string {
+  const itens = (no.children as AnyNode[])
+    .filter((f) => f.type === 'tag' && f.name === 'li')
+    .map((li) => {
+      let conteudo = ''
+      let inline: AnyNode[] = []
       const fecha = () => {
-        if (s.trim()) partes.push(paragrafo(s.trim()))
-        s = ''
+        conteudo += serializar(inline)
+        inline = []
       }
-      for (const f of sub.root().contents().toArray() as AnyNode[]) {
-        if (f.type === 'text') s += escTexto(f.data)
-        else if (f.type === 'tag' && f.name === 'p') {
+      for (const f of (li as { children: AnyNode[] }).children) {
+        if (f.type === 'tag' && (f.name === 'ul' || f.name === 'ol')) {
           fecha()
-          partes.push(paragrafo(sub(f).html() ?? ''))
-        } else if (f.type === 'tag') s += sub.html(f)
+          conteudo += listaWp(f as never)
+        } else inline.push(f)
       }
       fecha()
-      blocos.push(`<!-- wp:quote --><blockquote class="wp-block-quote">${partes.join('')}</blockquote><!-- /wp:quote -->`)
+      return `<!-- wp:list-item --><li>${conteudo}</li><!-- /wp:list-item -->`
+    })
+    .join('')
+  const attrs = no.name === 'ol' ? ' {"ordered":true}' : ''
+  return `<!-- wp:list${attrs} --><${no.name} class="wp-block-list">${itens}</${no.name}><!-- /wp:list -->`
+}
+
+// Agrupa nós soltos (texto/inline) em parágrafos e delega blocos a `bloco`.
+function blocosWp(nos: AnyNode[], bloco: (no: AnyNode & { name: string; children: AnyNode[] }) => string | null): string[] {
+  const saida: string[] = []
+  let solto: AnyNode[] = []
+  const fecha = () => {
+    const t = serializar(solto).trim()
+    if (t) saida.push(paragrafoWp(t))
+    solto = []
+  }
+  for (const no of nos) {
+    const b = no.type === 'tag' ? bloco(no as never) : null
+    if (b === null) solto.push(no)
+    else {
+      fecha()
+      saida.push(b)
     }
   }
-  fecharSolto()
-  return blocos.join('\n\n')
+  fecha()
+  return saida
+}
+
+export function paraGutenberg(html: string): string {
+  const limpo = sanitizarHtml(html ?? '')
+  const $ = cheerio.load(limpo, null, false)
+  const topo = blocosWp($.root().contents().toArray() as AnyNode[], (no) => {
+    const c = no.children as AnyNode[]
+    switch (no.name) {
+      case 'p':
+        return paragrafoWp(serializar(c))
+      case 'h2':
+        return `<!-- wp:heading --><h2 class="wp-block-heading">${serializar(c)}</h2><!-- /wp:heading -->`
+      case 'h3':
+        return `<!-- wp:heading {"level":3} --><h3 class="wp-block-heading">${serializar(c)}</h3><!-- /wp:heading -->`
+      case 'ul':
+      case 'ol':
+        return listaWp(no)
+      case 'blockquote': {
+        const partes = blocosWp(c, (f) =>
+          f.name === 'p' ? paragrafoWp(serializar(f.children as AnyNode[])) : f.name === 'ul' || f.name === 'ol' ? listaWp(f) : null,
+        )
+        return `<!-- wp:quote --><blockquote class="wp-block-quote">${partes.join('')}</blockquote><!-- /wp:quote -->`
+      }
+      default:
+        return null // inline ou desconhecido: nunca descarta, vira parágrafo
+    }
+  })
+  return topo.join('\n\n')
 }
 
 export function extrairPrimeiroParagrafo(html: string): string {

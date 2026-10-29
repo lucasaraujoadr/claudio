@@ -91,3 +91,56 @@ describe('extratores', () => {
     expect(contarLinksInternos(h, 'www.og.com.br')).toBe(1)
   })
 })
+
+describe('estrutura (revisão)', () => {
+  const docs = '<b id="docs-internal-guid-1"><h2>Titulo</h2><p>Texto</p><ul><li><p>item</p></li></ul></b>'
+  const fixtures = [
+    docs,
+    '<div><div>a</div><div>b</div></div>',
+    '<li>solto</li><p>x</p>',
+    '<ul>texto<li>a</li></ul>',
+    '<ul><li><p>w</p></li></ul>',
+    '<blockquote><ul><li>a</li></ul></blockquote>',
+    '<ul><li>a<ul><li>b</li></ul></li></ul>',
+    '<h2><p>t</p></h2><blockquote><h2>q</h2>tx</blockquote>',
+    '<p><span style="x">a</span></p><div></div><p></p>',
+  ]
+  it('Google Docs: sem bloco dentro de strong', () => {
+    expect(sanitizarHtml(docs)).toBe('<h2>Titulo</h2><p>Texto</p><ul><li>item</li></ul>')
+    expect(paraGutenberg(docs)).not.toContain('<strong>')
+  })
+  it('divs aninhadas viram parágrafos irmãos', () => {
+    expect(sanitizarHtml('<div><div>a</div><div>b</div></div>')).toBe('<p>a</p><p>b</p>')
+  })
+  it('idempotente', () => {
+    for (const f of fixtures) expect(sanitizarHtml(sanitizarHtml(f))).toBe(sanitizarHtml(f))
+  })
+  it('li solto e texto solto em lista não somem', () => {
+    expect(sanitizarHtml('<li>solto</li><p>x</p>')).toBe('<ul><li>solto</li></ul><p>x</p>')
+    expect(sanitizarHtml('<ul>texto<li>a</li></ul>')).toBe('<ul><li>texto</li><li>a</li></ul>')
+    expect(paraGutenberg('<li>solto</li><p>x</p>')).toContain('solto')
+    expect(paraGutenberg('<ul>texto<li>a</li></ul>')).toContain('texto')
+  })
+  it('p dentro de li/h2 é desembrulhado', () => {
+    expect(sanitizarHtml('<ul><li><p>w</p></li></ul>')).toBe('<ul><li>w</li></ul>')
+    expect(sanitizarHtml('<h2><p>t</p></h2>')).toBe('<h2>t</h2>')
+  })
+  it('lista aninhada vira wp:list dentro do list-item', () => {
+    expect(paraGutenberg('<ul><li>a<ul><li>b</li></ul></li></ul>')).toBe(
+      '<!-- wp:list --><ul class="wp-block-list"><!-- wp:list-item --><li>a' +
+        '<!-- wp:list --><ul class="wp-block-list"><!-- wp:list-item --><li>b</li><!-- /wp:list-item --></ul><!-- /wp:list -->' +
+        '</li><!-- /wp:list-item --></ul><!-- /wp:list -->',
+    )
+  })
+  it('lista em blockquote vira wp:list dentro do wp:quote, sem p em volta', () => {
+    const g = paraGutenberg('<blockquote><ul><li>a</li></ul></blockquote>')
+    expect(g).toBe(
+      '<!-- wp:quote --><blockquote class="wp-block-quote"><!-- wp:list --><ul class="wp-block-list"><!-- wp:list-item --><li>a</li><!-- /wp:list-item --></ul><!-- /wp:list --></blockquote><!-- /wp:quote -->',
+    )
+  })
+  it('paraGutenberg sanitiza a entrada e escapa < > em atributos', () => {
+    const g = paraGutenberg('<p>a<script>x</script></p><p><mark data-verificar="a<b>c">t</mark></p>')
+    expect(g).not.toContain('script')
+    expect(g).toContain('data-verificar="a&lt;b&gt;c"')
+  })
+})
