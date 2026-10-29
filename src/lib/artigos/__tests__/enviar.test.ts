@@ -265,6 +265,22 @@ describe('correções da revisão', () => {
     }
     expect(chamadas.atualizar).toHaveLength(0)
     expect((await enviarArtigo(a.id, 'publicar', opts(cliente))).tipo).toBe('ok')
+    expect(chamadas.atualizar[0].d.dataGmt).toBeUndefined()
+  })
+
+  it('publicar em rascunho ou agendado envia dataGmt = agora', async () => {
+    const a = await criarArtigo()
+    const { cliente, chamadas } = fake()
+    await enviarArtigo(a.id, 'publicar', opts(cliente))
+    expect(chamadas.criar[0].dataGmt).toBe('2026-10-29T12:00:00')
+  })
+
+  it('publicar em post agendado no WP envia dataGmt = agora', async () => {
+    const a = await criarArtigo({ wpPostId: 5, wpStatus: 'future', wpModificadoGmt: '2026-10-29T10:00:00', situacao: 'agendado' })
+    const { cliente, chamadas } = fake({
+      lerPost: async () => ({ id: 5, status: 'future', link: 'l', modificadoGmt: '2026-10-29T10:00:00', metaGravada: true }),
+    })
+    await enviarArtigo(a.id, 'publicar', opts(cliente))
     expect(chamadas.atualizar[0].d.dataGmt).toBe('2026-10-29T12:00:00')
   })
 
@@ -312,15 +328,19 @@ describe('correções da revisão', () => {
 
   it('envio concorrente: segundo é recusado; trava é liberada após sucesso e após ErroWp', async () => {
     const a = await criarArtigo()
-    expect(await reivindicarEnvio(a.id, AGORA, db)).toBe(true)
-    expect(await reivindicarEnvio(a.id, new Date(AGORA.getTime() + 60_000), db)).toBe(false)
+    expect(await reivindicarEnvio(a.id, AGORA, db)).toEqual(AGORA)
+    expect(await reivindicarEnvio(a.id, new Date(AGORA.getTime() + 60_000), db)).toBeNull()
     const { cliente, chamadas } = fake()
     expect(await enviarArtigo(a.id, 'rascunho', opts(cliente, { agora: new Date(AGORA.getTime() + 60_000) }))).toEqual({ tipo: 'erro', mensagem: 'envio já em andamento; aguarde' })
     expect(chamadas.criar).toHaveLength(0)
-    expect(await reivindicarEnvio(a.id, new Date(AGORA.getTime() + 3 * 60_000), db)).toBe(true) // expirou
-    await liberarEnvio(a.id, db)
+    const marcaB = new Date(AGORA.getTime() + 3 * 60_000)
+    expect(await reivindicarEnvio(a.id, marcaB, db)).toEqual(marcaB) // a de A expirou
+    await liberarEnvio(a.id, AGORA, db) // A atrasado não solta a de B
+    expect((await obterArtigo(a.id, db))?.enviandoDesde).toEqual(marcaB)
+    await liberarEnvio(a.id, marcaB, db)
     expect((await enviarArtigo(a.id, 'rascunho', opts(cliente))).tipo).toBe('ok')
     expect((await obterArtigo(a.id, db))?.enviandoDesde).toBeNull()
+    expect(await enviarArtigo(99999, 'rascunho', opts(cliente))).toEqual({ tipo: 'erro', mensagem: 'artigo não encontrado' })
     const b = fake({ criarPost: async () => { throw new ErroWp('rede') } })
     await db.update(artigos).set({ wpPostId: null, wpStatus: null }).where(eq(artigos.id, a.id))
     expect((await enviarArtigo(a.id, 'rascunho', opts(b.cliente))).tipo).toBe('erro')

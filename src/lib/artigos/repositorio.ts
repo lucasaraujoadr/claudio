@@ -274,16 +274,18 @@ export async function listarAgendados(db: BancoCrm = bancoPadrao()): Promise<Art
 /** Trava do envio: um envio por artigo por vez; uma trava com mais de 2 minutos é considerada solta. */
 const MINUTOS_ENVIO_PRESO = 2
 
-export async function reivindicarEnvio(id: number, agora: Date, db: BancoCrm = bancoPadrao()): Promise<boolean> {
+/** Devolve a marca da trava (para soltar só a própria) ou null se outro envio está em andamento. */
+export async function reivindicarEnvio(id: number, agora: Date, db: BancoCrm = bancoPadrao()): Promise<Date | null> {
   const limite = new Date(agora.getTime() - MINUTOS_ENVIO_PRESO * 60_000)
   const r = await db
     .update(artigos)
     .set({ enviandoDesde: agora })
     .where(and(eq(artigos.id, id), or(isNull(artigos.enviandoDesde), lt(artigos.enviandoDesde, limite))))
     .returning({ id: artigos.id })
-  return r.length > 0
+  return r.length > 0 ? agora : null
 }
 
-export async function liberarEnvio(id: number, db: BancoCrm = bancoPadrao()): Promise<void> {
-  await db.update(artigos).set({ enviandoDesde: null }).where(eq(artigos.id, id))
+/** Solta só a trava com a mesma marca: um envio atrasado não apaga a de outro mais novo. */
+export async function liberarEnvio(id: number, marca: Date, db: BancoCrm = bancoPadrao()): Promise<void> {
+  await db.update(artigos).set({ enviandoDesde: null }).where(and(eq(artigos.id, id), eq(artigos.enviandoDesde, marca)))
 }

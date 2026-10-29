@@ -86,10 +86,10 @@ async function enviarInterno(
       categorias: a.categoriaId != null ? [a.categoriaId] : [],
       capaId: a.capaMediaId,
       metaDescription: a.metaDescription ?? '',
-      // Publicar com data = agora: o WP mantém um date_gmt futuro antigo e deixaria o post agendado.
+      // Publicar com data = agora (menos num post já no ar, que mantém a data original): o WP mantém um date_gmt futuro antigo e deixaria o post agendado.
       ...(modo === 'agendar' && a.agendadoPara
         ? { dataGmt: a.agendadoPara.toISOString().slice(0, 19) }
-        : modo === 'publicar'
+        : modo === 'publicar' && a.wpStatus !== 'publish'
           ? { dataGmt: agora.toISOString().slice(0, 19) }
           : {}),
     }
@@ -124,11 +124,13 @@ export async function enviarArtigo(
 ): Promise<ResultadoEnvio> {
   const db = opts.db ?? bancoPadrao()
   const agora = opts.agora ?? new Date()
-  if (!(await reivindicarEnvio(id, agora, db))) return { tipo: 'erro', mensagem: 'envio já em andamento; aguarde' }
+  if (!(await obterArtigo(id, db))) return { tipo: 'erro', mensagem: 'artigo não encontrado' }
+  const marca = await reivindicarEnvio(id, agora, db)
+  if (!marca) return { tipo: 'erro', mensagem: 'envio já em andamento; aguarde' }
   try {
     return await enviarInterno(id, modo, { ...opts, db, agora })
   } finally {
-    await liberarEnvio(id, db)
+    await liberarEnvio(id, marca, db)
   }
 }
 
