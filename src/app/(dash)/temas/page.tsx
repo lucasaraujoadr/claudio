@@ -126,7 +126,7 @@ export default async function TemasPage({
 }) {
   await connection()
   const sp = await searchParams
-  const aviso =
+  let aviso: Aviso | undefined =
     typeof sp.pesquisa === 'string'
       ? AVISOS.pesquisa[sp.pesquisa]
       : typeof sp.status === 'string'
@@ -134,6 +134,15 @@ export default async function TemasPage({
         : typeof sp.briefing === 'string'
           ? AVISOS.briefing[sp.briefing]
           : undefined
+  if (sp.pesquisa === 'ok') {
+    const novos = typeof sp.novos === 'string' ? Number.parseInt(sp.novos, 10) : NaN
+    if (Number.isInteger(novos) && novos > 0) {
+      aviso = {
+        ...AVISOS.pesquisa.ok,
+        texto: `Pesquisa concluída: ${novos} ${novos === 1 ? 'tema novo foi adicionado' : 'temas novos foram adicionados'}.`,
+      }
+    }
+  }
   const filtro = ehStatus(sp.filtro) ? sp.filtro : undefined
 
   const db = getDb()

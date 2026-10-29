@@ -3,7 +3,8 @@ import { connection } from 'next/server'
 import { count, desc, eq, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db'
 import { auditIssues, auditRuns, gscSnapshots, topics } from '@/lib/db/schema'
-import { diasDesde, montarOportunidades } from '@/lib/oportunidades'
+import { diasDesde } from '@/lib/oportunidades'
+import { carregarOportunidadesDoSnapshot } from '@/lib/oportunidades-snapshot'
 import { calcularVariacao, escolherSnapshotComparacao, type Variacao } from '@/lib/visao-geral'
 
 export const metadata = { title: 'Visão geral' }
@@ -61,20 +62,17 @@ async function carregarGsc(): Promise<DadosGsc | null> {
   if (!ultima) return null
 
   const dataAnterior = escolherSnapshotComparacao(ultima, datas)
-  const [atual, anterior, linhas] = await Promise.all([
+  const [atual, anterior, oportunidades] = await Promise.all([
     totaisDe(ultima),
     dataAnterior ? totaisDe(dataAnterior) : Promise.resolve(null),
-    db.select().from(gscSnapshots).where(eq(gscSnapshots.snapshotDate, ultima)),
+    carregarOportunidadesDoSnapshot(),
   ])
-  const oportunidades = montarOportunidades(linhas)
-  const comTema = new Set(
-    oportunidades.length > 0 ? (await db.select({ keyword: topics.keyword }).from(topics)).map((t) => t.keyword) : [],
-  )
   return {
     data: ultima,
     atual,
     anterior: dataAnterior && anterior ? { data: dataAnterior, totais: anterior } : null,
-    oportunidadesAbertas: oportunidades.filter((o) => !comTema.has(o.query)).length,
+    // Assuntos distintos sem tema, pela mesma regra de /oportunidades.
+    oportunidadesAbertas: oportunidades?.queriesAbertas ?? 0,
   }
 }
 

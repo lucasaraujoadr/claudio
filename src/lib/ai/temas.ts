@@ -1,3 +1,4 @@
+import { normalizarKeyword } from '@/lib/keyword'
 import { gerarObjetoPadrao, type GerarObjeto } from './cliente'
 import { clusterEstritoSchema, clustersSchemaModelo, temaEstritoSchema, type ClustersGerados } from './schemas'
 
@@ -80,10 +81,6 @@ export async function pesquisarTemas(
   }
   if (clusters.length === 0) throw new Error('A resposta do modelo não trouxe nenhum tema válido')
   return { clusters }
-}
-
-export function normalizarKeyword(s: string): string {
-  return s.normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').toLowerCase().trim()
 }
 
 export function dedupTemas(gerados: ClustersGerados, existentes: string[]): ClustersGerados {

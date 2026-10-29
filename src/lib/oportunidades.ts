@@ -1,5 +1,6 @@
 import { ehOportunidade, ganhoEstimado } from './ctr'
 import type { LinhaGsc } from './gsc'
+import { normalizarKeyword } from './keyword'
 
 export type Oportunidade = LinhaGsc & { ganho: number }
 
@@ -20,6 +21,35 @@ export function montarOportunidades(linhas: LinhaGsc[]): Oportunidade[] {
       (a, b) =>
         b.ganho - a.ganho || b.impressions - a.impressions || a.query.localeCompare(b.query, 'pt-BR'),
     )
+}
+
+export type OportunidadeClassificada = Oportunidade & { coberta: boolean }
+export type OportunidadesClassificadas = {
+  /** Todas as oportunidades do snapshot, na ordem de montarOportunidades, com a marca de cobertura. */
+  todas: OportunidadeClassificada[]
+  /** As que ainda não têm tema (linhas query + page). */
+  abertas: OportunidadeClassificada[]
+  /** Quantos assuntos distintos (query normalizada) seguem sem tema. */
+  queriesAbertas: number
+}
+
+/**
+ * Oportunidades do snapshot menos as já cobertas por um tema. Uma query está coberta
+ * quando algum tema tem a mesma keyword normalizada (acento, caixa e espaços ignorados).
+ * Única fonte da regra para /oportunidades e para a visão geral.
+ */
+export function classificarOportunidades(
+  linhas: LinhaGsc[],
+  keywordsTemas: string[],
+): OportunidadesClassificadas {
+  const cobertas = new Set(keywordsTemas.map(normalizarKeyword))
+  const todas = montarOportunidades(linhas).map((o) => ({
+    ...o,
+    coberta: cobertas.has(normalizarKeyword(o.query)),
+  }))
+  const abertas = todas.filter((o) => !o.coberta)
+  const queriesAbertas = new Set(abertas.map((o) => normalizarKeyword(o.query))).size
+  return { todas, abertas, queriesAbertas }
 }
 
 /** Dias inteiros entre uma data 'AAAA-MM-DD' e hoje (UTC-3 aproximado via data local de São Paulo). */

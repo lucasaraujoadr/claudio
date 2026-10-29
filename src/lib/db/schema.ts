@@ -10,6 +10,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
 export const intencao = pgEnum('intencao', [
@@ -55,19 +56,25 @@ export const clusters = pgTable('clusters', {
   criadoEm: timestamp('criado_em').notNull().defaultNow(),
 })
 
-export const topics = pgTable('topics', {
-  id: serial('id').primaryKey(),
-  clusterId: integer('cluster_id').references(() => clusters.id),
-  titulo: text('titulo').notNull(),
-  keyword: text('keyword').notNull(),
-  intencao: intencao('intencao').notNull(),
-  prioridade: prioridade('prioridade').notNull(),
-  status: topicStatus('status').notNull().default('ideia'),
-  origem: topicOrigem('origem').notNull(),
-  urlPublicada: text('url_publicada'),
-  notas: text('notas'),
-  criadoEm: timestamp('criado_em').notNull().defaultNow(),
-})
+export const topics = pgTable(
+  'topics',
+  {
+    id: serial('id').primaryKey(),
+    clusterId: integer('cluster_id').references(() => clusters.id),
+    titulo: text('titulo').notNull(),
+    keyword: text('keyword').notNull(),
+    /** normalizarKeyword(keyword): identidade do assunto; o índice único impede tema duplicado. */
+    keywordNormalizada: text('keyword_normalizada').notNull(),
+    intencao: intencao('intencao').notNull(),
+    prioridade: prioridade('prioridade').notNull(),
+    status: topicStatus('status').notNull().default('ideia'),
+    origem: topicOrigem('origem').notNull(),
+    urlPublicada: text('url_publicada'),
+    notas: text('notas'),
+    criadoEm: timestamp('criado_em').notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('topics_keyword_normalizada_idx').on(t.keywordNormalizada)],
+)
 
 export const briefings = pgTable('briefings', {
   id: serial('id').primaryKey(),

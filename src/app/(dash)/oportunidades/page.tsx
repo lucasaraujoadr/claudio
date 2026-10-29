@@ -1,8 +1,6 @@
 import { connection } from 'next/server'
-import { desc, eq } from 'drizzle-orm'
-import { getDb } from '@/lib/db'
-import { gscSnapshots, topics } from '@/lib/db/schema'
-import { diasDesde, montarOportunidades } from '@/lib/oportunidades'
+import { diasDesde } from '@/lib/oportunidades'
+import { carregarOportunidadesDoSnapshot } from '@/lib/oportunidades-snapshot'
 
 export const metadata = { title: 'Oportunidades' }
 
@@ -32,20 +30,8 @@ export default async function OportunidadesPage({
   const { tema } = await searchParams
   const aviso = typeof tema === 'string' ? AVISOS[tema] : undefined
 
-  const db = getDb()
-  const [ultimo] = await db
-    .select({ data: gscSnapshots.snapshotDate })
-    .from(gscSnapshots)
-    .orderBy(desc(gscSnapshots.snapshotDate))
-    .limit(1)
-
-  const linhas = ultimo
-    ? await db.select().from(gscSnapshots).where(eq(gscSnapshots.snapshotDate, ultimo.data))
-    : []
-  const oportunidades = montarOportunidades(linhas)
-  const temasExistentes = new Set(
-    oportunidades.length > 0 ? (await db.select({ keyword: topics.keyword }).from(topics)).map((t) => t.keyword) : [],
-  )
+  const ultimo = await carregarOportunidadesDoSnapshot()
+  const oportunidades = ultimo?.todas ?? []
   const dias = ultimo ? diasDesde(ultimo.data) : 0
   const desatualizado = dias > DIAS_ATE_DESATUALIZADO
 
@@ -118,7 +104,7 @@ export default async function OportunidadesPage({
                   </td>
                   <td className="py-2 pr-4 text-right">{Math.round(o.ganho).toLocaleString('pt-BR')}</td>
                   <td className="py-2">
-                    {temasExistentes.has(o.query) ? (
+                    {o.coberta ? (
                       <span className="text-gray-600 dark:text-gray-400">Tema já criado</span>
                     ) : (
                       <form method="POST" action="/api/temas/criar-de-query">

@@ -10,6 +10,7 @@ const topico: Topic = {
   clusterId: 1,
   titulo: 'Quando contratar um perito contábil',
   keyword: 'perito contábil',
+  keywordNormalizada: 'perito contabil',
   intencao: 'comercial',
   prioridade: 'alta',
   status: 'escolhido',
