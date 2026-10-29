@@ -227,12 +227,12 @@ export default async function VisaoGeralPage() {
               <p className={TEXTO_SUAVE}>Search Console, janela de 28 dias, sincronizado em {formatarData(gsc.dados.data)}.</p>
               <div className="mt-3 grid grid-cols-2 gap-4">
                 <Metrica
-                  rotulo="Cliques"
+                  rotulo="Cliques nos termos sincronizados"
                   valor={fmt(gsc.dados.atual.clicks)}
                   detalhe={gsc.dados.anterior ? formatarVariacao(calcularVariacao(gsc.dados.atual.clicks, gsc.dados.anterior.totais.clicks)) : undefined}
                 />
                 <Metrica
-                  rotulo="Impressões"
+                  rotulo="Impressões nos termos sincronizados"
                   valor={fmt(gsc.dados.atual.impressions)}
                   detalhe={gsc.dados.anterior ? formatarVariacao(calcularVariacao(gsc.dados.atual.impressions, gsc.dados.anterior.totais.impressions)) : undefined}
                 />

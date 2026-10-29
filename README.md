@@ -20,6 +20,8 @@ Quando uma fonte ainda não tem dados, o painel diz isso explicitamente (por exe
 
 - Todo dia às **03:00 (horário de Brasília)** a Vercel executa a sincronização com o Search Console.
 - Os snapshots dos últimos **90 dias** ficam completos. Os mais antigos são reduzidos a **um por semana** (o de segunda-feira).
+- A Visão geral avisa quando a última auditoria tem mais de 14 dias. As auditorias são rodadas manualmente em `/auditoria` (botão "Rastrear agora").
+- Cliques e impressões na Visão geral são somados dos termos sincronizados (combinações termo + página) e podem ficar abaixo dos totais exibidos no próprio Search Console.
 - A variação de cliques e impressões na Visão geral compara o snapshot mais recente com o de cerca de 28 dias antes. Sem esse histórico, o painel mostra só os totais atuais.
 
 ## Rodar no computador
@@ -47,7 +49,7 @@ Ficam na Vercel (Settings > Environment Variables). Nunca coloque os valores no 
 | `GOOGLE_SA_PRIVATE_KEY` | Campo `private_key` do mesmo arquivo JSON. |
 | `GSC_PROPERTY` | Propriedade do Search Console: `sc-domain:ogpericiacontabil.com.br`. |
 | `SITE_URL` | Endereço do site rastreado: `https://ogpericiacontabil.com.br`. |
-| `CRON_SECRET` | Segredo que protege a rotina diária; a Vercel o fornece às rotas de cron. |
+| `CRON_SECRET` | Segredo que protege a rotina diária. Você mesmo gera um texto aleatório longo (`openssl rand -base64 32`) e cadastra como variável `CRON_SECRET` na Vercel, nos três ambientes (Production, Preview e Development); a partir daí a Vercel passa a enviá-lo ao cron. Ele já está configurado neste projeto: não gere outro, para não quebrar a rotina que funciona. |
 
 ## Conta de serviço do Google (Search Console)
 
