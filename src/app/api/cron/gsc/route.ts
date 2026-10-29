@@ -43,7 +43,9 @@ export async function GET(request: Request) {
       reter: removerSnapshotsAntigos,
     })
     return NextResponse.json(resultado)
-  } catch {
+  } catch (e) {
+    // Só o nome da classe: a mensagem pode ecoar credenciais.
+    console.error('cron gsc falhou:', e instanceof Error ? e.name : 'erro')
     // Sem detalhes: a mensagem de erro de bibliotecas pode ecoar credenciais.
     return NextResponse.json({ erro: 'Falha ao sincronizar o Search Console' }, { status: 502 })
   }

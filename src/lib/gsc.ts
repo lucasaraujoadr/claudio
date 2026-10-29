@@ -14,6 +14,7 @@ export type LinhaGsc = {
 
 const ROW_LIMIT = 25000
 const TAMANHO_LOTE = 500
+const MAX_LINHAS = 100000
 const DIA_MS = 24 * 60 * 60 * 1000
 
 /** Campos da resposta de searchanalytics.query que usamos. */
@@ -124,7 +125,7 @@ export async function buscarSearchAnalytics(
         position: l.position ?? 0,
       })
     }
-    if (rows.length < ROW_LIMIT) return linhas
+    if (rows.length < ROW_LIMIT || linhas.length >= MAX_LINHAS) return linhas
   }
 }
 
@@ -162,10 +163,12 @@ export async function executarCronGsc(d: {
 }
 
 export async function gravarSnapshots(lote: LinhaGsc[], snapshotDate: string): Promise<void> {
-  if (lote.length === 0) return
+  // Par repetido no mesmo INSERT faz o Postgres falhar; vale a última ocorrência.
+  const unicas = [...new Map(lote.map((l) => [JSON.stringify([l.query, l.page]), l])).values()]
+  if (unicas.length === 0) return
   await getDb()
     .insert(gscSnapshots)
-    .values(lote.map((l) => ({ ...l, snapshotDate })))
+    .values(unicas.map((l) => ({ ...l, snapshotDate })))
     .onConflictDoUpdate({
       target: [gscSnapshots.snapshotDate, gscSnapshots.query, gscSnapshots.page],
       set: {

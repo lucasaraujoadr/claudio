@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as dbModulo from '@/lib/db'
 import {
   buscarSearchAnalytics,
   executarCronGsc,
+  gravarSnapshots,
   janelas,
   normalizarChavePrivada,
   apagaPorRetencao,
@@ -35,6 +37,12 @@ describe('normalizarChavePrivada', () => {
   })
 })
 
+describe('fuso da suíte', () => {
+  it('roda com TZ atrás do UTC (guarda dos testes de UTC)', () => {
+    expect(new Date('2026-10-28T00:30:00Z').getDate()).toBe(27)
+  })
+})
+
 describe('janelas', () => {
   it('a janela atual termina 3 dias antes de hoje', () => {
     expect(janelas(new Date('2026-10-28')).atual.fim).toBe('2026-10-25')
@@ -62,7 +70,7 @@ describe('sqlRetencao', () => {
   it('usa UTC logo após a meia-noite', () => {
     expect(sqlRetencao(new Date('2026-10-28T00:10:00Z')).corte).toBe('2026-07-30')
   })
-  it('corte e segunda-feira: datas anteriores ao corte seguem a regra', () => {
+  it('segunda-feira anterior ao corte é preservada; outros dias são apagados', () => {
     const { corte } = sqlRetencao(new Date('2026-10-28'))
     const deveApagar = (d: string) => apagaPorRetencao(d, corte)
     expect(deveApagar('2026-07-27')).toBe(false) // segunda anterior ao corte
@@ -116,6 +124,13 @@ describe('buscarSearchAnalytics', () => {
     expect(cliente).toHaveBeenCalledTimes(2)
     expect(cliente.mock.calls[1][0].requestBody.startRow).toBe(25000)
   })
+  it('para em 100 000 linhas mesmo que a API continue devolvendo páginas cheias', async () => {
+    const cheia = Array.from({ length: 25000 }, (_, i) => linhaApi(i))
+    const cliente = vi.fn<ClienteGsc>().mockResolvedValue({ rows: cheia })
+    const r = await buscarSearchAnalytics({ property: 'p', inicio: 'a', fim: 'b' }, cliente)
+    expect(r).toHaveLength(100000)
+    expect(cliente).toHaveBeenCalledTimes(4)
+  })
 })
 
 describe('executarCronGsc', () => {
@@ -142,6 +157,20 @@ describe('executarCronGsc', () => {
       linhasRemovidasRetencao: 7,
       anterior: { clicks: 6, impressions: 60 },
     })
+  })
+})
+
+describe('gravarSnapshots', () => {
+  it('deduplica (query, page) no lote mantendo a última ocorrência', async () => {
+    const values = vi.fn().mockReturnValue({ onConflictDoUpdate: vi.fn().mockResolvedValue(undefined) })
+    vi.spyOn(dbModulo, 'getDb').mockReturnValue({ insert: () => ({ values }) } as never)
+    const l = (query: string, page: string, clicks: number): LinhaGsc => ({
+      query, page, clicks, impressions: 1, ctr: 0, position: 1,
+    })
+    await gravarSnapshots([l('a', 'p', 1), l('b', 'p', 2), l('a', 'p', 9)], '2026-10-28')
+    const enviados = values.mock.calls[0][0] as Array<{ query: string; clicks: number }>
+    expect(enviados).toHaveLength(2)
+    expect(enviados.find((x) => x.query === 'a')?.clicks).toBe(9)
   })
 })
 
