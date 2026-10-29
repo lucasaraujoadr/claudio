@@ -82,6 +82,8 @@ function temNoindex($: cheerio.CheerioAPI): boolean {
 function contarPalavras($: cheerio.CheerioAPI): number {
   const corpo = $('body').first().clone()
   corpo.find('script, style, noscript, nav, header, footer, svg').remove()
+  // text() não separa elementos adjacentes; HTML minificado colaria as palavras.
+  corpo.find('*').append(' ')
   return corpo.text().split(/\s+/).filter(Boolean).length
 }
 

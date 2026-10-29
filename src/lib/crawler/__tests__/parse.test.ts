@@ -31,9 +31,9 @@ describe('extrairSinais com fixtures reais', () => {
   })
 
   it('conta palavras do corpo ignorando script, style e nav', () => {
-    expect(extrairSinais(`${BASE}/`, fixture('home'), 200).palavras).toBe(877)
+    expect(extrairSinais(`${BASE}/`, fixture('home'), 200).palavras).toBe(878)
     expect(extrairSinais(`${BASE}/servicos/`, fixture('servicos'), 200).palavras).toBe(585)
-    expect(extrairSinais(`${BASE}/cartao-rmc-riscos/`, fixture('post'), 200).palavras).toBe(1341)
+    expect(extrairSinais(`${BASE}/cartao-rmc-riscos/`, fixture('post'), 200).palavras).toBe(1346)
   })
 
   it('não trata a meta robots do SEO Framework como noindex', () => {
@@ -96,6 +96,11 @@ describe('extrairSinais com HTML sintético', () => {
     const s = sinais('<nav><a href="/menu/">menu menu menu</a></nav><body><p>um dois três</p><footer>rodapé</footer></body>')
     expect(s.linksInternos).toEqual([`${BASE}/menu/`])
     expect(s.palavras).toBe(3)
+  })
+
+  it('conta palavras separadas por limite de tag em HTML minificado', () => {
+    const html = '<html><body><h2>Título</h2><p>Texto aqui</p><ul><li>a</li><li>b</li></ul></body></html>'
+    expect(extrairSinais('https://x.test/', html, 200).palavras).toBe(5)
   })
 
   it('lê @type em objeto, array, @graph e @type em array; ignora JSON malformado', () => {
