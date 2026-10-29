@@ -46,6 +46,18 @@ export const gscSnapshots = pgTable(
   (t) => [unique().on(t.snapshotDate, t.query, t.page)],
 )
 
+/**
+ * Totais da janela atual e dos 28 dias anteriores a ela, gravados pelo cron junto com
+ * o snapshot. Dão à visão geral a comparação desde o primeiro dia sincronizado.
+ */
+export const gscTotais = pgTable('gsc_totais', {
+  snapshotDate: date('snapshot_date').primaryKey(),
+  clicksAtual: integer('clicks_atual').notNull(),
+  impressionsAtual: integer('impressions_atual').notNull(),
+  clicksAnterior: integer('clicks_anterior').notNull(),
+  impressionsAnterior: integer('impressions_anterior').notNull(),
+})
+
 export const clusters = pgTable('clusters', {
   id: serial('id').primaryKey(),
   nome: text('nome').notNull(),

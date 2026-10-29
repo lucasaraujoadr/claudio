@@ -2,10 +2,10 @@ import Link from 'next/link'
 import { connection } from 'next/server'
 import { count, desc, eq, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db'
-import { auditIssues, auditRuns, gscSnapshots, topics } from '@/lib/db/schema'
+import { auditIssues, auditRuns, gscSnapshots, gscTotais, topics } from '@/lib/db/schema'
 import { diasDesde } from '@/lib/oportunidades'
 import { carregarOportunidadesDoSnapshot } from '@/lib/oportunidades-snapshot'
-import { calcularVariacao, escolherSnapshotComparacao, type Variacao } from '@/lib/visao-geral'
+import { calcularVariacao, escolherComparacao, type Totais, type Variacao } from '@/lib/visao-geral'
 
 export const metadata = { title: 'Visão geral' }
 
@@ -31,11 +31,11 @@ async function carregar<T>(nome: string, fn: () => Promise<T>): Promise<Resultad
   }
 }
 
-type Totais = { clicks: number; impressions: number }
 type DadosGsc = {
   data: string
   atual: Totais
-  anterior: { data: string; totais: Totais } | null
+  /** De onde vem a comparação; null quando não há base honesta. */
+  anterior: { totais: Totais; descricao: string } | null
   oportunidadesAbertas: number
 }
 
@@ -61,18 +61,39 @@ async function carregarGsc(): Promise<DadosGsc | null> {
   const ultima = datas[0]
   if (!ultima) return null
 
-  const dataAnterior = escolherSnapshotComparacao(ultima, datas)
-  const [atual, anterior, oportunidades] = await Promise.all([
-    totaisDe(ultima),
-    dataAnterior ? totaisDe(dataAnterior) : Promise.resolve(null),
+  const [[linhaTotais], oportunidades] = await Promise.all([
+    db.select().from(gscTotais).where(eq(gscTotais.snapshotDate, ultima)).limit(1),
     carregarOportunidadesDoSnapshot(),
+  ])
+  // Assuntos distintos sem tema, pela mesma regra de /oportunidades.
+  const oportunidadesAbertas = oportunidades?.queriesAbertas ?? 0
+  const fonte = escolherComparacao(ultima, datas, linhaTotais ?? null)
+
+  if (fonte.tipo === 'totais') {
+    // Atual e anterior vêm da mesma linha, somados pelo cron do mesmo jeito: par coerente.
+    const { inicio, fim } = fonte.periodoAnterior
+    return {
+      data: ultima,
+      atual: fonte.atual,
+      anterior: {
+        totais: fonte.anterior,
+        descricao: `Variação em relação aos 28 dias anteriores (${formatarData(inicio)} a ${formatarData(fim)}), nos termos sincronizados.`,
+      },
+      oportunidadesAbertas,
+    }
+  }
+  const [atual, anterior] = await Promise.all([
+    totaisDe(ultima),
+    fonte.tipo === 'snapshot' ? totaisDe(fonte.dataAnterior) : Promise.resolve(null),
   ])
   return {
     data: ultima,
     atual,
-    anterior: dataAnterior && anterior ? { data: dataAnterior, totais: anterior } : null,
-    // Assuntos distintos sem tema, pela mesma regra de /oportunidades.
-    oportunidadesAbertas: oportunidades?.queriesAbertas ?? 0,
+    anterior:
+      fonte.tipo === 'snapshot' && anterior
+        ? { totais: anterior, descricao: `Variação em relação ao snapshot de ${formatarData(fonte.dataAnterior)}.` }
+        : null,
+    oportunidadesAbertas,
   }
 }
 
@@ -236,9 +257,7 @@ export default async function VisaoGeralPage() {
                 />
               </div>
               <p className={`mt-3 ${TEXTO_SUAVE}`}>
-                {gsc.dados.anterior
-                  ? `Variação em relação ao snapshot de ${formatarData(gsc.dados.anterior.data)}.`
-                  : 'Comparação disponível após 28 dias de histórico.'}
+                {gsc.dados.anterior ? gsc.dados.anterior.descricao : 'Comparação disponível após 28 dias de histórico.'}
               </p>
             </Bloco>
             <Bloco titulo="Oportunidades abertas" href="/oportunidades">

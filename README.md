@@ -22,7 +22,8 @@ Quando uma fonte ainda não tem dados, o painel diz isso explicitamente (por exe
 - Os snapshots dos últimos **90 dias** ficam completos. Os mais antigos são reduzidos a **um por semana** (o de segunda-feira).
 - A Visão geral avisa quando a última auditoria tem mais de 14 dias. As auditorias são rodadas manualmente em `/auditoria` (botão "Rastrear agora").
 - Cliques e impressões na Visão geral são somados dos termos sincronizados (combinações termo + página) e podem ficar abaixo dos totais exibidos no próprio Search Console.
-- A variação de cliques e impressões na Visão geral compara o snapshot mais recente com o de cerca de 28 dias antes. Sem esse histórico, o painel mostra só os totais atuais.
+- A variação de cliques e impressões na Visão geral compara a janela de 28 dias do snapshot mais recente com os 28 dias imediatamente anteriores, que a sincronização diária busca junto e guarda na tabela `gsc_totais`. Para um snapshot sem esse registro (gravado antes da tabela existir), o painel compara com o snapshot de cerca de 28 dias antes, se houver; sem nenhum dos dois, mostra só os totais atuais.
+- A sincronização grava o snapshot, a limpeza de retenção e os totais numa única transação: se ela falhar no meio, nada é gravado e o snapshot anterior continua valendo.
 
 ## Rodar no computador
 

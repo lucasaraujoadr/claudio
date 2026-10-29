@@ -1,11 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
-import {
-  buscarSearchAnalytics,
-  executarCronGsc,
-  gravarSnapshots,
-  removerSnapshotsAntigos,
-} from '@/lib/gsc'
+import { buscarSearchAnalytics, executarCronGsc, transacaoGsc } from '@/lib/gsc'
 
 export const maxDuration = 60
 
@@ -39,8 +34,7 @@ export async function GET(request: Request) {
       hoje: new Date(),
       property: process.env.GSC_PROPERTY as string,
       buscar: buscarSearchAnalytics,
-      gravar: gravarSnapshots,
-      reter: removerSnapshotsAntigos,
+      transacao: transacaoGsc,
     })
     return NextResponse.json(resultado)
   } catch (e) {

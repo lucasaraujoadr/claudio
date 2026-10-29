@@ -1,7 +1,10 @@
 import { and, lt, sql } from 'drizzle-orm'
 import { google } from 'googleapis'
 import { getDb } from '@/lib/db'
-import { gscSnapshots } from '@/lib/db/schema'
+import { gscSnapshots, gscTotais } from '@/lib/db/schema'
+import { iso, janelas, meiaNoiteUtc } from './janelas-gsc'
+
+export { janelas }
 
 export type LinhaGsc = {
   query: string
@@ -45,30 +48,6 @@ export function normalizarChavePrivada(bruta: string): string {
     if ((a === '"' || a === "'") && chave[chave.length - 1] === a) chave = chave.slice(1, -1)
   }
   return chave.replace(/\\n/g, '\n')
-}
-
-function iso(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 10)
-}
-
-/** Aritmética em UTC: independe do fuso da máquina. */
-function meiaNoiteUtc(d: Date): number {
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
-}
-
-export function janelas(hoje: Date): {
-  atual: { inicio: string; fim: string }
-  anterior: { inicio: string; fim: string }
-} {
-  const base = meiaNoiteUtc(hoje)
-  const fimAtual = base - 3 * DIA_MS
-  const inicioAtual = fimAtual - 27 * DIA_MS
-  const fimAnterior = inicioAtual - DIA_MS
-  const inicioAnterior = fimAnterior - 27 * DIA_MS
-  return {
-    atual: { inicio: iso(inicioAtual), fim: iso(fimAtual) },
-    anterior: { inicio: iso(inicioAnterior), fim: iso(fimAnterior) },
-  }
 }
 
 export function sqlRetencao(hoje: Date): { corte: string } {
@@ -133,40 +112,102 @@ export type ResultadoCron = {
   snapshotDate: string
   linhasGravadas: number
   linhasRemovidasRetencao: number
+  atual: { clicks: number; impressions: number }
   anterior: { clicks: number; impressions: number }
+}
+
+export type TotaisGsc = typeof gscTotais.$inferInsert
+
+/** O que o cron escreve. Tudo dentro de uma transação: ou o snapshot entra inteiro, ou nada. */
+export type EscritaCron = {
+  gravar: (lote: LinhaGsc[], snapshotDate: string) => Promise<void>
+  reter: (corte: string) => Promise<number>
+  gravarTotais: (totais: TotaisGsc) => Promise<void>
+}
+export type TransacaoCron = <T>(fn: (escrita: EscritaCron) => Promise<T>) => Promise<T>
+
+function somar(linhas: LinhaGsc[]): { clicks: number; impressions: number } {
+  return {
+    clicks: linhas.reduce((s, l) => s + l.clicks, 0),
+    impressions: linhas.reduce((s, l) => s + l.impressions, 0),
+  }
 }
 
 export async function executarCronGsc(d: {
   hoje: Date
   property: string
   buscar: (o: { property: string; inicio: string; fim: string }) => Promise<LinhaGsc[]>
-  gravar: (lote: LinhaGsc[], snapshotDate: string) => Promise<void>
-  reter: (corte: string) => Promise<number>
+  transacao: TransacaoCron
 }): Promise<ResultadoCron> {
   const { atual, anterior } = janelas(d.hoje)
   const snapshotDate = iso(meiaNoiteUtc(d.hoje))
+  // As chamadas ao Google ficam fora da transação: ela não fica aberta esperando a rede.
   const linhasAtual = await d.buscar({ property: d.property, ...atual })
   const linhasAnterior = await d.buscar({ property: d.property, ...anterior })
-  for (let i = 0; i < linhasAtual.length; i += TAMANHO_LOTE) {
-    await d.gravar(linhasAtual.slice(i, i + TAMANHO_LOTE), snapshotDate)
-  }
-  const removidas = await d.reter(sqlRetencao(d.hoje).corte)
+  const totalAtual = somar(linhasAtual)
+  const totalAnterior = somar(linhasAnterior)
+
+  const removidas = await d.transacao(async (e) => {
+    for (let i = 0; i < linhasAtual.length; i += TAMANHO_LOTE) {
+      await e.gravar(linhasAtual.slice(i, i + TAMANHO_LOTE), snapshotDate)
+    }
+    const n = await e.reter(sqlRetencao(d.hoje).corte)
+    await e.gravarTotais({
+      snapshotDate,
+      clicksAtual: totalAtual.clicks,
+      impressionsAtual: totalAtual.impressions,
+      clicksAnterior: totalAnterior.clicks,
+      impressionsAnterior: totalAnterior.impressions,
+    })
+    return n
+  })
   return {
     snapshotDate,
     linhasGravadas: linhasAtual.length,
     linhasRemovidasRetencao: removidas,
-    anterior: {
-      clicks: linhasAnterior.reduce((s, l) => s + l.clicks, 0),
-      impressions: linhasAnterior.reduce((s, l) => s + l.impressions, 0),
-    },
+    atual: totalAtual,
+    anterior: totalAnterior,
   }
 }
 
-export async function gravarSnapshots(lote: LinhaGsc[], snapshotDate: string): Promise<void> {
+type Db = ReturnType<typeof getDb>
+/** O banco ou uma transação aberta nele. */
+type Executor = Pick<Db, 'insert' | 'delete'>
+
+/** Transação real: snapshots, retenção e totais com commit único. */
+export const transacaoGsc: TransacaoCron = (fn) =>
+  getDb().transaction((tx) =>
+    fn({
+      gravar: (lote, data) => gravarSnapshots(lote, data, tx),
+      reter: (corte) => removerSnapshotsAntigos(corte, tx),
+      gravarTotais: (totais) => gravarTotais(totais, tx),
+    }),
+  )
+
+export async function gravarTotais(totais: TotaisGsc, exec: Executor = getDb()): Promise<void> {
+  await exec
+    .insert(gscTotais)
+    .values(totais)
+    .onConflictDoUpdate({
+      target: gscTotais.snapshotDate,
+      set: {
+        clicksAtual: totais.clicksAtual,
+        impressionsAtual: totais.impressionsAtual,
+        clicksAnterior: totais.clicksAnterior,
+        impressionsAnterior: totais.impressionsAnterior,
+      },
+    })
+}
+
+export async function gravarSnapshots(
+  lote: LinhaGsc[],
+  snapshotDate: string,
+  exec: Executor = getDb(),
+): Promise<void> {
   // Par repetido no mesmo INSERT faz o Postgres falhar; vale a última ocorrência.
   const unicas = [...new Map(lote.map((l) => [JSON.stringify([l.query, l.page]), l])).values()]
   if (unicas.length === 0) return
-  await getDb()
+  await exec
     .insert(gscSnapshots)
     .values(unicas.map((l) => ({ ...l, snapshotDate })))
     .onConflictDoUpdate({
@@ -180,8 +221,8 @@ export async function gravarSnapshots(lote: LinhaGsc[], snapshotDate: string): P
     })
 }
 
-export async function removerSnapshotsAntigos(corte: string): Promise<number> {
-  const apagadas = await getDb()
+export async function removerSnapshotsAntigos(corte: string, exec: Executor = getDb()): Promise<number> {
+  const apagadas = await exec
     .delete(gscSnapshots)
     .where(and(lt(gscSnapshots.snapshotDate, corte), sql`extract(dow from ${gscSnapshots.snapshotDate}) <> 1`))
     .returning({ id: gscSnapshots.id })

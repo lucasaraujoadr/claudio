@@ -4,6 +4,9 @@ import {
   buscarSearchAnalytics,
   executarCronGsc,
   gravarSnapshots,
+  gravarTotais,
+  type EscritaCron,
+  type TotaisGsc,
   janelas,
   normalizarChavePrivada,
   apagaPorRetencao,
@@ -133,30 +136,106 @@ describe('buscarSearchAnalytics', () => {
   })
 })
 
+/**
+ * Transação falsa: as escritas ficam num rascunho e só passam ao "banco" se a função
+ * terminar sem lançar — o mesmo contrato do db.transaction real.
+ */
+function transacaoFalsa(falhas: Partial<Record<keyof EscritaCron, (n: number) => boolean>> = {}) {
+  type Estado = { lotes: Array<{ tamanho: number; data: string }>; cortes: string[]; totais: TotaisGsc[] }
+  const banco: Estado = { lotes: [], cortes: [], totais: [] }
+  let aberturas = 0
+  const transacao = async <T,>(fn: (e: EscritaCron) => Promise<T>): Promise<T> => {
+    aberturas++
+    const rascunho: Estado = { lotes: [], cortes: [], totais: [] }
+    const chamadas = { gravar: 0, reter: 0, gravarTotais: 0 }
+    const r = await fn({
+      gravar: async (lote, data) => {
+        if (falhas.gravar?.(++chamadas.gravar)) throw new Error('conexão caiu')
+        rascunho.lotes.push({ tamanho: lote.length, data })
+      },
+      reter: async (corte) => {
+        if (falhas.reter?.(++chamadas.reter)) throw new Error('conexão caiu')
+        rascunho.cortes.push(corte)
+        return 7
+      },
+      gravarTotais: async (t) => {
+        if (falhas.gravarTotais?.(++chamadas.gravarTotais)) throw new Error('conexão caiu')
+        rascunho.totais.push(t)
+      },
+    })
+    banco.lotes.push(...rascunho.lotes)
+    banco.cortes.push(...rascunho.cortes)
+    banco.totais.push(...rascunho.totais)
+    return r
+  }
+  return { banco, transacao, aberturas: () => aberturas }
+}
+
 describe('executarCronGsc', () => {
   const hoje = new Date('2026-10-28T10:00:00Z')
-  const linhas = (n: number): LinhaGsc[] =>
-    Array.from({ length: n }, (_, i) => ({ query: `q${i}`, page: 'p', clicks: 2, impressions: 20, ctr: 0.1, position: 4 }))
-
-  it('grava a janela atual em lotes, aplica retenção e totaliza a anterior', async () => {
-    const buscar = vi
+  const linhas = (n: number, clicks = 2, impressions = 20): LinhaGsc[] =>
+    Array.from({ length: n }, (_, i) => ({ query: `q${i}`, page: 'p', clicks, impressions, ctr: 0.1, position: 4 }))
+  const buscarFalso = (atual: LinhaGsc[], anterior: LinhaGsc[]) =>
+    vi
       .fn<(o: { property: string; inicio: string; fim: string }) => Promise<LinhaGsc[]>>()
-      .mockResolvedValueOnce(linhas(1200))
-      .mockResolvedValueOnce(linhas(3))
-    const gravar = vi.fn(async (_lote: LinhaGsc[], _data: string) => {})
-    const reter = vi.fn(async (_corte: string) => 7)
-    const r = await executarCronGsc({ hoje, property: 'sc-domain:x', buscar, gravar, reter })
+      .mockResolvedValueOnce(atual)
+      .mockResolvedValueOnce(anterior)
+
+  it('grava a janela atual em lotes, aplica retenção e grava os totais, numa única transação', async () => {
+    const buscar = buscarFalso(linhas(1200), linhas(3, 2, 20))
+    const t = transacaoFalsa()
+    const r = await executarCronGsc({ hoje, property: 'sc-domain:x', buscar, transacao: t.transacao })
     expect(buscar.mock.calls[0][0]).toMatchObject({ inicio: '2026-09-28', fim: '2026-10-25' })
     expect(buscar.mock.calls[1][0]).toMatchObject({ inicio: '2026-08-31', fim: '2026-09-27' })
-    expect(gravar.mock.calls.map((c) => c[0].length)).toEqual([500, 500, 200])
-    expect(gravar.mock.calls.every((c) => c[1] === '2026-10-28')).toBe(true)
-    expect(reter).toHaveBeenCalledWith('2026-07-30')
+    expect(t.aberturas()).toBe(1)
+    expect(t.banco.lotes.map((l) => l.tamanho)).toEqual([500, 500, 200])
+    expect(t.banco.lotes.every((l) => l.data === '2026-10-28')).toBe(true)
+    expect(t.banco.cortes).toEqual(['2026-07-30'])
+    expect(t.banco.totais).toEqual([
+      { snapshotDate: '2026-10-28', clicksAtual: 2400, impressionsAtual: 24000, clicksAnterior: 6, impressionsAnterior: 60 },
+    ])
     expect(r).toEqual({
       snapshotDate: '2026-10-28',
       linhasGravadas: 1200,
       linhasRemovidasRetencao: 7,
+      atual: { clicks: 2400, impressions: 24000 },
       anterior: { clicks: 6, impressions: 60 },
     })
+  })
+
+  it('a busca ao Google acontece antes de abrir a transação', async () => {
+    const t = transacaoFalsa()
+    const buscar = vi.fn(async () => {
+      expect(t.aberturas()).toBe(0)
+      return linhas(1)
+    })
+    await executarCronGsc({ hoje, property: 'p', buscar, transacao: t.transacao })
+    expect(buscar).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    ['no segundo lote de snapshots', { gravar: (n: number) => n === 2 }],
+    ['na retenção', { reter: () => true }],
+    ['nos totais', { gravarTotais: () => true }],
+  ])('falha %s: nada é gravado e o erro propaga', async (_onde, falhas) => {
+    const t = transacaoFalsa(falhas)
+    await expect(
+      executarCronGsc({ hoje, property: 'p', buscar: buscarFalso(linhas(1200), linhas(3)), transacao: t.transacao }),
+    ).rejects.toThrow('conexão caiu')
+    expect(t.banco).toEqual({ lotes: [], cortes: [], totais: [] })
+  })
+})
+
+describe('gravarTotais', () => {
+  it('faz upsert pela snapshot_date com os quatro totais', async () => {
+    const onConflictDoUpdate = vi.fn().mockResolvedValue(undefined)
+    const values = vi.fn().mockReturnValue({ onConflictDoUpdate })
+    const totais: TotaisGsc = { snapshotDate: '2026-10-28', clicksAtual: 1, impressionsAtual: 2, clicksAnterior: 3, impressionsAnterior: 4 }
+    await gravarTotais(totais, { insert: () => ({ values }) } as never)
+    expect(values).toHaveBeenCalledWith(totais)
+    const { target, set } = onConflictDoUpdate.mock.calls[0][0]
+    expect(target.name).toBe('snapshot_date')
+    expect(Object.keys(set).sort()).toEqual(['clicksAnterior', 'clicksAtual', 'impressionsAnterior', 'impressionsAtual'])
   })
 })
 

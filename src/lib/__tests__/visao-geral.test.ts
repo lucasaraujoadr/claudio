@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calcularVariacao, escolherSnapshotComparacao } from '../visao-geral'
+import { calcularVariacao, escolherComparacao, escolherSnapshotComparacao } from '../visao-geral'
 
 describe('calcularVariacao', () => {
   it('calcula variação percentual positiva e negativa', () => {
@@ -47,5 +47,37 @@ describe('escolherSnapshotComparacao', () => {
   it('devolve null sem histórico e ignora o próprio snapshot atual', () => {
     expect(escolherSnapshotComparacao('2026-10-26', [])).toBeNull()
     expect(escolherSnapshotComparacao('2026-10-26', ['2026-10-26'])).toBeNull()
+  })
+})
+
+describe('escolherComparacao', () => {
+  const totais = { snapshotDate: '2026-10-28', clicksAtual: 120, impressionsAtual: 4000, clicksAnterior: 100, impressionsAnterior: 3000 }
+
+  it('com a linha de totais do snapshot, compara com a janela anterior buscada pelo cron', () => {
+    expect(escolherComparacao('2026-10-28', ['2026-10-28'], totais)).toEqual({
+      tipo: 'totais',
+      atual: { clicks: 120, impressions: 4000 },
+      anterior: { clicks: 100, impressions: 3000 },
+      periodoAnterior: { inicio: '2026-08-31', fim: '2026-09-27' },
+    })
+  })
+
+  it('prefere os totais mesmo quando existe snapshot de 28 dias antes', () => {
+    expect(escolherComparacao('2026-10-28', ['2026-10-28', '2026-09-30'], totais).tipo).toBe('totais')
+  })
+
+  it('sem linha de totais, recorre ao snapshot de cerca de 28 dias antes', () => {
+    expect(escolherComparacao('2026-10-28', ['2026-10-28', '2026-09-30'], null)).toEqual({
+      tipo: 'snapshot',
+      dataAnterior: '2026-09-30',
+    })
+  })
+
+  it('ignora linha de totais de outra data', () => {
+    expect(escolherComparacao('2026-10-28', ['2026-10-28'], { ...totais, snapshotDate: '2026-10-27' })).toEqual({ tipo: 'nenhuma' })
+  })
+
+  it('sem totais e sem histórico, não há comparação', () => {
+    expect(escolherComparacao('2026-10-28', ['2026-10-28'], null)).toEqual({ tipo: 'nenhuma' })
   })
 })
