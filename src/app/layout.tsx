@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { IBM_Plex_Sans, Source_Serif_4 } from 'next/font/google'
 import { cookies } from 'next/headers'
-import { NOME_COOKIE_TEMA, SCRIPT_TEMA, normalizarTema } from '@/components/tema/tema'
+import { COR_TEMA, NOME_COOKIE_TEMA, SCRIPT_TEMA, normalizarTema } from '@/components/tema/tema'
 import './globals.css'
 
 // Texto e números: humanista técnica, muito legível em tamanhos pequenos, com algarismos
@@ -26,11 +26,19 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 }
 
-export const viewport: Viewport = {
-  themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#f5f3ee' },
-    { media: '(prefers-color-scheme: dark)', color: '#0e0f11' },
-  ],
+/**
+ * Cor da barra do navegador. Com tema escolhido (cookie), uma cor só, a do tema; sem
+ * escolha, segue o sistema. Ao alternar, `aplicarTema` atualiza o `<meta>` no cliente.
+ */
+export async function generateViewport(): Promise<Viewport> {
+  const tema = normalizarTema((await cookies()).get(NOME_COOKIE_TEMA)?.value)
+  if (tema) return { themeColor: COR_TEMA[tema] }
+  return {
+    themeColor: [
+      { media: '(prefers-color-scheme: light)', color: COR_TEMA.claro },
+      { media: '(prefers-color-scheme: dark)', color: COR_TEMA.escuro },
+    ],
+  }
 }
 
 export default async function RootLayout({ children }: LayoutProps<'/'>) {

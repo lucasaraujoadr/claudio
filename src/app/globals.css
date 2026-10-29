@@ -33,6 +33,8 @@
   --og-elevada: #faf8f4;
   --og-borda: #e4dfd5;
   --og-borda-forte: #cfc7b8;
+  /* Contorno de campo de formulário: ≥ 3:1 contra o fundo (WCAG 1.4.11). */
+  --og-borda-campo: #8c8478;
   --og-tinta: #1b1a17;
   --og-tinta-suave: #5f5a51;
   --og-acento: #daa522;
@@ -53,6 +55,9 @@
   --og-sucesso: #1d7044;
   --og-sucesso-fundo: #ecf7f0;
   --og-sucesso-borda: #b9dfc7;
+  /* Séries de gráfico (não são cores de status). Validadas com o validador do dataviz. */
+  --og-serie-1: #a8780c;
+  --og-serie-2: #6250d6;
   --og-sombra: 0 1px 2px rgb(27 26 23 / 0.05), 0 1px 1px rgb(27 26 23 / 0.03);
 }
 
@@ -64,6 +69,7 @@
   --og-elevada: #1e2125;
   --og-borda: #2a2e33;
   --og-borda-forte: #3b4048;
+  --og-borda-campo: #6b717a;
   --og-tinta: #ece8e1;
   --og-tinta-suave: #a7a29a;
   --og-acento: #daa522;
@@ -84,6 +90,8 @@
   --og-sucesso: #6dd49b;
   --og-sucesso-fundo: #10241a;
   --og-sucesso-borda: #1f4a33;
+  --og-serie-1: #bb8915;
+  --og-serie-2: #8f84e8;
   --og-sombra: 0 1px 2px rgb(0 0 0 / 0.4);
 }
 
@@ -96,6 +104,7 @@
     --og-elevada: #1e2125;
     --og-borda: #2a2e33;
     --og-borda-forte: #3b4048;
+  --og-borda-campo: #6b717a;
     --og-tinta: #ece8e1;
     --og-tinta-suave: #a7a29a;
     --og-acento: #daa522;
@@ -116,6 +125,8 @@
     --og-sucesso: #6dd49b;
     --og-sucesso-fundo: #10241a;
     --og-sucesso-borda: #1f4a33;
+  --og-serie-1: #bb8915;
+  --og-serie-2: #8f84e8;
     --og-sombra: 0 1px 2px rgb(0 0 0 / 0.4);
   }
 }
@@ -127,6 +138,7 @@
   --color-elevada: var(--og-elevada);
   --color-borda: var(--og-borda);
   --color-borda-forte: var(--og-borda-forte);
+  --color-borda-campo: var(--og-borda-campo);
   --color-tinta: var(--og-tinta);
   --color-tinta-suave: var(--og-tinta-suave);
   --color-acento: var(--og-acento);
@@ -147,6 +159,8 @@
   --color-sucesso: var(--og-sucesso);
   --color-sucesso-fundo: var(--og-sucesso-fundo);
   --color-sucesso-borda: var(--og-sucesso-borda);
+  --color-serie-1: var(--og-serie-1);
+  --color-serie-2: var(--og-serie-2);
 
   --shadow-cartao: var(--og-sombra);
 

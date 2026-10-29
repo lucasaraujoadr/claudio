@@ -33,16 +33,35 @@ describe('navegação', () => {
     ])
   })
 
-  it('telas que não existem são "em breve" e não são links', () => {
+  it('telas que não existem são "em breve", não são links e são anunciadas como indisponíveis', () => {
     desenhar('/')
     const lateral = screen.getAllByRole('navigation', { name: 'Módulos' }).at(-1)!
-    for (const rotulo of ['Tendências', 'Tráfego', 'Contatos', 'Funis', 'Importar']) {
+    for (const rotulo of ['Tendências', 'Contatos', 'Funis', 'Importar']) {
       expect(within(lateral).queryByRole('link', { name: new RegExp(rotulo) })).toBeNull()
-      const item = within(lateral).getByText(rotulo).closest('[aria-disabled="true"]')
-      expect(item?.textContent).toContain('em breve')
+      const item = within(lateral).getByText(rotulo).closest('[data-indisponivel]')!
+      expect(item.textContent).toContain('em breve')
+      // O leitor de tela ouve "(indisponível)"; o selo visual fica oculto para ele.
+      const sr = item.querySelector('.sr-only')
+      expect(sr?.textContent).toContain('(indisponível)')
+      expect(item.querySelector('[aria-hidden="true"]')?.textContent).toBe('em breve')
+      expect(item.querySelector('[aria-disabled]')).toBeNull()
     }
     const hrefs = within(lateral).getAllByRole('link').map((a) => a.getAttribute('href'))
-    expect(hrefs).toEqual(['/', '/oportunidades', '/temas', '/briefings', '/auditoria'])
+    expect(hrefs).toEqual(['/', '/oportunidades', '/temas', '/briefings', '/auditoria', '/trafego'])
+  })
+
+  it('o selo "em breve" tem pelo menos 11 px (acima de 10 px)', () => {
+    desenhar('/')
+    const lateral = screen.getAllByRole('navigation', { name: 'Módulos' }).at(-1)!
+    const selo = within(lateral).getAllByText('em breve')[0]
+    expect(selo.className).toContain('text-[0.6875rem]')
+    expect(selo.className).not.toContain('text-[0.625rem]')
+  })
+
+  it('Tráfego é um link ativo em /trafego', () => {
+    desenhar('/trafego')
+    const lateral = screen.getAllByRole('navigation', { name: 'Módulos' }).at(-1)!
+    expect(within(lateral).getByRole('link', { name: 'Tráfego' }).getAttribute('aria-current')).toBe('page')
   })
 
   it('marca o item ativo com aria-current', () => {

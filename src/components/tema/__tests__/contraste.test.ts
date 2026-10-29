@@ -24,6 +24,10 @@ function pares(): Par[] {
     lista.push({ texto: 'acento-texto', fundo: f, minimo: AA_TEXTO })
     lista.push({ texto: 'foco', fundo: f, minimo: AA_GRAFICO })
     for (const s of STATUS) lista.push({ texto: s, fundo: f, minimo: AA_TEXTO })
+    // Contorno de campo (WCAG 1.4.11, componente de interface) e séries de gráfico.
+    lista.push({ texto: 'borda-campo', fundo: f, minimo: AA_GRAFICO })
+    lista.push({ texto: 'serie-1', fundo: f, minimo: AA_GRAFICO })
+    lista.push({ texto: 'serie-2', fundo: f, minimo: AA_GRAFICO })
   }
   lista.push({ texto: 'tinta', fundo: 'acento-suave', minimo: AA_TEXTO })
   lista.push({ texto: 'acento-texto', fundo: 'acento-suave', minimo: AA_TEXTO })

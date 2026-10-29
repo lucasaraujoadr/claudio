@@ -1,7 +1,7 @@
 'use client'
 
 import { useLayoutEffect } from 'react'
-import { ATRIBUTO_TEMA, aplicarTema, alternarTema, temaAtual } from './tema'
+import { ATRIBUTO_TEMA, aplicarTema, alternarTema, sincronizarCorDoTema, temaAtual } from './tema'
 
 export type AlternarTemaProps = {
   className?: string
@@ -15,9 +15,12 @@ export type AlternarTemaProps = {
 export function AlternarTema({ className = '' }: AlternarTemaProps) {
   // Em desenvolvimento o Strict Mode remonta <html> e apaga o atributo que o script
   // inline aplicou; reaplica antes da pintura. Em produção é um no-op.
+  // A cor da barra do navegador também passa a seguir o tema escolhido (não só o do
+  // sistema), inclusive quando os <meta> chegaram depois do script do <head>.
   useLayoutEffect(() => {
     const raiz = document.documentElement
     if (!raiz.getAttribute(ATRIBUTO_TEMA)) raiz.setAttribute(ATRIBUTO_TEMA, temaAtual())
+    sincronizarCorDoTema(temaAtual())
   }, [])
 
   return (

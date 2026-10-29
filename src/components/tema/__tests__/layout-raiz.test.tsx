@@ -53,3 +53,20 @@ describe('layout raiz: tema no HTML do servidor', () => {
     expect(html.indexOf('</head>')).toBeLessThan(html.indexOf('<body'))
   })
 })
+
+describe('layout raiz: theme-color', () => {
+  it('com tema escolhido no cookie, a barra do navegador usa a cor desse tema', async () => {
+    const { generateViewport } = await import('@/app/layout')
+    const { COR_TEMA } = await import('@/components/tema/tema')
+    valorCookie = 'escuro'
+    expect((await generateViewport()).themeColor).toBe(COR_TEMA.escuro)
+    valorCookie = 'claro'
+    expect((await generateViewport()).themeColor).toBe(COR_TEMA.claro)
+  })
+
+  it('sem escolha (ou valor inválido), segue o sistema com as duas cores', async () => {
+    const { generateViewport } = await import('@/app/layout')
+    valorCookie = 'roxo'
+    expect(Array.isArray((await generateViewport()).themeColor)).toBe(true)
+  })
+})

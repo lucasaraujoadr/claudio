@@ -40,13 +40,18 @@ function ListaNavegacao({
               {g.itens.map((item) => {
                 if (!item.href) {
                   return (
-                    <li key={item.rotulo}>
-                      <span
-                        aria-disabled="true"
-                        className="flex cursor-not-allowed items-center justify-between gap-2 rounded-md px-3 py-2 text-sm text-tinta-suave"
-                      >
-                        <span>{item.rotulo}</span>
-                        <span className="rounded-full border border-borda px-1.5 text-[0.625rem] leading-4 font-medium tracking-wide uppercase">
+                    // Não é link nem controle: um `aria-disabled` num span sem papel não
+                    // seria anunciado. A indisponibilidade vai no texto, para todos.
+                    <li key={item.rotulo} data-indisponivel="">
+                      <span className="flex cursor-not-allowed items-center justify-between gap-2 rounded-md px-3 py-2 text-sm text-tinta-suave">
+                        <span>
+                          {item.rotulo}
+                          <span className="sr-only"> (indisponível)</span>
+                        </span>
+                        <span
+                          aria-hidden="true"
+                          className="rounded-full border border-borda px-1.5 text-[0.6875rem] leading-4 font-medium tracking-wide uppercase"
+                        >
                           em breve
                         </span>
                       </span>

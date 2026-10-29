@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  COR_TEMA,
   SCRIPT_TEMA,
   alternarTema,
   aplicarTema,
   cookieDoTema,
   normalizarTema,
+  sincronizarCorDoTema,
   temaAtual,
   temaDoCookie,
 } from '../tema'
@@ -61,6 +63,17 @@ describe('funções puras', () => {
 
   it('o cookie vale para o site todo por um ano', () => {
     expect(cookieDoTema('claro')).toBe('tema=claro; path=/; max-age=31536000; SameSite=Lax')
+  })
+
+  it('em HTTPS o cookie leva Secure', () => {
+    expect(cookieDoTema('escuro', true)).toBe('tema=escuro; path=/; max-age=31536000; SameSite=Lax; Secure')
+    expect(cookieDoTema('escuro', false)).not.toContain('Secure')
+  })
+
+  it('cookie com sequência % malformada não lança: vira null', () => {
+    expect(() => temaDoCookie('tema=%E0%A4%A')).not.toThrow()
+    expect(temaDoCookie('tema=%E0%A4%A')).toBeNull()
+    expect(temaDoCookie('tema=%')).toBeNull()
   })
 })
 
@@ -128,5 +141,55 @@ describe('aplicarTema / temaAtual', () => {
   it('temaAtual cai para o sistema quando não há nada', () => {
     simularSistema(true)
     expect(temaAtual()).toBe('escuro')
+  })
+})
+
+describe('cor da barra do navegador (theme-color)', () => {
+  function metas(): HTMLMetaElement[] {
+    return [...document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')]
+  }
+
+  beforeEach(() => {
+    metas().forEach((m) => m.remove())
+    for (const [media, cor] of [
+      ['(prefers-color-scheme: light)', COR_TEMA.claro],
+      ['(prefers-color-scheme: dark)', COR_TEMA.escuro],
+    ]) {
+      const m = document.createElement('meta')
+      m.name = 'theme-color'
+      m.media = media
+      m.content = cor
+      document.head.appendChild(m)
+    }
+  })
+
+  it('ao alternar, os <meta theme-color> passam a ter a cor do tema escolhido', () => {
+    aplicarTema('escuro')
+    expect(metas().map((m) => m.content)).toEqual([COR_TEMA.escuro, COR_TEMA.escuro])
+    aplicarTema('claro')
+    expect(metas().map((m) => m.content)).toEqual([COR_TEMA.claro, COR_TEMA.claro])
+  })
+
+  it('o script do <head> alinha a cor ao tema resolvido', () => {
+    document.cookie = 'tema=escuro; path=/'
+    rodarScript()
+    expect(metas().map((m) => m.content)).toEqual([COR_TEMA.escuro, COR_TEMA.escuro])
+  })
+
+  it('cria o <meta> se ainda não existir', () => {
+    metas().forEach((m) => m.remove())
+    sincronizarCorDoTema('claro')
+    expect(metas().map((m) => m.content)).toEqual([COR_TEMA.claro])
+  })
+
+  it('em HTTP (localhost) o cookie gravado ao alternar não pede Secure', () => {
+    // jsdom não expõe os atributos do cookie; confere o que aplicarTema decidiu.
+    const gravados: string[] = []
+    const desc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie')!
+    Object.defineProperty(document, 'cookie', { configurable: true, get: () => '', set: (v: string) => gravados.push(v) })
+    aplicarTema('claro')
+    Object.defineProperty(document, 'cookie', desc)
+    delete (document as unknown as Record<string, unknown>).cookie
+    expect(gravados.at(-1)).toBe(cookieDoTema('claro', false))
   })
 })
