@@ -2,11 +2,11 @@ import { z } from 'zod'
 import type { Briefing, Topic } from '@/lib/db/schema'
 import { MAX_URLS_NO_PROMPT } from '@/lib/ai/briefing'
 
-export type Fato = { afirmacao: string; fonte?: string }
+export type Fato = { afirmacao: string; fonte?: string | null }
 
 // Schema enviado ao modelo de busca: leniente; a validação estrita é o próprio Zod no parse.
 export const pesquisaSchemaModelo = z.object({
-  fatos: z.array(z.object({ afirmacao: z.string(), fonte: z.string().optional() })),
+  fatos: z.array(z.object({ afirmacao: z.string(), fonte: z.string().nullable() })),
 })
 
 export const reescritaSchemaModelo = z.object({ texto: z.string() })

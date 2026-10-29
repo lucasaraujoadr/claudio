@@ -1,12 +1,12 @@
 import { z } from 'zod'
 import * as cheerio from 'cheerio'
 
-// Schema enviado ao modelo: leniente, sem min/max em strings (a validação estrita vem depois).
+// Schema enviado ao modelo: leniente, sem min/max. Saída estrita exige todo campo em `required`: opcional = `.nullable()`.
 export const blocoSchemaModelo = z.object({
   tipo: z.enum(['paragrafo', 'lista', 'lista_numerada', 'citacao']),
-  texto: z.string().optional(),
-  itens: z.array(z.string()).optional(),
-  verificar: z.string().optional(),
+  texto: z.string().nullable(),
+  itens: z.array(z.string()).nullable(),
+  verificar: z.string().nullable(),
 })
 
 export const artigoSchemaModelo = z.object({
@@ -17,7 +17,7 @@ export const artigoSchemaModelo = z.object({
   secoes: z.array(
     z.object({
       titulo: z.string(),
-      subsecoes: z.array(z.object({ titulo: z.string(), blocos: z.array(blocoSchemaModelo) })).optional(),
+      subsecoes: z.array(z.object({ titulo: z.string(), blocos: z.array(blocoSchemaModelo) })).nullable(),
       blocos: z.array(blocoSchemaModelo),
     }),
   ),

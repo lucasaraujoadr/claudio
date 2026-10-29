@@ -41,10 +41,10 @@ function artigoModelo(over: Record<string, unknown> = {}) {
     titulo: 'Perícia contábil trabalhista: guia para advogados',
     slug: 'pericia-contabil-trabalhista',
     metaDescription: briefingModelo.metaDescription,
-    introducao: [{ tipo: 'paragrafo', texto: `Veja o [perito](${URL_OK}) e o [fantasma](https://x.com/inventado).` }],
-    secoes: [{ titulo: 'O que é', blocos: [{ tipo: 'paragrafo', texto: 'Art. 879 da CLT.', verificar: 'conferir artigo' }] }],
+    introducao: [{ tipo: 'paragrafo', texto: `Veja o [perito](${URL_OK}) e o [fantasma](https://x.com/inventado).`, itens: null, verificar: null }],
+    secoes: [{ titulo: 'O que é', subsecoes: null, blocos: [{ tipo: 'paragrafo', texto: 'Art. 879 da CLT.', itens: null, verificar: 'conferir artigo' }] }],
     faq: [{ pergunta: 'Quando contratar?', resposta: 'Antes da liquidação.' }],
-    conclusao: [{ tipo: 'paragrafo', texto: 'Fale com a OG.' }],
+    conclusao: [{ tipo: 'paragrafo', texto: 'Fale com a OG.', itens: null, verificar: null }],
     ...over,
   }
 }
