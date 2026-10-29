@@ -109,3 +109,52 @@ Com o OpenRouter (recomendado), uma só chave dá acesso aos modelos de IA do pa
 4. Cadastre-a na Vercel como `OPENROUTER_API_KEY`.
 
 Se preferir a OpenAI direta, crie a chave em https://platform.openai.com (**API keys**, com crédito em **Billing**) e cadastre-a como `OPENAI_API_KEY`. Ela só vale quando `OPENROUTER_API_KEY` não existe. Os nomes de modelo mudam entre os dois: no OpenRouter é `openai/gpt-4.1`, na OpenAI direta é `gpt-4.1`.
+
+## Artigos e WordPress
+
+O módulo **Artigos** gera um artigo com IA a partir de uma tese ou tema escolhido e envia o resultado ao WordPress do site.
+
+Fluxo: escolha a tese ou o tema → **Gerar artigo** → revise no editor → envie como **rascunho**, **agendado** ou **publicado**. Publicar exige marcar "revisei o conteúdo" e não pode haver nenhum trecho marcado "verificar".
+
+Variáveis de ambiente (na Vercel, como as demais):
+
+| Variável | De onde vem |
+| --- | --- |
+| `WP_USUARIO` | Login do usuário do WordPress que cria os artigos (um usuário com função **Editor**). |
+| `WP_SENHA_APP` | Senha de aplicativo desse usuário. **Não** é a senha de login. Veja como criar abaixo. |
+| `WP_URL` | Opcional: endereço do WordPress. Se não estiver definida, usa `SITE_URL`. |
+
+### Criar a senha de aplicativo
+
+1. No wp-admin, vá em **Usuários** e abra o usuário com função **Editor**.
+2. Role até **Senhas de aplicativo**, digite o nome **Painel SEO** e clique em **Adicionar**.
+3. Copie a senha exibida. Ela tem 6 grupos de 4 letras ou números, separados por espaço, e aparece só uma vez. Cadastre-a como `WP_SENHA_APP` na Vercel.
+
+### Meta description (opcional: mu-plugin)
+
+Por padrão, a meta description vai para o **resumo** (excerpt) do post. Para gravá-la no campo do The SEO Framework (`_genesis_description`), é preciso instalar o mu-plugin abaixo, que expõe esses campos na API REST do WordPress.
+
+> **Atenção:** instalar o mu-plugin altera o site de produção. Essa decisão é do dono do site. Não instale sem combinar. O arquivo vai em `wp-content/mu-plugins/`.
+
+```php
+<?php
+/* Plugin Name: OG Painel — meta do The SEO Framework na REST */
+add_action('init', function () {
+  foreach (['_genesis_description', '_genesis_title'] as $chave) {
+    register_post_meta('post', $chave, [
+      'show_in_rest'  => true,
+      'single'        => true,
+      'type'          => 'string',
+      'auth_callback' => fn () => current_user_can('edit_posts'),
+    ]);
+  }
+});
+```
+
+### Rotina diária e agendamentos
+
+A rotina diária (`/api/cron/diario`) também sincroniza os artigos agendados no WordPress.
+
+### Se um envio falhar
+
+Se o envio falhar depois que o WordPress já criou o post (por exemplo, por timeout), o próximo envio do mesmo artigo é bloqueado com a mensagem "endereço já usado em <link>". Apague ou renomeie esse post no wp-admin e envie de novo.
