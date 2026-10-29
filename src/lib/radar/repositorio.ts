@@ -1,10 +1,12 @@
 import { and, asc, desc, eq, gte, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db'
 import { gscSnapshots, sincronizacoes, tendencias, tesesSugeridas, topics } from '@/lib/db/schema'
-import { FONTE_RADAR, type RepositorioRadar } from './executar'
+import { FONTE_RADAR, type Reivindicacao, type RepositorioRadar } from './executar'
 import { calcularTermosEmAlta, escolherDatas, type LinhaTermo, type TermosEmAlta } from './termos-em-alta'
 
 const MAX_TENDENCIAS_NO_PROMPT = 30
+/** Um `rodando` mais antigo que isto é execução morta (maxDuration é 5 min) e pode ser retomada. */
+const MINUTOS_RODANDO_VALE = 6
 
 async function impressoesPorQuery(data: string): Promise<LinhaTermo[]> {
   const rows = await getDb()
@@ -27,7 +29,28 @@ export async function carregarTermosEmAlta(): Promise<TermosEmAlta> {
 export const repositorioRadar: RepositorioRadar = {
   async ultimaExecucao() {
     const [r] = await getDb().select().from(sincronizacoes).where(eq(sincronizacoes.fonte, FONTE_RADAR)).limit(1)
-    return r ? { status: r.status, executadoEm: r.executadoEm } : null
+    return r ? { status: r.status, executadoEm: r.executadoEm, ultimoOkEm: r.ultimoOkEm, mensagem: r.mensagem } : null
+  },
+
+  async reivindicar(agora, forcar): Promise<Reivindicacao> {
+    const db = getDb()
+    const limiteRodando = new Date(agora.getTime() - MINUTOS_RODANDO_VALE * 60_000)
+    const dia = (c: unknown) => sql`((${c} at time zone 'America/Sao_Paulo')::date)`
+    const agoraSql = sql`${agora.toISOString()}::timestamptz`
+    const hojeFechado = forcar ? sql`false` : sql`(${sincronizacoes.ultimoOkEm} is not null and ${dia(sincronizacoes.ultimoOkEm)} = ${dia(agoraSql)})`
+    // Uma só instrução: duas requisições simultâneas não passam as duas pela condição.
+    const r = await db
+      .insert(sincronizacoes)
+      .values({ fonte: FONTE_RADAR, status: 'rodando', mensagem: null, executadoEm: agora, linhas: null })
+      .onConflictDoUpdate({
+        target: sincronizacoes.fonte,
+        set: { status: 'rodando', mensagem: null, executadoEm: agora },
+        setWhere: sql`not (${sincronizacoes.status} = 'rodando' and ${sincronizacoes.executadoEm} > ${limiteRodando.toISOString()}::timestamptz) and not ${hojeFechado}`,
+      })
+      .returning({ fonte: sincronizacoes.fonte })
+    if (r.length > 0) return 'reivindicado'
+    const [atual] = await db.select().from(sincronizacoes).where(eq(sincronizacoes.fonte, FONTE_RADAR)).limit(1)
+    return atual && atual.status === 'rodando' && atual.executadoEm > limiteRodando ? 'em_execucao' : 'ja_rodou'
   },
 
   async gravarTendencias(itens, agora) {
@@ -97,10 +120,17 @@ export const repositorioRadar: RepositorioRadar = {
   async registrar(r) {
     await getDb()
       .insert(sincronizacoes)
-      .values(r)
+      .values({ ...r, ultimoOkEm: r.status === 'ok' ? r.executadoEm : null })
       .onConflictDoUpdate({
         target: sincronizacoes.fonte,
-        set: { status: r.status, mensagem: r.mensagem, executadoEm: r.executadoEm, linhas: r.linhas },
+        set: {
+          status: r.status,
+          mensagem: r.mensagem,
+          executadoEm: r.executadoEm,
+          linhas: r.linhas,
+          // Só um sucesso avança o marcador; um erro mantém o do último sucesso.
+          ...(r.status === 'ok' ? { ultimoOkEm: r.executadoEm } : {}),
+        },
       })
   },
 }

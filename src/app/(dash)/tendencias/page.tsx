@@ -3,10 +3,9 @@ import { desc, gte } from 'drizzle-orm'
 import { getDb } from '@/lib/db'
 import { tendencias, tesesSugeridas, type Tendencia, type TeseSugerida } from '@/lib/db/schema'
 import { jaRodouHoje } from '@/lib/radar/executar'
-import { carregarTermosEmAlta } from '@/lib/radar/repositorio'
+import { carregarTermosEmAlta, repositorioRadar } from '@/lib/radar/repositorio'
 import { MENSAGEM_SEM_GSC, MENSAGEM_SEM_JANELA, type TermosEmAlta } from '@/lib/radar/termos-em-alta'
 import { Aviso as CaixaAviso, BotaoEnviar, CabecalhoPagina, Cartao, EstadoVazio, Selo, classesBotao, type TipoAviso, type VarianteSelo } from '@/components/ui'
-import { carregarSincronizacoesSeguro } from '../_compartilhado/carregar'
 import { formatarDataHora } from '../_compartilhado/sincronizacao'
 
 export const metadata = { title: 'Tendências' }
@@ -18,6 +17,7 @@ type Aviso = { texto: string; tipo: TipoAviso; role: 'status' | 'alert' }
 const AVISOS: Record<string, Record<string, Aviso>> = {
   atualizar: {
     ok: { texto: 'Radar atualizado.', tipo: 'sucesso', role: 'status' },
+    'em-execucao': { texto: 'Já há uma atualização em andamento. Aguarde alguns minutos e recarregue a página.', tipo: 'info', role: 'status' },
     'ja-rodou': { texto: 'O radar já foi atualizado com sucesso hoje. Para gastar mais uma busca, use "Atualizar mesmo assim".', tipo: 'info', role: 'status' },
     'sem-chave': { texto: 'Chave de IA não configurada (OPENROUTER_API_KEY). A busca na web exige OpenRouter.', tipo: 'erro', role: 'alert' },
     erro: { texto: 'A atualização falhou em pelo menos uma etapa. O que já foi gravado foi mantido; veja a última execução abaixo e tente novamente.', tipo: 'erro', role: 'alert' },
@@ -152,25 +152,30 @@ export default async function TendenciasPage({
   const db = getDb()
   const agora = new Date()
   const desde = new Date(agora.getTime() - DIAS_TENDENCIAS * 86_400_000)
-  const [recentes, teses, sinc, termos] = await Promise.all([
+  const [recentes, teses, ultima, termos] = await Promise.all([
     db.select().from(tendencias).where(gte(tendencias.coletadoEm, desde)).orderBy(desc(tendencias.coletadoEm), desc(tendencias.id)).limit(50),
     db.select().from(tesesSugeridas).orderBy(desc(tesesSugeridas.criadoEm), desc(tesesSugeridas.id)).limit(200),
-    carregarSincronizacoesSeguro(),
+    repositorioRadar.ultimaExecucao().catch((e) => {
+      console.error('tendencias: última execução falhou:', e instanceof Error ? e.name : 'erro')
+      return undefined
+    }),
     carregarTermosEmAlta().catch((e) => {
       console.error('tendencias: termos em alta falharam:', e instanceof Error ? e.name : 'erro')
       return null
     }),
   ])
-  const ultima = sinc?.tendencias ?? null
-  const rodouHoje = jaRodouHoje(ultima, agora)
+  const rodouHoje = jaRodouHoje(ultima ?? null, agora)
   const novas = teses.filter((t) => t.status === 'nova')
   const tratadas = teses.filter((t) => t.status !== 'nova').length
 
-  const linhaUltima = !sinc
-    ? 'Não foi possível ler a última execução.'
-    : !ultima
-      ? 'Última execução: ainda não executada. O radar roda sozinho todo dia às 04:00 (Brasília).'
-      : `Última execução: ${formatarDataHora(ultima.executadoEm)} · ${ultima.status === 'ok' ? `concluída${ultima.mensagem ? ` · ${ultima.mensagem}` : ''}` : 'falhou'}.`
+  const linhaUltima =
+    ultima === undefined
+      ? 'Não foi possível ler a última execução.'
+      : ultima === null
+        ? 'Última execução: ainda não executada. O radar roda sozinho todo dia às 04:00 (Brasília).'
+        : ultima.status === 'rodando'
+          ? `Atualização em andamento desde ${formatarDataHora(ultima.executadoEm)}.`
+          : `Última execução: ${formatarDataHora(ultima.executadoEm)} · ${ultima.status === 'ok' ? `concluída${ultima.mensagem ? ` · ${ultima.mensagem}` : ''}` : 'falhou'}.`
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -186,7 +191,7 @@ export default async function TendenciasPage({
             </BotaoEnviar>
             <p className="mt-1 max-w-64 text-xs text-tinta-suave">
               {rodouHoje ? 'Já atualizado hoje; outra atualização gasta mais uma busca e uma geração. ' : ''}
-              Pode levar até 2 minutos.
+              Pode levar até 5 minutos.
             </p>
           </form>
         }

@@ -65,7 +65,7 @@ const lista = (itens: string[]) => itens.map((i) => `- ${i}`).join('\n')
 
 export function montarPromptTeses(ctx: ContextoTeses): string {
   const trends = ctx.tendencias.map(
-    (t) => `[${t.id}] ${limpar(t.titulo)}${t.publicadoEm ? ` (${t.publicadoEm})` : ''}: ${limpar(t.resumo, 300)}`,
+    (t) => `[${t.id}] ${limpar(t.titulo)} (${t.publicadoEm ?? 'data de publicação não informada'}): ${limpar(t.resumo, 300)}`,
   )
   const termos = ctx.termosEmAlta.map((t) => `${limpar(t.query)}: de ${t.anterior} para ${t.atual} impressões (+${t.aumento})`)
   const existentes = ctx.existentes.slice(-MAX_EXISTENTES_NO_PROMPT).reverse().map((k) => limpar(k, 120))
@@ -74,6 +74,7 @@ export function montarPromptTeses(ctx: ContextoTeses): string {
     'Público: advogados em todo o Brasil que decidem se devem contratar um perito contábil (atendimento 100% remoto).',
     `Serviços do escritório:\n${lista(SERVICOS)}`,
     trends.length > 0 ? `Fatos recentes (id entre colchetes):\n${lista(trends)}` : 'Não há fatos recentes coletados.',
+    'Fatos marcados com "data de publicação não informada" são só contexto: não os trate como notícia nem como novidade.',
     termos.length > 0
       ? `Termos em alta no Search Console (impressões dos últimos 28 dias contra os 28 anteriores):\n${lista(termos)}`
       : 'Não há dados do Search Console ainda. Não invente termos de busca nem métricas.',

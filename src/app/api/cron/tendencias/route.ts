@@ -29,7 +29,7 @@ export async function GET(request: Request) {
   // Sem `forcar`: uma nova tentativa da Vercel no mesmo dia, após um sucesso, não gasta de novo.
   const r = await executarRadar({ agora: new Date(), repo: repositorioRadar })
   return NextResponse.json({
-    status: r.pulado ? 'ja_executado_hoje' : r.erros.length > 0 ? 'erro' : 'ok',
+    status: r.pulado ? (r.motivoPulo === 'em_execucao' ? 'em_execucao' : 'ja_executado_hoje') : r.erros.length > 0 ? 'erro' : 'ok',
     // Só números e classes de erro: nunca texto do modelo ou do provedor.
     coleta: r.coleta && { retornadas: r.coleta.retornadas, gravadas: r.coleta.gravadas, rejeitadas: r.coleta.rejeitadas },
     teses: r.teses,

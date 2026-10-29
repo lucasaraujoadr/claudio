@@ -62,6 +62,14 @@ describe('montarPromptTeses', () => {
   })
 })
 
+describe('montarPromptTeses (sem data)', () => {
+  it('marca fato sem data e manda tratá-lo como contexto', () => {
+    const p = montarPromptTeses({ ...ctx, tendencias: [{ ...ctx.tendencias[0], publicadoEm: null }] })
+    expect(p).toContain('(data de publicação não informada)')
+    expect(p).toMatch(/só contexto/)
+  })
+})
+
 describe('tesesSchemaModelo', () => {
   it('não tem minLength nem maxLength no JSON Schema enviado ao modelo', async () => {
     const { zodSchema } = await import('ai')

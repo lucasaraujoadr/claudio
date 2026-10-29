@@ -4,8 +4,10 @@ import { hashDeFonte, validarFonte, type MotivoFonte } from './fontes'
 
 export const MAX_TENDENCIAS = 10
 const DIAS_RECENTES = 7
-// Tolerância: o modelo erra a data por um ou dois dias; mais velho que isso não é "dos últimos 7 dias".
-const DIAS_MAX_IDADE = 14
+// Janela de 7 dias com 2 de tolerância (o modelo erra a data por um ou dois dias).
+const DIAS_MAX_IDADE = DIAS_RECENTES + 2
+/** Itens sem data não provam que são recentes: entram só como contexto, poucos por execução. */
+export const MAX_SEM_DATA = 3
 
 // Versão enviada ao modelo de busca: sem minLength/maxLength nas strings (a API estrita rejeita).
 // Os limites ficam em tendenciaEstritaSchema, aplicado item a item depois da resposta.
@@ -39,11 +41,13 @@ export type TendenciaValida = {
   hash: string
 }
 
-export type MotivoRejeicao = MotivoFonte | 'invalida' | 'antiga' | 'repetida' | 'ja_coletada' | 'excedente'
+export type MotivoRejeicao = MotivoFonte | 'invalida' | 'antiga' | 'repetida' | 'ja_coletada' | 'excedente' | 'sem_data_excedente'
 
 export type RelatorioColeta = {
   retornadas: number
   aceitas: number
+  /** Quantas das aceitas não têm data de publicação (válida) e valem só como contexto. */
+  semData: number
   rejeitadas: Partial<Record<MotivoRejeicao, number>>
   /** URLs rejeitadas por não terem sido citadas pelo provedor, para auditoria. */
   urlsRejeitadas: { url: string; motivo: MotivoRejeicao }[]
@@ -69,7 +73,9 @@ function dataValida(s: string | null, hoje: Date): { data: string | null; antiga
   const t = Date.parse(`${s}T00:00:00Z`)
   if (Number.isNaN(t) || new Date(t).toISOString().slice(0, 10) !== s) return { data: null, antiga: false }
   if (t > hoje.getTime() + 86_400_000) return { data: null, antiga: false }
-  return { data: s, antiga: hoje.getTime() - t > DIAS_MAX_IDADE * 86_400_000 }
+  // Em dias de calendário: 9 dias atrás passa, 10 não, a qualquer hora do dia.
+  const hojeDia = Date.parse(`${hoje.toISOString().slice(0, 10)}T00:00:00Z`)
+  return { data: s, antiga: hojeDia - t > DIAS_MAX_IDADE * 86_400_000 }
 }
 
 /**
@@ -81,7 +87,7 @@ export function validarTendencias(
   hoje: Date,
   max = MAX_TENDENCIAS,
 ): { validas: TendenciaValida[]; relatorio: RelatorioColeta } {
-  const relatorio: RelatorioColeta = { retornadas: resultado.valor.tendencias.length, aceitas: 0, rejeitadas: {}, urlsRejeitadas: [] }
+  const relatorio: RelatorioColeta = { retornadas: resultado.valor.tendencias.length, aceitas: 0, semData: 0, rejeitadas: {}, urlsRejeitadas: [] }
   const rejeitar = (motivo: MotivoRejeicao, url?: string) => {
     relatorio.rejeitadas[motivo] = (relatorio.rejeitadas[motivo] ?? 0) + 1
     if (url) relatorio.urlsRejeitadas.push({ url: url.slice(0, 300), motivo })
@@ -110,12 +116,18 @@ export function validarTendencias(
       rejeitar('antiga', t.fonteUrl)
       continue
     }
+    if (data === null && relatorio.semData >= MAX_SEM_DATA) {
+      rejeitar('sem_data_excedente', t.fonteUrl)
+      continue
+    }
     vistos.add(hash)
     if (validas.length >= max) {
       rejeitar('excedente')
       continue
     }
-    validas.push({ titulo: t.titulo, resumo: t.resumo, fonteUrl: t.fonteUrl, publicadoEm: data, palavrasChave: t.palavrasChave, hash })
+    if (data === null) relatorio.semData++
+    // Grava a URL citada e normalizada (sem fragmento nem credenciais), não a string crua do modelo.
+    validas.push({ titulo: t.titulo, resumo: t.resumo, fonteUrl: fonte.chave, publicadoEm: data, palavrasChave: t.palavrasChave, hash })
   }
   relatorio.aceitas = validas.length
   return { validas, relatorio }

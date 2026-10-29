@@ -199,6 +199,8 @@ export const sincronizacoes = pgTable('sincronizacoes', {
   mensagem: text('mensagem'),
   executadoEm: timestamp('executado_em', { withTimezone: true }).notNull(),
   linhas: integer('linhas'),
+  /** Último sucesso da fonte; trava de custo do radar (um erro depois de um ok não a reabre). */
+  ultimoOkEm: timestamp('ultimo_ok_em', { withTimezone: true }),
 })
 
 export const potencial = pgEnum('potencial', ['alto', 'medio', 'baixo'])
