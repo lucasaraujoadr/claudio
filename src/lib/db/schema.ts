@@ -147,3 +147,35 @@ export const auditIssues = pgTable('audit_issues', {
 export type Topic = typeof topics.$inferSelect
 export type Cluster = typeof clusters.$inferSelect
 export type AuditPage = typeof auditPages.$inferSelect
+
+/** Série diária do Google Analytics 4: uma linha por dia, regravada a cada execução. */
+export const ga4Diario = pgTable('ga4_diario', {
+  data: date('data').primaryKey(),
+  sessoes: integer('sessoes').notNull(),
+  usuarios: integer('usuarios').notNull(),
+  sessoesEngajadas: integer('sessoes_engajadas').notNull(),
+  eventosChave: integer('eventos_chave').notNull(),
+})
+
+/** Páginas de entrada por origem/mídia na janela de 28 dias, um snapshot por dia. */
+export const ga4Paginas = pgTable(
+  'ga4_paginas',
+  {
+    snapshotDate: date('snapshot_date').notNull(),
+    pagina: text('pagina').notNull(),
+    origemMidia: text('origem_midia').notNull(),
+    sessoes: integer('sessoes').notNull(),
+    usuarios: integer('usuarios').notNull(),
+    eventosChave: integer('eventos_chave').notNull(),
+  },
+  (t) => [unique().on(t.snapshotDate, t.pagina, t.origemMidia)],
+)
+
+/** Última execução de cada fonte da rotina diária (para "última sincronização"). */
+export const sincronizacoes = pgTable('sincronizacoes', {
+  fonte: text('fonte').primaryKey(),
+  status: text('status').notNull(),
+  mensagem: text('mensagem'),
+  executadoEm: timestamp('executado_em', { withTimezone: true }).notNull(),
+  linhas: integer('linhas'),
+})

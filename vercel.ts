@@ -2,8 +2,8 @@ import type { VercelConfig } from '@vercel/config/v1'
 
 export const config: VercelConfig = {
   framework: 'nextjs',
-  // Uma execução diária às 06:00 UTC = 03:00 em Brasília. O plano Hobby
-  // permite apenas um cron por dia, e a janela do Search Console recua
-  // 3 dias de qualquer forma, então granularidade maior não traria dado novo.
-  crons: [{ path: '/api/cron/gsc', schedule: '0 6 * * *' }],
+  // Rotina única às 06:00 UTC = 03:00 em Brasília: Search Console e Google Analytics,
+  // cada um isolado do outro. Hobby: até 100 crons por projeto, mas cada um só pode rodar
+  // uma vez por dia (e com precisão de hora). /api/cron/gsc segue existindo, sem agendamento.
+  crons: [{ path: '/api/cron/diario', schedule: '0 6 * * *' }],
 }

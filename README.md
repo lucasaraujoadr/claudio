@@ -19,7 +19,9 @@ Quando uma fonte ainda não tem dados, o painel diz isso explicitamente (por exe
 
 ## Dados e rotina automática
 
-- Todo dia às **03:00 (horário de Brasília)** a Vercel executa a sincronização com o Search Console.
+- Todo dia às **03:00 (horário de Brasília)** a Vercel executa `/api/cron/diario`, que sincroniza o **Search Console** e o **Google Analytics 4** de forma independente: se uma fonte falhar ou não estiver configurada, a outra continua. A resposta informa, por fonte, `ok`, `nao_configurado`, `sem_permissao` ou `erro`, e o último resultado fica na tabela `sincronizacoes`.
+- Google Analytics: defina `GA4_PROPERTY_ID` e adicione a conta de serviço (`GOOGLE_SA_EMAIL`) como **Leitor** na propriedade. A primeira execução busca 90 dias de série diária; a cada execução também guarda as páginas de entrada por origem/mídia dos últimos 28 dias (até 1 000 linhas).
+- Plano Hobby da Vercel: até 100 crons por projeto, cada um no máximo uma vez por dia (horário com precisão de hora).
 - Os snapshots dos últimos **90 dias** ficam completos. Os mais antigos são reduzidos a **um por semana** (o de segunda-feira).
 - A Visão geral avisa quando a última auditoria tem mais de 14 dias. As auditorias são rodadas manualmente em `/auditoria` (botão "Rastrear agora").
 - Cliques e impressões na Visão geral são somados dos termos sincronizados (combinações termo + página) e podem ficar abaixo dos totais exibidos no próprio Search Console.
