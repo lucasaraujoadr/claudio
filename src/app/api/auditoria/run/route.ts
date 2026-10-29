@@ -4,12 +4,12 @@ import { getDb } from '@/lib/db'
 import { auditIssues, auditPages, auditRuns } from '@/lib/db/schema'
 import { rastrear } from '@/lib/crawler/crawl'
 import { avaliar, type Problema } from '@/lib/crawler/rules'
+import { MINUTOS_ATE_RUN_TRAVADA, REGRA_INTERROMPIDO } from '@/lib/auditoria'
 
 export const maxDuration = 300
 
-const REGRA_INTERROMPIDO = 'rastreamento-interrompido'
 const SITE = 'https://ogpericiacontabil.com.br'
-const MINUTOS_ATE_CONSIDERAR_MORTA = 15
+
 
 export async function POST() {
   const db = getDb()
@@ -20,7 +20,7 @@ export async function POST() {
     .update(auditRuns)
     .set({ status: 'falhou', finalizadoEm: sql`now()` })
     .where(
-      sql`${auditRuns.status} = 'rodando' and ${auditRuns.iniciadoEm} < now() - make_interval(mins => ${MINUTOS_ATE_CONSIDERAR_MORTA})`,
+      sql`${auditRuns.status} = 'rodando' and ${auditRuns.iniciadoEm} < now() - make_interval(mins => ${MINUTOS_ATE_RUN_TRAVADA})`,
     )
 
   // Insere só se não houver outra run em andamento (uma única instrução).
