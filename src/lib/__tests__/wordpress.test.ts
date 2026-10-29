@@ -72,6 +72,33 @@ describe('cliente WordPress', () => {
     expect(chamadas[0].url).toContain('/posts/7?context=edit')
   })
 
+  it('lerPost: 404 de outro tipo (rest_no_route) → ErroWp nao_encontrado', async () => {
+    const e = await criarClienteWp(cfg, fetchFalso([{ status: 404, json: { code: 'rest_no_route' } }]).f).lerPost(7).catch((x) => x)
+    expect(e).toBeInstanceOf(ErroWp)
+    expect(e.tipo).toBe('nao_encontrado')
+    expect(e.message).toBe('endereço da API do WordPress não encontrado')
+  })
+
+  it('lerPost: status trash → null', async () => {
+    const { f } = fetchFalso([{ status: 200, json: { ...postOk, status: 'trash' } }])
+    expect(await criarClienteWp(cfg, f).lerPost(7)).toBeNull()
+  })
+
+  it('403 → credencial', async () => {
+    const e = await criarClienteWp(cfg, fetchFalso([{ status: 403 }]).f).criarPost(dados).catch((x) => x)
+    expect(e.tipo).toBe('credencial')
+  })
+
+  it('categorias: decodifica entidades HTML e devolve cópia do cache', async () => {
+    const { f } = fetchFalso([{ status: 200, json: [{ id: 1, name: 'Perícia &amp; Contabilidade' }, { id: 2, name: 'Jur&iacute;dico' }] }])
+    const c = criarClienteWp(cfg, f)
+    const a = await c.listarCategorias()
+    expect(a.map((x) => x.nome)).toEqual(['Jurídico', 'Perícia & Contabilidade'])
+    a[0].nome = 'mutado'
+    a.pop()
+    expect((await c.listarCategorias()).map((x) => x.nome)).toEqual(['Jurídico', 'Perícia & Contabilidade'])
+  })
+
   it('401 → credencial, sem usuário nem senha na mensagem', async () => {
     const { f } = fetchFalso([{ status: 401, json: { message: `bad ${cfg.senha} ${cfg.usuario}` } }])
     const e = await criarClienteWp(cfg, f).criarPost(dados).catch((x) => x)

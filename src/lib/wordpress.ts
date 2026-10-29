@@ -3,6 +3,7 @@
  * `fetch` é injetado para os testes. Credenciais nunca entram em mensagem de erro, log
  * ou retorno; as mensagens são fixas e nunca repetem o corpo da resposta.
  */
+import { load } from 'cheerio'
 import { siteUrl } from '@/lib/site'
 
 export type ConfigWp = { url: string; usuario: string; senha: string }
@@ -25,7 +26,7 @@ export type TipoErroWp = 'credencial' | 'nao_encontrado' | 'conflito_slug' | 're
 
 const MENSAGENS: Record<TipoErroWp, string> = {
   credencial: 'senha de aplicativo inválida ou usuário sem permissão de Editor',
-  nao_encontrado: 'o item não foi encontrado no WordPress',
+  nao_encontrado: 'endereço da API do WordPress não encontrado',
   conflito_slug: 'já existe outro conteúdo com este endereço (slug) no WordPress',
   rede: 'o WordPress não respondeu; tente de novo',
   servidor: 'o WordPress não respondeu; tente de novo',
@@ -61,6 +62,10 @@ export function reiniciarCacheCategoriasWp(): void {
 
 function ehObjeto(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+function decodificar(texto: string): string {
+  return load(`<p>${texto}</p>`, null, false).text()
 }
 
 function nomeAscii(nome: string): string {
@@ -110,7 +115,8 @@ export function criarClienteWp(cfg: ConfigWp, f: typeof fetch = fetch) {
     if (resp.ok) return { status: resp.status, json }
     if (resp.status === 401 || resp.status === 403) throw new ErroWp('credencial')
     if (resp.status === 404) {
-      if (opts.aceitar404) return { status: 404, json: null }
+      const cod404 = ehObjeto(json) && typeof json.code === 'string' ? json.code : ''
+      if (opts.aceitar404 && cod404 === 'rest_post_invalid_id') return { status: 404, json: null }
       throw new ErroWp('nao_encontrado')
     }
     if (resp.status >= 500) throw new ErroWp('servidor')
@@ -149,19 +155,19 @@ export function criarClienteWp(cfg: ConfigWp, f: typeof fetch = fetch) {
     async listarCategorias(): Promise<{ id: number; nome: string }[]> {
       const agora = Date.now()
       const emCache = cacheCategorias.get(cfg.url)
-      if (emCache && agora - emCache.em < CACHE_CATEGORIAS_MS) return emCache.itens
+      if (emCache && agora - emCache.em < CACHE_CATEGORIAS_MS) return emCache.itens.map((c) => ({ ...c }))
       const itens: { id: number; nome: string }[] = []
       for (let pagina = 1; pagina <= 20; pagina++) {
         const { json } = await chamar('GET', `/categories?per_page=100&_fields=id,name${pagina > 1 ? `&page=${pagina}` : ''}`)
         if (!Array.isArray(json)) throw new ErroWp('servidor')
         for (const c of json) {
-          if (ehObjeto(c) && typeof c.id === 'number') itens.push({ id: c.id, nome: typeof c.name === 'string' ? c.name : '' })
+          if (ehObjeto(c) && typeof c.id === 'number') itens.push({ id: c.id, nome: typeof c.name === 'string' ? decodificar(c.name) : '' })
         }
         if (json.length < 100) break
       }
       itens.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
       cacheCategorias.set(cfg.url, { em: agora, itens })
-      return itens
+      return itens.map((c) => ({ ...c }))
     },
 
     async enviarImagem(bytes: Uint8Array, nomeArquivo: string, tipo: string): Promise<{ id: number; url: string }> {
@@ -183,7 +189,8 @@ export function criarClienteWp(cfg: ConfigWp, f: typeof fetch = fetch) {
     async lerPost(id: number): Promise<PostWp | null> {
       const r = await chamar('GET', `/posts/${Math.trunc(id)}?context=edit`, { aceitar404: true })
       if (r.status === 404) return null
-      return lerPostResposta(r.json)
+      const p = lerPostResposta(r.json)
+      return p.status === 'trash' ? null : p
     },
 
     async slugEmUso(slug: string, excetoId?: number): Promise<string | null> {
