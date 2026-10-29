@@ -71,7 +71,8 @@ export function ipDaRequisicao(request: Request): string {
 
 /**
  * Limite ingênuo por IP, em memória (janela fixa). Cada instância da função tem o seu, então
- * é só um freio contra enxurrada de spam, não uma garantia.
+ * é só um freio contra enxurrada de spam, não uma garantia. Com o mapa cheio, saem primeiro
+ * as janelas vencidas e depois as mais antigas (o Map guarda a ordem de inserção).
  */
 export class LimitadorPorIp {
   private janelas = new Map<string, { inicio: number; n: number }>()
@@ -84,7 +85,8 @@ export class LimitadorPorIp {
   permitir(ip: string, agora = Date.now()): boolean {
     const j = this.janelas.get(ip)
     if (!j || agora - j.inicio >= this.janelaMs) {
-      if (this.janelas.size >= this.maxChaves) this.limpar(agora)
+      this.janelas.delete(ip) // reinserir: a janela nova vai para o fim da ordem
+      if (this.janelas.size >= this.maxChaves) this.despejar(agora)
       this.janelas.set(ip, { inicio: agora, n: 1 })
       return true
     }
@@ -92,8 +94,15 @@ export class LimitadorPorIp {
     return j.n <= this.maximo
   }
 
-  private limpar(agora: number) {
+  get tamanho(): number {
+    return this.janelas.size
+  }
+
+  private despejar(agora: number) {
     for (const [k, j] of this.janelas) if (agora - j.inicio >= this.janelaMs) this.janelas.delete(k)
-    if (this.janelas.size >= this.maxChaves) this.janelas.clear()
+    for (const k of this.janelas.keys()) {
+      if (this.janelas.size < this.maxChaves) break
+      this.janelas.delete(k)
+    }
   }
 }

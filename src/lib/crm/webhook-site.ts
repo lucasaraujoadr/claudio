@@ -20,7 +20,9 @@ import { inscreverBoasVindasDoSite } from './ganchos-funis'
  */
 
 export const MAX_CORPO_SITE = 64 * 1024
-const limitadorPadrao = new LimitadorPorIp(20, 60_000)
+/** 60 por minuto por IP: o Elementor chama a partir do único IP do servidor WordPress. */
+export const LIMITE_POR_MINUTO = 60
+const limitadorPadrao = new LimitadorPorIp(LIMITE_POR_MINUTO, 60_000)
 
 type Campo = { chaves: string[]; valor: string; tipo?: string }
 export type CampoSite = 'email' | 'nome' | 'telefone' | 'escritorio' | 'cidade' | 'uf' | 'mensagem'
@@ -37,25 +39,38 @@ function comoTexto(v: unknown): string | null {
   return null
 }
 
-/** `fields[nome][value]=x` → `{ fields: { nome: { value: 'x' } } }` (notação de colchetes do PHP). */
+/** Segmentos que poderiam alcançar o protótipo de um objeto: o campo inteiro é descartado. */
+const SEGMENTOS_PROIBIDOS = new Set(['__proto__', 'constructor', 'prototype'])
+
+/** Objeto sem protótipo: nenhuma chave vinda do corpo alcança `Object.prototype`. */
+function objetoNulo(): Record<string, unknown> {
+  return Object.create(null) as Record<string, unknown>
+}
+
+/**
+ * `fields[nome][value]=x` → `{ fields: { nome: { value: 'x' } } }` (notação de colchetes do PHP).
+ * Todos os nós são criados sem protótipo e um campo com segmento `__proto__`, `constructor`
+ * ou `prototype` é ignorado por inteiro (proteção contra poluição de protótipo).
+ */
 export function expandirColchetes(pares: Iterable<[string, string]>): Record<string, unknown> {
-  const raiz: Record<string, unknown> = {}
+  const raiz = objetoNulo()
   for (const [chave, valor] of pares) {
     const m = /^([^[\]]+)((?:\[[^\]]*\])*)$/.exec(chave)
     const partes = m && m[2] ? [m[1], ...[...m[2].matchAll(/\[([^\]]*)\]/g)].map((x) => x[1])] : [chave]
-    let no: Record<string, unknown> = raiz
+    if (partes.some((p) => SEGMENTOS_PROIBIDOS.has(p))) continue
+    let no = raiz
     for (let i = 0; i < partes.length - 1; i++) {
       const p = partes[i] || String(Object.keys(no).length)
-      const prox = no[p]
+      const prox = Object.hasOwn(no, p) ? no[p] : undefined
       if (ehObjeto(prox)) no = prox
       else {
-        const novo: Record<string, unknown> = {}
+        const novo = objetoNulo()
         no[p] = novo
         no = novo
       }
     }
     const ultima = partes[partes.length - 1] || String(Object.keys(no).length)
-    if (!(ultima in no)) no[ultima] = valor
+    if (!Object.hasOwn(no, ultima)) no[ultima] = valor
   }
   return raiz
 }
@@ -68,6 +83,7 @@ export function camposDoCorpo(corpo: Record<string, unknown>): Campo[] {
   const fields = corpo.fields
   if (ehObjeto(fields) || Array.isArray(fields)) {
     for (const [k, f] of Object.entries(fields)) {
+      if (SEGMENTOS_PROIBIDOS.has(k)) continue
       if (ehObjeto(f)) {
         const valor = comoTexto(f.value) ?? comoTexto(f.raw_value)
         if (valor === null) continue
@@ -81,7 +97,7 @@ export function camposDoCorpo(corpo: Record<string, unknown>): Campo[] {
     return campos
   }
   for (const [k, v] of Object.entries(corpo)) {
-    if (METADADOS.has(k)) continue
+    if (METADADOS.has(k) || SEGMENTOS_PROIBIDOS.has(k)) continue
     const valor = comoTexto(v)
     if (valor !== null) campos.push({ chaves: [k], valor })
   }
@@ -163,9 +179,9 @@ export type OpcoesWebhookSite = {
 
 export async function tratarWebhookSite(request: Request, opts: OpcoesWebhookSite = {}): Promise<Response> {
   const limitador = opts.limitador ?? limitadorPadrao
-  if (!limitador.permitir(ipDaRequisicao(request))) {
-    return Response.json({ erro: 'Muitas requisições; tente em um minuto' }, { status: 429, headers: { 'retry-after': '60' } })
-  }
+  // Limite e email inválido respondem 200 sem gravar: o Elementor trata qualquer outro status
+  // como falha e mostra ao visitante um erro de servidor.
+  if (!limitador.permitir(ipDaRequisicao(request))) return json(200, { ok: false, ignorado: 'limite' })
   const esperado = opts.token === undefined ? process.env.SITE_WEBHOOK_TOKEN : opts.token
   if (!tokenConfere(tokenDaRequisicao(request), esperado)) return json(401, { erro: 'Não autorizado' })
 
@@ -176,7 +192,7 @@ export async function tratarWebhookSite(request: Request, opts: OpcoesWebhookSit
   const form = lerFormulario(corpo.texto, request.headers.get('content-type'))
   if (!form) return json(400, { erro: 'Formato inesperado' })
   const email = normalizarEmail(form.email ?? '')
-  if (!email) return json(400, { erro: 'E-mail ausente ou inválido' })
+  if (!email) return json(200, { ok: false, ignorado: 'email_invalido' })
 
   const db = opts.db ?? bancoPadrao()
   const agora = opts.agora ?? new Date()
@@ -194,7 +210,7 @@ export async function tratarWebhookSite(request: Request, opts: OpcoesWebhookSit
     'site',
     { db, agora },
   )
-  if (r.acao === 'ignorado' && r.contatoId === undefined) return json(400, { erro: 'Contato não aceito' })
+  if (r.acao === 'ignorado' && r.contatoId === undefined) return json(200, { ok: false, ignorado: r.motivo })
   const contatoId = r.contatoId!
   const mensagem = form.mensagem?.slice(0, 5000)
   await registrarEvento(contatoId, 'formulario', { origem: 'site', ...(mensagem ? { mensagem } : {}) }, { db, em: agora })

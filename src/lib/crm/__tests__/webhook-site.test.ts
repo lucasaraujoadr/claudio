@@ -74,8 +74,10 @@ async function contato(email: string) {
   const [c] = await db.select().from(contatos).where(eq(contatos.emailNormalizado, email))
   return c
 }
+/** Eventos do contato, sem os de funil (o gancho da E9 pode inscrever no boas-vindas). */
 async function eventos(id: number) {
-  return db.select().from(eventosContato).where(eq(eventosContato.contatoId, id)).orderBy(asc(eventosContato.id))
+  const todos = await db.select().from(eventosContato).where(eq(eventosContato.contatoId, id)).orderBy(asc(eventosContato.id))
+  return todos.filter((e) => e.tipo !== 'entrou_funil' && e.tipo !== 'saiu_funil')
 }
 
 describe('leitura do payload do Elementor', () => {
@@ -170,8 +172,10 @@ describe('webhook do site', () => {
   it.each([
     ['sem email', qs({ Nome: 'X', Mensagem: 'oi' })],
     ['email inválido', qs({ Nome: 'X', Email: 'x@' })],
-  ])('%s → 400 e nada gravado', async (_n, corpo) => {
-    expect((await chamar(req(corpo))).status).toBe(400)
+  ])('%s → 200 ignorado (o Elementor trata outro status como erro) e nada gravado', async (_n, corpo) => {
+    const r = await chamar(req(corpo))
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ ok: false, ignorado: 'email_invalido' })
     expect(await db.select().from(contatos)).toHaveLength(0)
     expect(await db.select().from(eventosContato)).toHaveLength(0)
   })
@@ -194,15 +198,73 @@ describe('webhook do site', () => {
     expect(await db.select().from(contatos)).toHaveLength(0)
   })
 
-  it('limite por IP: 20 por minuto, o 21º recebe 429; outro IP passa', async () => {
-    const limitador = new LimitadorPorIp(20, 60_000)
-    for (let i = 0; i < 20; i++) {
-      expect((await chamar(req(qs({ Email: `c${i}@example.com` })), { limitador })).status).toBe(200)
+  it('limite por IP: o excedente recebe 200 ignorado sem gravar; outro IP passa', async () => {
+    const limitador = new LimitadorPorIp(3, 60_000)
+    for (let i = 0; i < 3; i++) {
+      expect(await (await chamar(req(qs({ Email: `c${i}@example.com` })), { limitador })).json()).toEqual({ ok: true })
     }
-    const r = await chamar(req(qs({ Email: 'c21@example.com' })), { limitador })
-    expect(r.status).toBe(429)
-    expect(r.headers.get('retry-after')).toBe('60')
+    const r = await chamar(req(qs({ Email: 'c4@example.com' })), { limitador })
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ ok: false, ignorado: 'limite' })
+    expect(await contato('c4@example.com')).toBeUndefined()
     expect((await chamar(req(qs({ Email: 'outro@example.com' }), FORM, TOKEN, '198.51.100.7'), { limitador })).status).toBe(200)
+    expect(await contato('outro@example.com')).toBeDefined()
+  })
+
+  it('o limite padrão é 60 por minuto', async () => {
+    const { LIMITE_POR_MINUTO } = await import('../webhook-site')
+    expect(LIMITE_POR_MINUTO).toBe(60)
+  })
+})
+
+describe('poluição de protótipo (form-urlencoded com colchetes)', () => {
+  afterEach(() => {
+    for (const k of ['x', 'poluido', 'value']) delete (Object.prototype as Record<string, unknown>)[k]
+  })
+
+  it.each([
+    ['__proto__[x]=sim'],
+    ['constructor[prototype][x]=sim'],
+    ['fields[__proto__][value]=sim'],
+    ['fields[a][__proto__][x]=sim'],
+    ['__proto__=sim'],
+    ['fields[a][constructor][prototype][x]=sim'],
+  ])('%s não alcança Object.prototype', (corpo) => {
+    const r = expandirColchetes(new URLSearchParams(corpo).entries())
+    expect(({} as Record<string, unknown>).x).toBeUndefined()
+    expect(({} as Record<string, unknown>).value).toBeUndefined()
+    expect(Object.keys(r).filter((k) => ['__proto__', 'constructor'].includes(k))).toEqual([])
+  })
+
+  it('os nós não têm protótipo', () => {
+    const r = expandirColchetes([['fields[a][value]', '1']])
+    expect(Object.getPrototypeOf(r)).toBeNull()
+    expect(Object.getPrototypeOf(r.fields)).toBeNull()
+  })
+
+  it('requisição com campos maliciosos é tratada normalmente e cria o contato', async () => {
+    const corpo = [
+      '__proto__[x]=sim',
+      'constructor[prototype][x]=sim',
+      'fields[__proto__][value]=sim',
+      'fields[email][type]=email',
+      'fields[email][value]=ok@example.com',
+      'fields[nome][title]=Nome',
+      'fields[nome][value]=Ok',
+    ].join('&')
+    const r = await chamar(req(corpo))
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ ok: true })
+    expect(({} as Record<string, unknown>).x).toBeUndefined()
+    expect(({} as Record<string, unknown>).value).toBeUndefined()
+    expect(await contato('ok@example.com')).toMatchObject({ nome: 'Ok' })
+  })
+
+  it('JSON com chave __proto__ também não polui', async () => {
+    const r = await chamar(req('{"__proto__":{"x":"sim"},"fields":{"__proto__":{"value":"sim"},"e":{"type":"email","value":"j@example.com"}}}', 'application/json'))
+    expect(r.status).toBe(200)
+    expect(({} as Record<string, unknown>).x).toBeUndefined()
+    expect(await contato('j@example.com')).toBeDefined()
   })
 })
 
@@ -212,9 +274,21 @@ describe('LimitadorPorIp', () => {
     expect([l.permitir('a', 0), l.permitir('a', 1), l.permitir('a', 2)]).toEqual([true, true, false])
     expect(l.permitir('a', 60_001)).toBe(true)
   })
-  it('não cresce sem limite', () => {
+  it('não cresce sem limite e despeja as janelas mais antigas, não todas', () => {
     const l = new LimitadorPorIp(1, 60_000, 3)
     for (let i = 0; i < 10; i++) l.permitir(`ip${i}`, i)
+    expect(l.tamanho).toBe(3)
+    // ip9 continua limitado (não foi zerado pelo despejo); ip0 saiu e recomeça.
     expect(l.permitir('ip9', 10)).toBe(false)
+    expect(l.permitir('ip8', 10)).toBe(false)
+    expect(l.permitir('ip0', 10)).toBe(true)
+  })
+
+  it('despeja primeiro as janelas vencidas', () => {
+    const l = new LimitadorPorIp(1, 100, 2)
+    l.permitir('velho', 0)
+    l.permitir('novo', 150)
+    l.permitir('terceiro', 160) // 'velho' venceu e sai; 'novo' fica
+    expect(l.permitir('novo', 170)).toBe(false)
   })
 })

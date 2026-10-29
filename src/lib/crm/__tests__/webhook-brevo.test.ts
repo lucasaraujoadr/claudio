@@ -182,6 +182,16 @@ describe('webhook do Brevo: replay é idempotente (Review Focus 1)', () => {
     expect((await eventos(id)).filter((e) => e.tipo === 'aberto')).toHaveLength(1)
   })
 
+  it('payload sem id nem instante: eventos diferentes não colapsam, o mesmo payload sim', async () => {
+    const id = await criar('ana@example.com')
+    const a = { event: 'click', email: 'ana@example.com', URL: 'https://x.com.br/a', campaign_name: 'A' }
+    const b = { email: 'ana@example.com', event: 'click', URL: 'https://x.com.br/a', campaign_name: 'B' }
+    await chamar(req(a))
+    await chamar(req(b))
+    await chamar(req({ campaign_name: 'A', URL: 'https://x.com.br/a', email: 'ana@example.com', event: 'click' })) // mesmo que `a`, outra ordem
+    expect((await eventos(id)).filter((e) => e.tipo === 'clicado')).toHaveLength(2)
+  })
+
   it('outra abertura (outro instante) conta', async () => {
     const id = await criar('ana@example.com')
     await chamar(req(marketing('opened')))

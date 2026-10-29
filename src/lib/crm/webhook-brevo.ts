@@ -65,6 +65,18 @@ function instante(v: unknown): Date | null {
   return d.getUTCFullYear() >= 2000 && d.getUTCFullYear() <= 2100 ? d : null
 }
 
+/** JSON com as chaves ordenadas em todos os níveis (mesmo payload → mesmo texto). */
+export function canonico(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonico).join(',')}]`
+  if (ehObjeto(v)) {
+    return `{${Object.keys(v)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonico(v[k])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(v) ?? 'null'
+}
+
 export type EventoBrevo = {
   tipo: TipoEvento
   descadastra: boolean
@@ -86,8 +98,11 @@ export function interpretarEventoBrevo(item: unknown): EventoBrevo | null {
   const mensagem = texto(item['message-id']) ?? texto(item.camp_id) ?? ''
   const quando = item.ts_event ?? item.ts ?? item.ts_epoch ?? item.date ?? ''
   const link = texto(item.URL ?? item.link, 1000)
+  // Sem id de mensagem/campanha nem instante, evento + email juntaria eventos diferentes:
+  // aí entra o hash do payload inteiro (chaves ordenadas).
+  const semIdentidade = !mensagem && String(quando) === ''
   const chave = createHash('sha256')
-    .update(JSON.stringify([bruto.toLowerCase(), email, mensagem, String(quando), link ?? '']))
+    .update(JSON.stringify([bruto.toLowerCase(), email, mensagem, String(quando), link ?? '', semIdentidade ? canonico(item) : '']))
     .digest('hex')
   const campanha = texto(item.campaign_name, 200) ?? (texto(item.camp_id) ? `#${texto(item.camp_id)}` : null) ?? texto(item.subject, 200)
   const dados: Record<string, unknown> = { evento: bruto, origem: 'brevo' }
