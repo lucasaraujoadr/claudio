@@ -47,7 +47,7 @@ async function obterOuGerarBriefing(
 ): Promise<Briefing> {
   const [existente] = await db.select().from(briefings).where(eq(briefings.topicId, topico.id))
   if (existente) return existente
-  const b = await gerarBriefing({ topico, urlsDoSite }, gerar)
+  const b = await gerarBriefing({ topico, urlsDoSite }, gerar, { tolerante: true })
   return db.transaction(async (tx) => {
     const [novo] = await tx
       .insert(briefings)

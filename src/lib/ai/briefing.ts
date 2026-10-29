@@ -134,6 +134,7 @@ export type BriefingComAjustes = BriefingGerado & { ajustes: AjusteBriefing[] }
 export async function gerarBriefing(
   ctx: ContextoBriefing,
   gerar: GerarObjeto = gerarObjetoPadrao,
+  opcoes: { tolerante?: boolean } = {},
 ): Promise<BriefingComAjustes> {
   const urls = urlsPermitidas(ctx.urlsDoSite)
   const permitidas = new Map(urls.map((u) => [semBarraFinal(u), u]))
@@ -167,14 +168,23 @@ export async function gerarBriefing(
   const ajustes: AjusteBriefing[] = []
   const reparado = { ...segunda.filtrado }
   if (!briefingSchema.shape.title.safeParse(reparado.title).success) {
-    const t = repararTitle(reparado.title, ctx.topico.keyword)
+    let t = repararTitle(reparado.title, ctx.topico.keyword)
+    // Tolerante: keyword longa pode não caber inteira; aceita o corte na palavra.
+    if (!t && opcoes.tolerante) {
+      const c = cortarNaPalavra(reparado.title, TITLE_MAX)
+      if (c.length >= TITLE_MIN && c.length <= TITLE_MAX) t = c
+    }
     if (t) {
       reparado.title = t
       ajustes.push('title')
     }
   }
   if (!briefingSchema.shape.metaDescription.safeParse(reparado.metaDescription).success) {
-    const m = repararMeta(reparado.metaDescription, ctx.topico.keyword)
+    let m = repararMeta(reparado.metaDescription, ctx.topico.keyword)
+    if (!m && opcoes.tolerante) {
+      const c = cortarNaPalavra(reparado.metaDescription, META_MAX)
+      if (c.length >= META_MIN && c.length <= META_MAX) m = c
+    }
     if (m) {
       reparado.metaDescription = m
       ajustes.push('metaDescription')

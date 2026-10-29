@@ -280,6 +280,46 @@ describe('reparo determinístico de title e meta', () => {
   })
 })
 
+describe('gerarBriefing: opção tolerante (keyword longa)', () => {
+  const KW_LONGA = 'perito contábil ações Fazenda Pública EC 136/2025'
+  const topicoLongo: Topic = { ...topico, keyword: KW_LONGA, keywordNormalizada: 'perito contabil acoes fazenda publica ec 136/2025' }
+  const TITLE_65 = 'Perito contábil em ações contra a Fazenda Pública: guia prático!!'
+  const META_LONGA = `${META_OK} Mais um trecho sobre prazos, custos e entregáveis do trabalho pericial: ${KW_LONGA}.`
+
+  it('fixture tem 65 caracteres', () => {
+    expect(TITLE_65.length).toBe(65)
+  })
+  it('estrito: continua lançando erro', async () => {
+    const { gerar } = fake(modelo({ title: TITLE_65 }), modelo({ title: TITLE_65 }))
+    await expect(gerarBriefing({ topico: topicoLongo, urlsDoSite }, gerar)).rejects.toThrow(/title anterior tinha 65/)
+  })
+  it('tolerante: corta o title na palavra e informa o ajuste', async () => {
+    const { fn, gerar } = fake(modelo({ title: TITLE_65 }), modelo({ title: TITLE_65 }))
+    const r = await gerarBriefing({ topico: topicoLongo, urlsDoSite }, gerar, { tolerante: true })
+    expect(fn).toHaveBeenCalledTimes(2)
+    expect(r.title.length).toBeLessThanOrEqual(60)
+    expect(r.title.length).toBeGreaterThanOrEqual(30)
+    expect(TITLE_65.startsWith(r.title)).toBe(true)
+    expect(TITLE_65[r.title.length]).toBe(' ')
+    expect(r.ajustes).toContain('title')
+  })
+  it('estrito: meta cuja keyword só aparece após o corte lança erro', async () => {
+    const { gerar } = fake(modelo({ metaDescription: META_LONGA }), modelo({ metaDescription: META_LONGA }))
+    await expect(gerarBriefing({ topico: topicoLongo, urlsDoSite }, gerar)).rejects.toThrow(/meta description anterior/)
+  })
+  it('tolerante: meta que perderia a keyword no corte também é cortada', async () => {
+    const { gerar } = fake(modelo({ metaDescription: META_LONGA }), modelo({ metaDescription: META_LONGA }))
+    const r = await gerarBriefing({ topico: topicoLongo, urlsDoSite }, gerar, { tolerante: true })
+    expect(r.metaDescription.length).toBeLessThanOrEqual(160)
+    expect(r.ajustes).toContain('metaDescription')
+  })
+  it('tolerante: continua lançando erro se o corte fica fora do limite', async () => {
+    const t = `${'x'.repeat(20)} ${'y'.repeat(54)}`
+    const { gerar } = fake(modelo({ title: t }), modelo({ title: t }))
+    await expect(gerarBriefing({ topico: topicoLongo, urlsDoSite }, gerar, { tolerante: true })).rejects.toThrow()
+  })
+})
+
 describe('repararTitle: palavras e sinais pendentes', () => {
   it('apara "sobre", "pela" e "(" deixados no fim do corte', () => {
     const kw = 'perito contábil'

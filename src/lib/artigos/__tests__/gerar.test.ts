@@ -63,13 +63,13 @@ const buscaOk = (async () => ({
   fontes: ['https://planalto.gov.br/clt'],
 })) as never
 
-async function preparar(opts: { briefado?: boolean } = {}) {
+async function preparar(opts: { briefado?: boolean; keyword?: string } = {}) {
   const [t] = await db
     .insert(topics)
     .values({
       titulo: 'Perícia contábil trabalhista',
-      keyword: KEYWORD,
-      keywordNormalizada: KEYWORD,
+      keyword: opts.keyword ?? KEYWORD,
+      keywordNormalizada: opts.keyword ?? KEYWORD,
       intencao: 'informacional',
       prioridade: 'alta',
       origem: 'ia',
@@ -87,6 +87,16 @@ async function preparar(opts: { briefado?: boolean } = {}) {
 const deps = (extra: object) => ({ db, agora: () => AGORA, urlsDoSite: async () => [URL_OK], ...extra })
 
 describe('executarGeracao', () => {
+  it('keyword longa com title de 65 chars parafraseado: briefing tolerante e chega a rascunho', async () => {
+    const { artigoId, topicId } = await preparar({ keyword: 'perito contabil acoes fazenda publica ec 136/2025' })
+    const titleLongo = 'Perito contábil em ações contra a Fazenda Pública: guia prático!!'
+    expect(titleLongo.length).toBe(65)
+    const gerar = (async ({ prompt }: { prompt: string }) =>
+      prompt.includes('Elabore o briefing') ? { ...briefingModelo, title: titleLongo } : artigoModelo()) as unknown as GerarObjeto
+    expect(await executarGeracao(artigoId, topicId, deps({ gerar, buscar: buscaOk }))).toBe('ok')
+    expect((await obterArtigo(artigoId, db))?.situacao).toBe('rascunho')
+  })
+
   it('ok grava rascunho com html sanitizado e fontes da busca', async () => {
     const { artigoId, topicId } = await preparar({ briefado: true })
     const { gerar } = fakeGerar(() => artigoModelo())
