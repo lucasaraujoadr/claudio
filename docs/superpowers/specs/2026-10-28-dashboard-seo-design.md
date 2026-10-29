@@ -243,13 +243,22 @@ não é problema.
 | Padrão de URL | JSON-LD esperado |
 |---|---|
 | `/` | `Organization` + `WebSite` |
-| `/blog/<slug>/` | `Article` ou `BlogPosting` |
 | `/servicos/` e filhas | `Service` |
-| `/sobre-nos/`, `/para-advogados/` | `WebPage` |
+| `/sobre-nos/`, `/para-advogados/`, `/blog/`, `/politica-de-privacidade/` | `WebPage` |
 | `/contato/` | `ContactPage` |
+| qualquer outra `/<slug>/` de primeiro nível | `Article` ou `BlogPosting` |
 
-URL que não casa com nenhum padrão não gera o problema — ausência de regra
-não é falha.
+**Correção feita após inspecionar o HTML real (2026-10-28):** a versão
+anterior desta tabela supunha que os posts ficassem em `/blog/<slug>/`.
+Eles ficam na raiz — `/cartao-rmc-riscos/`, por exemplo — e `/blog/` é
+apenas o índice. Como não existe prefixo que identifique um post, a regra
+inverte a lógica: as páginas institucionais são uma lista finita conhecida,
+e toda URL de primeiro nível fora dessa lista é tratada como post.
+
+Consequência registrada: nenhum post do site tem `Article` ou
+`BlogPosting` hoje — só `WebSite` e `WebPage`. A regra vai apontar todos, e
+isso é diagnóstico correto, não ruído: schema de artigo é o que habilita
+resultado rico no Google.
 
 A última regra da tabela já tem ocorrência confirmada: o `robots.txt` do site declara
 `Sitemap: https://ogpericiacontabil.com.br/sitemap.xml`, e essa URL
