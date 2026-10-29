@@ -134,7 +134,11 @@ function ListaTemas({ itens, atalhos }: { itens: Topic[]; atalhos: Atalhos }) {
           </div>
           <div className="flex flex-col items-end gap-2">
             <Acao t={t} />
-            <AtalhoArtigo artigoId={atalhos.artigoPorTema.get(t.id)} campo="topicId" valor={t.id} iaConfigurada={atalhos.ia} />
+            {t.status === 'publicado' && !atalhos.artigoPorTema.has(t.id) ? (
+              <span className="text-xs text-tinta-suave">já publicado</span>
+            ) : (
+              <AtalhoArtigo artigoId={atalhos.artigoPorTema.get(t.id)} campo="topicId" valor={t.id} iaConfigurada={atalhos.ia} />
+            )}
           </div>
         </li>
       ))}

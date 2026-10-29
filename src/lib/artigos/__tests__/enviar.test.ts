@@ -346,4 +346,44 @@ describe('correções da revisão', () => {
     expect((await enviarArtigo(a.id, 'rascunho', opts(b.cliente))).tipo).toBe('erro')
     expect((await obterArtigo(a.id, db))?.enviandoDesde).toBeNull()
   })
+
+  it('wpStatus local future mas WP já publish: rascunho e agendar bloqueados; publicar sem dataGmt', async () => {
+    const a = await criarArtigo({ situacao: 'agendado', wpPostId: 31, wpStatus: 'future', wpModificadoGmt: '2026-10-29T10:00:00', agendadoPara: new Date('2026-11-05T13:30:00Z') })
+    const { cliente, chamadas } = fake({
+      lerPost: async () => ({ id: 31, status: 'publish', link: 'l', modificadoGmt: '2026-10-29T10:00:00', metaGravada: true }),
+    })
+    expect((await enviarArtigo(a.id, 'rascunho', opts(cliente))).tipo).toBe('bloqueado')
+    expect((await enviarArtigo(a.id, 'agendar', opts(cliente))).tipo).toBe('bloqueado')
+    expect(chamadas.atualizar).toHaveLength(0)
+    expect((await enviarArtigo(a.id, 'publicar', opts(cliente))).tipo).toBe('ok')
+    expect(chamadas.atualizar[0].d.dataGmt).toBeUndefined()
+  })
+
+  it('sincronizar não apaga alteradoAposEnvio, enviadoEm nem erro', async () => {
+    const enviadoEm = new Date('2026-10-20T10:00:00Z')
+    const a = await criarArtigo({ situacao: 'agendado', wpPostId: 10, wpStatus: 'future', wpModificadoGmt: '2026-10-29T10:00:00', alteradoAposEnvio: true, enviadoEm, erro: 'aviso antigo' })
+    const { cliente } = fake({
+      lerPost: async () => ({ id: 10, status: 'publish', link: 'https://site.test/p/', modificadoGmt: '2026-11-05T13:30:00', metaGravada: true }),
+    })
+    expect(await sincronizarAgendados(cliente, db)).toBe(1)
+    const s = await obterArtigo(a.id, db)
+    expect(s?.situacao).toBe('publicado')
+    expect(s?.wpLink).toBe('https://site.test/p/')
+    expect(s?.alteradoAposEnvio).toBe(true)
+    expect(s?.enviadoEm?.getTime()).toBe(enviadoEm.getTime())
+    expect(s?.erro).toBe('aviso antigo')
+    expect(s?.wpModificadoGmt).toBe('2026-10-29T10:00:00')
+    const [t] = await db.select().from(topics).where(eq(topics.id, a.topicId))
+    expect(t.status).toBe('publicado')
+    expect(t.urlPublicada).toBe('https://site.test/p/')
+  })
+
+  it('título e meta com tags saem sem "<" no corpo enviado', async () => {
+    const a = await criarArtigo({ titulo: '<script>x</script>Título bom', metaDescription: 'Meta <b>forte</b> <img src=x onerror=1>' })
+    const { cliente, chamadas } = fake()
+    expect((await enviarArtigo(a.id, 'rascunho', opts(cliente))).tipo).toBe('ok')
+    const d = chamadas.criar[0]
+    for (const v of [d.titulo, d.resumo, d.metaDescription]) expect(v).not.toContain('<')
+    expect(d.titulo).toContain('Título bom')
+  })
 })

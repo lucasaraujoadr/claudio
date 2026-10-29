@@ -199,4 +199,27 @@ describe('reescreverTrecho', () => {
     const gerar = (async () => ({ texto: '<p>Texto <b>novo</b></p>' })) as unknown as GerarObjeto
     expect(await reescreverTrecho({ trecho: 'a', instrucao: 'x', keyword: 'k' }, gerar)).toBe('Texto novo')
   })
+
+  it('não rebaixa tema publicado ao gerar o briefing', async () => {
+    const { artigoId, topicId } = await preparar()
+    await db.update(topics).set({ status: 'publicado' }).where(eq(topics.id, topicId))
+    const { gerar } = fakeGerar(() => artigoModelo())
+    expect(await executarGeracao(artigoId, topicId, deps({ gerar, buscar: buscaOk }))).toBe('ok')
+    const [t] = await db.select().from(topics).where(eq(topics.id, topicId))
+    expect(t.status).toBe('publicado')
+  })
+
+  it('título e meta do modelo saem sem tags', async () => {
+    const { artigoId, topicId } = await preparar()
+    const { gerar } = fakeGerar(() =>
+      artigoModelo({
+        titulo: '<script>x</script>Perícia contábil trabalhista: guia para advogados',
+        metaDescription: `<b>${briefingModelo.metaDescription}</b>`,
+      }),
+    )
+    expect(await executarGeracao(artigoId, topicId, deps({ gerar, buscar: buscaOk }))).toBe('ok')
+    const a = await obterArtigo(artigoId, db)
+    expect(a?.titulo).not.toContain('<')
+    expect(a?.metaDescription).not.toContain('<')
+  })
 })

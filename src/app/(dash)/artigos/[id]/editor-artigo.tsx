@@ -162,9 +162,22 @@ export function EditorArtigo({
     [salvar],
   )
 
-  useEffect(() => () => {
-    if (timer.current) clearTimeout(timer.current)
-  }, [])
+  // Ao sair da tela (navegação interna) com edição pendente, grava com keepalive em vez de perder.
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current)
+      const patch = pendente.current
+      if (Object.keys(patch).length === 0) return
+      pendente.current = {}
+      void fetch(`/api/artigos/${id}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(patch),
+        keepalive: true,
+      }).catch(() => {})
+    },
+    [id],
+  )
 
   // Sair da página com alteração não salva: o navegador pergunta (nada de confirm()).
   useEffect(() => {

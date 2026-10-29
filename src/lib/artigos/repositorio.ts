@@ -233,6 +233,24 @@ export async function registrarEnvio(
   })
 }
 
+/** O cron viu o WP publicar um agendado: só reflete isso, sem tocar em alteradoAposEnvio, enviadoEm, erro ou wpModificadoGmt. */
+export async function registrarPublicacaoAgendada(
+  id: number,
+  r: { wpLink: string },
+  db: BancoCrm = bancoPadrao(),
+): Promise<Artigo | null> {
+  return db.transaction(async (tx) => {
+    const [novo] = await tx
+      .update(artigos)
+      .set({ situacao: 'publicado', wpStatus: 'publish', wpLink: r.wpLink, atualizadoEm: new Date() })
+      .where(eq(artigos.id, id))
+      .returning()
+    if (!novo) return null
+    await tx.update(topics).set({ status: 'publicado', urlPublicada: r.wpLink }).where(eq(topics.id, novo.topicId))
+    return novo
+  })
+}
+
 export async function registrarErroEnvio(
   id: number,
   mensagem: string,

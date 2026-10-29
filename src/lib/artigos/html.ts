@@ -287,3 +287,13 @@ export function contarLinksInternos(html: string, host: string): number {
   })
   return n
 }
+
+/** Texto puro para campos de uma linha (título, meta): sem tags, sem "<" ou ">" sobrando. Só servidor (usa cheerio). */
+export function textoPuro(bruto: string): string {
+  return cheerio
+    .load(`<div>${bruto}</div>`)('div')
+    .text()
+    .replace(/[<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}

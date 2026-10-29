@@ -2,7 +2,7 @@ import { bancoPadrao, type BancoCrm } from '@/lib/crm/banco'
 import { ErroWp, type DadosPost, type criarClienteWp } from '@/lib/wordpress'
 import { conferir, podePublicar, type ItemConferencia } from './conferencia'
 import { slugValido } from './formato'
-import { paraGutenberg, removerVerificar, sanitizarHtml } from './html'
+import { paraGutenberg, removerVerificar, sanitizarHtml, textoPuro } from './html'
 import {
   desvincularDoWp,
   liberarEnvio,
@@ -10,6 +10,7 @@ import {
   obterArtigo,
   reivindicarEnvio,
   registrarEnvio,
+  registrarPublicacaoAgendada,
   registrarErroEnvio,
 } from './repositorio'
 
@@ -50,8 +51,23 @@ async function enviarInterno(
       revisado: a.revisado,
       slugEmUso,
     })
+    // O WP é a fonte da verdade: um agendado pode ter sido publicado sem o painel saber (cron diário).
+    let wpPostId = a.wpPostId
+    let publicadoNoWp = a.wpStatus === 'publish'
+    let conflito = false
+    if (wpPostId !== null) {
+      const atual = await cliente.lerPost(wpPostId)
+      if (atual === null) {
+        // Apagado no WP: só desvincula depois de passar pelas verificações abaixo.
+        publicadoNoWp = false
+        wpPostId = null
+      } else {
+        publicadoNoWp = publicadoNoWp || atual.status === 'publish'
+        conflito = atual.modificadoGmt !== a.wpModificadoGmt && !opts.sobrescrever
+      }
+    }
     // Ruling C: artigo já publicado só aceita "Atualizar no site"; rascunho/agendar tirariam o post do ar.
-    if (a.wpStatus === 'publish' && modo !== 'publicar') {
+    if (publicadoNoWp && modo !== 'publicar') {
       itens.push({ id: 'publicado', nivel: 'bloqueia', texto: 'Este artigo já está publicado; use "Atualizar no site".' })
       return { tipo: 'bloqueado', itens }
     }
@@ -65,31 +81,22 @@ async function enviarInterno(
       }
       if (!podePublicar(itens)) return { tipo: 'bloqueado', itens }
     }
-
-    let wpPostId = a.wpPostId
-    if (wpPostId !== null) {
-      const atual = await cliente.lerPost(wpPostId)
-      if (atual === null) {
-        await desvincularDoWp(id, db)
-        wpPostId = null
-      } else if (atual.modificadoGmt !== a.wpModificadoGmt && !opts.sobrescrever) {
-        return { tipo: 'conflito' }
-      }
-    }
+    if (a.wpPostId !== null && wpPostId === null) await desvincularDoWp(id, db)
+    else if (conflito) return { tipo: 'conflito' }
 
     const dados: DadosPost = {
       status: STATUS_WP[modo],
-      titulo: (a.titulo ?? '').trim(),
+      titulo: textoPuro(a.titulo ?? ''),
       slug,
       conteudo: paraGutenberg(removerVerificar(sanitizarHtml(a.conteudoHtml ?? ''))),
-      resumo: a.metaDescription ?? '',
+      resumo: textoPuro(a.metaDescription ?? ''),
       categorias: a.categoriaId != null ? [a.categoriaId] : [],
       capaId: a.capaMediaId,
-      metaDescription: a.metaDescription ?? '',
+      metaDescription: textoPuro(a.metaDescription ?? ''),
       // Publicar com data = agora (menos num post já no ar, que mantém a data original): o WP mantém um date_gmt futuro antigo e deixaria o post agendado.
       ...(modo === 'agendar' && a.agendadoPara
         ? { dataGmt: a.agendadoPara.toISOString().slice(0, 19) }
-        : modo === 'publicar' && a.wpStatus !== 'publish'
+        : modo === 'publicar' && !publicadoNoWp
           ? { dataGmt: agora.toISOString().slice(0, 19) }
           : {}),
     }
@@ -144,13 +151,8 @@ export async function sincronizarAgendados(cliente: ClienteWp, db: BancoCrm = ba
       if (post === null) {
         await desvincularDoWp(a.id, db)
       } else if (post.status === 'publish') {
-        await registrarEnvio(
-          a.id,
-          // Mantém o `modified_gmt` guardado: assim uma edição feita no WP ainda aparece como conflito.
-          { wpPostId: post.id, wpStatus: 'publish', wpLink: post.link, wpModificadoGmt: a.wpModificadoGmt ?? post.modificadoGmt },
-          new Date(),
-          db,
-        )
+        // Só reflete a publicação: mantém `alteradoAposEnvio`, `enviadoEm`, `erro` e o `modified_gmt` guardado (edição no WP ainda dá conflito).
+        await registrarPublicacaoAgendada(a.id, { wpLink: post.link }, db)
         publicados++
       }
     } catch (e) {

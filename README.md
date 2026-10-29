@@ -116,6 +116,8 @@ O módulo **Artigos** gera um artigo com IA a partir de uma tese ou tema escolhi
 
 Fluxo: escolha a tese ou o tema → **Gerar artigo** → revise no editor → envie como **rascunho**, **agendado** ou **publicado**. Publicar exige marcar "revisei o conteúdo" e não pode haver nenhum trecho marcado "verificar".
 
+> **Antes de publicar este código**, rode `npx dotenv -e .env.local -- npx drizzle-kit push` para criar as tabelas e colunas novas do módulo.
+
 Variáveis de ambiente (na Vercel, como as demais):
 
 | Variável | De onde vem |
@@ -153,8 +155,10 @@ add_action('init', function () {
 
 ### Rotina diária e agendamentos
 
-A rotina diária (`/api/cron/diario`) também sincroniza os artigos agendados no WordPress.
+A rotina diária (`/api/cron/diario`) também sincroniza os artigos agendados no WordPress. O painel só fica sabendo que o WordPress publicou um agendado quando essa rotina roda, então essa visão pode ficar até um dia atrasada. O envio, porém, sempre consulta o WordPress antes de agir, então um post já no ar nunca é tirado do ar por engano.
+
+Para despublicar um artigo, use o wp-admin; o painel não despublica.
 
 ### Se um envio falhar
 
-Se o envio falhar depois que o WordPress já criou o post (por exemplo, por timeout), o próximo envio do mesmo artigo é bloqueado com a mensagem "endereço já usado em <link>". Apague ou renomeie esse post no wp-admin e envie de novo.
+Se o envio falhar depois que o WordPress já criou o post (por exemplo, por timeout), o próximo envio do mesmo artigo é bloqueado com a mensagem `endereço já usado em <link>`. Apague ou renomeie esse post no wp-admin e envie de novo.

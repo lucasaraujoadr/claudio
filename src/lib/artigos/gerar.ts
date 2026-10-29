@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, eq, ne } from 'drizzle-orm'
 import { bancoPadrao, type BancoCrm } from '@/lib/crm/banco'
 import { briefings, topics, type Briefing } from '@/lib/db/schema'
 import {
@@ -11,7 +11,7 @@ import { gerarBriefing, repararMeta, repararTitle } from '@/lib/ai/briefing'
 import { carregarUrlsDoSite } from '@/lib/ai/contexto'
 import { META_MAX, META_MIN, TITLE_MAX, TITLE_MIN } from '@/lib/ai/schemas'
 import { artigoSchemaModelo, normalizarSlug, paraHtml } from './formato'
-import { sanitizarHtml } from './html'
+import { sanitizarHtml, textoPuro } from './html'
 import {
   montarPromptArtigo,
   montarPromptPesquisa,
@@ -63,19 +63,20 @@ async function obterOuGerarBriefing(
         ajustes: b.ajustes.length > 0 ? b.ajustes : null,
       })
       .returning()
-    await tx.update(topics).set({ status: 'briefado' }).where(eq(topics.id, topico.id))
+    // Tema já publicado não volta a 'briefado'.
+    await tx.update(topics).set({ status: 'briefado' }).where(and(eq(topics.id, topico.id), ne(topics.status, 'publicado')))
     return novo
   })
 }
 
 function tituloFinal(titulo: string, keyword: string, briefing: Briefing): string {
-  const t = titulo.trim().replace(/\s+/g, ' ')
+  const t = textoPuro(titulo)
   if (t.length >= TITLE_MIN && t.length <= TITLE_MAX) return t
   return repararTitle(t, keyword) ?? briefing.title
 }
 
 function metaFinal(meta: string, keyword: string, briefing: Briefing): string {
-  const m = meta.trim().replace(/\s+/g, ' ')
+  const m = textoPuro(meta)
   if (m.length >= META_MIN && m.length <= META_MAX) return m
   return repararMeta(m, keyword) ?? briefing.metaDescription
 }

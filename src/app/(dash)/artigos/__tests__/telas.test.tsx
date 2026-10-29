@@ -176,6 +176,21 @@ describe('editor', () => {
     await waitFor(() => expect(screen.getByText('salvo')).toBeTruthy())
   })
 
+  it('ao desmontar com edição pendente, grava com keepalive', async () => {
+    const f = vi.fn(() => resposta(artigo()))
+    vi.stubGlobal('fetch', f)
+    const { unmount } = montar()
+    fireEvent.change(screen.getByLabelText('Título SEO'), { target: { value: 'Saí rápido' } })
+    expect(f).not.toHaveBeenCalled()
+    unmount()
+    expect(f).toHaveBeenCalledTimes(1)
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('/api/artigos/7')
+    expect(init.method).toBe('PUT')
+    expect(init.keepalive).toBe(true)
+    expect(JSON.parse(String(init.body))).toEqual({ titulo: 'Saí rápido' })
+  })
+
   it('antes de enviar, força salvar o que estava pendente', async () => {
     const f = vi.fn((url: string) =>
       url.endsWith('/enviar') ? resposta({ tipo: 'ok', link: 'https://site/x/', metaGravada: true }) : resposta(artigo()),
