@@ -29,6 +29,24 @@ export function BotaoCopiar({ texto, rotulo = 'Copiar' }: { texto: string; rotul
   )
 }
 
+/** Destaca os marcadores ainda não resolvidos (`[link do WhatsApp]`, `[fonte do contato]`). */
+function ComMarcadores({ texto }: { texto: string }) {
+  const partes = texto.split(/(\[(?:link do WhatsApp|fonte do contato)\])/)
+  return (
+    <>
+      {partes.map((p, i) =>
+        i % 2 === 1 ? (
+          <mark key={i} className="rounded bg-aviso-fundo px-0.5 font-semibold text-aviso">
+            {p}
+          </mark>
+        ) : (
+          p
+        ),
+      )}
+    </>
+  )
+}
+
 /** Bloco de texto com rótulo e botão de copiar. */
 export function TextoCopiavel({ rotulo, texto, multilinha = false }: { rotulo: string; texto: string; multilinha?: boolean }) {
   return (
@@ -38,9 +56,9 @@ export function TextoCopiavel({ rotulo, texto, multilinha = false }: { rotulo: s
         <BotaoCopiar texto={texto} />
       </div>
       {multilinha ? (
-        <pre className="max-h-96 overflow-auto rounded-md border border-borda bg-elevada px-3 py-2 font-sans text-sm whitespace-pre-wrap text-tinta">{texto}</pre>
+        <pre className="max-h-96 overflow-auto rounded-md border border-borda bg-elevada px-3 py-2 font-sans text-sm whitespace-pre-wrap text-tinta"><ComMarcadores texto={texto} /></pre>
       ) : (
-        <p className="rounded-md border border-borda bg-elevada px-3 py-2 text-sm text-tinta">{texto}</p>
+        <p className="rounded-md border border-borda bg-elevada px-3 py-2 text-sm text-tinta"><ComMarcadores texto={texto} /></p>
       )}
     </div>
   )

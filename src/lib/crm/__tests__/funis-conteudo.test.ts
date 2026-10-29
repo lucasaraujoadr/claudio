@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { comporCampanhaBlog, DEFINICOES_FUNIS, EMAILS_FUNIS, linkComUtm, LINHA_DESCADASTRO, passosAutomacao } from '../funis-conteudo'
+import {
+  aplicarMarcadores,
+  BLOCO_LGPD_PROSPECCAO,
+  comporCampanhaBlog,
+  DEFINICOES_FUNIS,
+  duracaoSequenciaDias,
+  EMAILS_FUNIS,
+  linkComUtm,
+  linkWhatsapp,
+  LINHA_DESCADASTRO,
+  marcadoresPendentes,
+  passosAutomacao,
+} from '../funis-conteudo'
 import { SLUGS_FUNIS } from '../funis-regras'
 
 describe('textos dos funis', () => {
@@ -23,7 +35,8 @@ describe('textos dos funis', () => {
       })
       it('todo email tem descadastro e chamada para documentos ou WhatsApp', () => {
         for (const e of emails) {
-          expect(e.corpo).toContain(LINHA_DESCADASTRO)
+          expect(e.corpo).toContain('{{ unsubscribe }}')
+          expect(e.corpo).toContain(slug === 'prospeccao-fria' ? BLOCO_LGPD_PROSPECCAO : LINHA_DESCADASTRO)
           expect(e.corpo).toMatch(/\[link do WhatsApp\]|documentos/)
         }
       })
@@ -33,10 +46,48 @@ describe('textos dos funis', () => {
           expect(t).not.toMatch(/garant(imos|ia de) (ganho|êxito|resultado|vitória)/i)
           expect(t).not.toMatch(/\b(art\.|artigo \d|lei n|súmula|tema \d|stj|stf|tst)\b/i)
           expect(t).not.toMatch(/R\$|\d+ ?%|\d{2,} (clientes|processos|anos|casos)/)
+          // Linguagem que um advogado leria como promessa ou como afirmação sobre ele.
+          expect(t).not.toMatch(/resiste à impugnação|seu escritório atua|é público/i)
         }
       })
     })
   }
+
+  it('prospecção fria: bloco de LGPD com base legal, fonte, apagar/parar e descadastro', () => {
+    expect(BLOCO_LGPD_PROSPECCAO).toContain('legítimo interesse')
+    expect(BLOCO_LGPD_PROSPECCAO).toContain('[fonte do contato]')
+    expect(BLOCO_LGPD_PROSPECCAO).toMatch(/apagamos o seu cadastro/)
+    expect(BLOCO_LGPD_PROSPECCAO).toMatch(/paramos de enviar/)
+  })
+
+  it('nutrição não diz que só envia com artigo novo antes dos emails fixos', () => {
+    expect(EMAILS_FUNIS['nutricao-blog'][0].corpo).not.toContain('só quando há artigo novo')
+  })
+
+  it('duração da sequência: soma das esperas + 3; nutrição não conclui', () => {
+    expect(duracaoSequenciaDias('boas-vindas')).toBe(0 + 3 + 7 + 3)
+    expect(duracaoSequenciaDias('reativacao')).toBe(0 + 7 + 14 + 3)
+    expect(duracaoSequenciaDias('nutricao-blog')).toBeNull()
+  })
+
+  it('marcadores: WHATSAPP_LINK substitui; pendentes listados sem repetir', () => {
+    const corpo = EMAILS_FUNIS['prospeccao-fria'][0].corpo
+    expect(marcadoresPendentes([corpo, corpo])).toEqual(['[link do WhatsApp]', '[fonte do contato]'])
+    const resolvido = aplicarMarcadores(corpo, { whatsapp: 'https://wa.me/550000' })
+    expect(resolvido).toContain('https://wa.me/550000')
+    expect(marcadoresPendentes([resolvido])).toEqual(['[fonte do contato]'])
+    expect(aplicarMarcadores(corpo, { whatsapp: null })).toBe(corpo)
+    expect(linkWhatsapp({ WHATSAPP_LINK: 'javascript:alert(1)' })).toBeNull()
+    expect(linkWhatsapp({ WHATSAPP_LINK: ' https://wa.me/55 ' })).toBe('https://wa.me/55')
+    expect(linkWhatsapp({})).toBeNull()
+  })
+
+  it('passo a passo da reativação não promete reentrada que o código não faz', () => {
+    const p = passosAutomacao('reativacao', 'L').join('\n')
+    expect(p).toContain('concluiu a sequência há mais de 180 dias')
+    expect(p).toContain('nunca quem foi removido à mão')
+    expect(passosAutomacao('boas-vindas', 'L').join('\n')).toContain('envie um email de teste')
+  })
 
   it('passo a passo cita a lista e os atrasos', () => {
     const p = passosAutomacao('boas-vindas', 'Painel OG — Boas-vindas')

@@ -15,7 +15,8 @@ describe('formulários dos funis', () => {
     const f = new FormData()
     f.set('avaliacao', '1')
     f.set('descadastro', 'on')
-    expect(lerChecklist(f)).toEqual({ avaliacaoLegitimoInteresse: true, descadastroEmTodoEmail: false, volumeBaixoAquecido: false })
+    f.set('fonte', '1')
+    expect(lerChecklist(f)).toEqual({ avaliacaoLegitimoInteresse: true, fonteDocumentada: true, descadastroEmTodoEmail: false, volumeBaixoAquecido: false })
   })
   it('inteiro só com dígitos', () => {
     expect(lerInteiro('12')).toBe(12)

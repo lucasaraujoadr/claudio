@@ -5,9 +5,19 @@ import { Aviso, BotaoEnviar, CabecalhoPagina, Cartao, EstadoVazio, Selo, Tabela,
 import { CLASSES_ROTULO, classesCampo } from '@/components/ui/campo'
 import { brevoConfigurado } from '@/lib/brevo'
 import { bancoPadrao } from '@/lib/crm/banco'
-import { definicaoFunil, EMAILS_FUNIS, nomeListaBrevo, passosAutomacao } from '@/lib/crm/funis-conteudo'
-import { membrosDoFunil, MEMBROS_POR_PAGINA, obterFunil, type MembroFunil } from '@/lib/crm/funis'
-import { ehSlugFunil, ROTULO_RECUSA, TETO_MAXIMO_PROSPECCAO, type MotivoRecusa, type SlugFunil } from '@/lib/crm/funis-regras'
+import {
+  aplicarMarcadores,
+  definicaoFunil,
+  duracaoSequenciaDias,
+  EMAILS_FUNIS,
+  linkWhatsapp,
+  marcadoresPendentes,
+  nomeListaBrevo,
+  passosAutomacao,
+} from '@/lib/crm/funis-conteudo'
+import { MAX_CONTATOS_POR_TAG, membrosDoFunil, MEMBROS_POR_PAGINA, obterFunil, type MembroFunil } from '@/lib/crm/funis'
+import { MAX_EMAILS_INSCRICAO } from '@/lib/crm/funis-formulario'
+import { DEFINICAO_SEM_INTERACAO, ehSlugFunil, ROTULO_RECUSA, TETO_MAXIMO_PROSPECCAO, type MotivoRecusa, type SlugFunil } from '@/lib/crm/funis-regras'
 import type { Funil, FunilInscricao } from '@/lib/db/schema'
 import { formatarQuando, SeloStatus } from '../../contatos/_compartilhado'
 import { ROTULO_CAMINHO, ROTULO_INSCRICAO, SeloFunil, SeloLista } from '../_compartilhado'
@@ -18,7 +28,7 @@ export const metadata = { title: 'Funil' }
 const AVISOS: Record<string, { texto: string; tipo: TipoAviso }> = {
   ligado: { texto: 'Funil ligado.', tipo: 'sucesso' },
   desligado: { texto: 'Funil desligado: ninguém novo entra; quem já está continua até sair.', tipo: 'info' },
-  checklist: { texto: 'Para ligar a prospecção fria, confirme os três itens do checklist de LGPD.', tipo: 'erro' },
+  checklist: { texto: 'Para ligar a prospecção fria, confirme os quatro itens do checklist de LGPD.', tipo: 'erro' },
   teto: { texto: `Defina um teto diário entre 1 e ${TETO_MAXIMO_PROSPECCAO}.`, tipo: 'erro' },
   'lista-criada': { texto: 'Lista criada no Brevo e ligada a este funil.', tipo: 'sucesso' },
   'lista-ok': { texto: 'Lista do Brevo ligada a este funil.', tipo: 'sucesso' },
@@ -56,7 +66,10 @@ function avisoInscricao(sp: Record<string, string | string[] | undefined>): { te
     const rotulo = chave === 'ja_passou' ? 'já passou por este funil' : chave in ROTULO_RECUSA ? ROTULO_RECUSA[chave as MotivoRecusa] : null
     if (rotulo && numero(qtd) > 0) partes.push(`${numero(qtd)} recusado(s): ${rotulo}`)
   }
-  return { texto: `${partes.join('; ')}.`, tipo: inscritos > 0 ? 'sucesso' : 'alerta' }
+  if (sp.excedeu_emails === '1') partes.push(`só os primeiros ${MAX_EMAILS_INSCRICAO.toLocaleString('pt-BR')} emails colados foram tratados; envie o resto em outra vez`)
+  if (sp.excedeu_tag === '1') partes.push(`a tag tem mais de ${MAX_CONTATOS_POR_TAG.toLocaleString('pt-BR')} contatos; só os primeiros foram tratados — repita para os demais`)
+  const excedeu = sp.excedeu_emails === '1' || sp.excedeu_tag === '1'
+  return { texto: `${partes.join('; ')}.`, tipo: inscritos > 0 && !excedeu ? 'sucesso' : 'alerta' }
 }
 
 async function carregar(slug: SlugFunil, status: FunilInscricao['status'] | undefined, pagina: number) {
@@ -104,6 +117,10 @@ function Situacao({ f }: { f: Funil }) {
         <label className="flex items-start gap-2 text-sm text-tinta">
           <input type="checkbox" name="avaliacao" value="1" required className="mt-1 accent-acento" />
           A avaliação de legítimo interesse está documentada (finalidade, necessidade, expectativa do titular e salvaguardas).
+        </label>
+        <label className="flex items-start gap-2 text-sm text-tinta">
+          <input type="checkbox" name="fonte" value="1" required className="mt-1 accent-acento" />
+          A fonte dos contatos está documentada, e o marcador [fonte do contato] dos emails foi trocado por ela.
         </label>
         <label className="flex items-start gap-2 text-sm text-tinta">
           <input type="checkbox" name="descadastro" value="1" required className="mt-1 accent-acento" />
@@ -252,6 +269,10 @@ export default async function FunilPage({
   const def = definicaoFunil(slug)
   const dados = await carregar(slug, status, pagina)
   const nomeLista = dados?.funil.brevoListaId ? `${nomeListaBrevo(def.nome)} (lista ${dados.funil.brevoListaId})` : nomeListaBrevo(def.nome)
+  const whatsapp = linkWhatsapp()
+  const emails = EMAILS_FUNIS[slug].map((e) => ({ ...e, corpo: aplicarMarcadores(e.corpo, { whatsapp }) }))
+  const pendentes = marcadoresPendentes(emails.flatMap((e) => [e.assunto, e.preCabecalho, e.corpo]))
+  const duracao = duracaoSequenciaDias(slug)
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -266,7 +287,7 @@ export default async function FunilPage({
         <Aviso tipo="erro" titulo="Não foi possível ler o funil">O banco não respondeu. Recarregue a página.</Aviso>
       ) : (
         <>
-          <Cartao titulo="Situação" descricao={def.quemEntra}>
+          <Cartao titulo="Situação" descricao={slug === 'reativacao' ? `${def.quemEntra} ${DEFINICAO_SEM_INTERACAO}` : def.quemEntra}>
             <Situacao f={dados.funil} />
           </Cartao>
 
@@ -297,15 +318,26 @@ export default async function FunilPage({
         </>
       )}
 
-      <Cartao titulo="Automação no Brevo" descricao="Automações não podem ser criadas pela API do Brevo: crie esta uma vez, à mão.">
+      {pendentes.length > 0 && (
+        <Aviso tipo="alerta" titulo="Antes de ativar a automação" role={null}>
+          Os emails ainda têm {pendentes.length === 1 ? 'um marcador' : 'marcadores'} a resolver: {pendentes.join(', ')}.
+          {pendentes.includes('[link do WhatsApp]') && ' Defina WHATSAPP_LINK na Vercel para o link entrar sozinho, ou troque à mão no Brevo.'}
+          {pendentes.includes('[fonte do contato]') && ' Troque [fonte do contato] pela origem real dos contatos (a mesma registrada na avaliação de legítimo interesse).'}
+        </Aviso>
+      )}
+
+      <Cartao
+        titulo="Automação no Brevo"
+        descricao={`Automações não podem ser criadas pela API do Brevo: crie esta uma vez, à mão.${duracao !== null ? ` ${duracao} dias depois da entrada, o CRM marca a sequência como concluída e tira o contato da lista.` : ' Este funil não conclui: a lista continua recebendo as campanhas dos artigos novos.'}`}
+      >
         <ol className="list-decimal space-y-1.5 pl-5 text-sm text-tinta">
           {passosAutomacao(slug, nomeLista).map((p, i) => <li key={i}>{p}</li>)}
         </ol>
       </Cartao>
 
-      <Cartao titulo="Emails prontos" descricao="Três emails, no tom de perito falando com advogado. Troque [link do WhatsApp] pelo link real.">
+      <Cartao titulo="Emails prontos" descricao="Três emails, no tom de perito falando com advogado. Marcadores entre colchetes aparecem destacados.">
         <div className="space-y-6">
-          {EMAILS_FUNIS[slug].map((e, i) => (
+          {emails.map((e, i) => (
             <article key={i} className="space-y-3 rounded-lg border border-borda p-4">
               <h3 className="font-titulo text-base font-semibold text-tinta">
                 Email {i + 1} <span className="text-sm font-normal text-tinta-suave">· {i === 0 ? 'logo ao entrar na lista' : `${e.esperarDias} dias depois do anterior`}</span>

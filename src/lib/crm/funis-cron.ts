@@ -2,6 +2,7 @@ import type { ClienteBrevo } from '@/lib/brevo'
 import { criarClienteBrevo } from '@/lib/brevo'
 import { bancoPadrao, type BancoCrm } from './banco'
 import {
+  concluirSequencias,
   encerrarInscricoesDeDescadastrados,
   garantirFunis,
   inscreverProspeccao,
@@ -31,7 +32,8 @@ export class FalhaEtapaFunis extends Error {
 }
 
 /**
- * Etapa diária dos funis: garante os quatro funis, tira descadastrados, inscreve na
+ * Etapa diária dos funis: garante os quatro funis, tira descadastrados, conclui as
+ * sequências que terminaram, inscreve na
  * reativação (até 50) e na prospecção fria (se ligada, no teto), e, com chave do Brevo,
  * envia os contatos pendentes e atualiza as listas. Cada subetapa é isolada: uma falha não
  * impede as seguintes; no fim, se alguma falhou, lança `FalhaEtapaFunis` (a rotina diária
@@ -58,6 +60,9 @@ export async function executarEtapaFunis(opts: { db?: BancoCrm; cliente?: Client
   })
   await etapa('descadastrados', async () => {
     detalhes.encerradasDescadastro = await encerrarInscricoesDeDescadastrados({ db, agora })
+  })
+  await etapa('concluir', async () => {
+    detalhes.concluidas = await concluirSequencias({ db, agora })
   })
   await etapa('reativacao', async () => {
     detalhes.reativacao = (await inscreverReativacao({ db, agora })).inscritos.length
@@ -88,6 +93,7 @@ export async function executarEtapaFunis(opts: { db?: BancoCrm; cliente?: Client
     `Reativação: ${detalhes.reativacao ?? '—'}`,
     `prospecção fria: ${detalhes.prospeccao ?? '—'}`,
     `saídas por descadastro: ${detalhes.encerradasDescadastro ?? '—'}`,
+    `sequências concluídas: ${detalhes.concluidas ?? '—'}`,
     cliente.conectado
       ? `listas do Brevo: +${detalhes.listasAdicionados ?? 0} / −${detalhes.listasRemovidos ?? 0}`
       : 'Brevo não conectado (inscrições guardadas como pendentes)',

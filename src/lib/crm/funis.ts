@@ -3,8 +3,11 @@ import { criarClienteBrevo, MENSAGEM_NAO_CONECTADO, type ClienteBrevo, type Erro
 import { contatos, eventosContato, funilInscricoes, funis, type Funil, type FunilInscricao } from '@/lib/db/schema'
 import { bancoPadrao, type BancoCrm } from './banco'
 import type { StatusContato } from './campos'
-import { DEFINICOES_FUNIS, nomeListaBrevo, PASTA_BREVO } from './funis-conteudo'
+import { DEFINICOES_FUNIS, duracaoSequenciaDias, nomeListaBrevo, PASTA_BREVO } from './funis-conteudo'
 import {
+  EVENTOS_INTERACAO,
+  ORIGEM_ATUALIZADO_INTERACAO,
+  reentradaPermitida,
   ehSlugFunil,
   inicioDoDiaBrasilia,
   limiteReativacao,
@@ -19,7 +22,7 @@ import {
   type MotivoRecusa,
   type SlugFunil,
 } from './funis-regras'
-import { adicionarContatosALista } from './sincronizar'
+import { adicionarContatosALista, sincronizarPendentes } from './sincronizar'
 
 /**
  * Funis do CRM (E9). O CRM decide quem está em qual funil; cada funil corresponde a uma
@@ -76,11 +79,13 @@ function paraRegra(f: Funil): FunilParaRegra {
 }
 
 /**
- * Último evento da linha do tempo, ou a criação do contato se não houver evento. Nomes
+ * Última interação real (`EVENTOS_INTERACAO` e `atualizado` manual), ou a criação do contato
+ * se não houver nenhuma. Nomes
  * qualificados à mão: numa consulta de uma tabela só o Drizzle escreve `"id"` sem a tabela, e
  * dentro da subconsulta isso seria a coluna da tabela interna.
  */
-const ultimaInteracao = sql<Date>`coalesce((select max(ec.em) from eventos_contato ec where ec.contato_id = "contatos"."id"), "contatos"."criado_em")`.mapWith(
+const TIPOS_INTERACAO_SQL = sql.raw(EVENTOS_INTERACAO.map((t) => `'${t}'`).join(', '))
+const ultimaInteracao = sql<Date>`coalesce((select max(ec.em) from eventos_contato ec where ec.contato_id = "contatos"."id" and (ec.tipo in (${TIPOS_INTERACAO_SQL}) or (ec.tipo = 'atualizado' and ec.dados->>'origem' = ${ORIGEM_ATUALIZADO_INTERACAO}))), "contatos"."criado_em")`.mapWith(
   contatos.criadoEm,
 )
 
@@ -92,11 +97,6 @@ export type ResultadoInscricao = {
 
 function somar(r: ResultadoInscricao, motivo: keyof ResultadoInscricao['recusados']) {
   r.recusados[motivo] = (r.recusados[motivo] ?? 0) + 1
-}
-
-/** Reentrada (linha que já existe e não está ativa): só pela tela, ou pela reativação diária. */
-function reentradaPermitida(slug: SlugFunil, caminho: CaminhoInscricao): boolean {
-  return caminho === 'manual' || (caminho === 'cron' && slug === 'reativacao')
 }
 
 /**
@@ -144,7 +144,7 @@ export async function inscrever(
         r.jaInscritos++
         continue
       }
-      if (atual && !reentradaPermitida(regra.slug, opts.caminho)) {
+      if (atual && !reentradaPermitida(regra.slug, opts.caminho, atual.status)) {
         somar(r, 'ja_passou')
         continue
       }
@@ -240,8 +240,14 @@ async function inscritosHojeNoFunil(db: BancoCrm, funilId: number, agora: Date):
   return Number(n)
 }
 
-const semInscricaoAtiva = (funilId: number) =>
-  notExists(sql`(select 1 from funil_inscricoes fi where fi.contato_id = "contatos"."id" and fi.funil_id = ${funilId} and fi.status = 'ativo')`)
+/**
+ * Pode entrar na reativação pela rotina: sem linha no funil, ou que concluiu a sequência há
+ * mais de 180 dias. Quem está ativo ou saiu (removido à mão) nunca volta sozinho.
+ */
+const reativavel = (funilId: number, limite: Date) =>
+  notExists(
+    sql`(select 1 from funil_inscricoes fi where fi.contato_id = "contatos"."id" and fi.funil_id = ${funilId} and (fi.status <> 'concluido' or fi.saiu_em > ${limite.toISOString()}::timestamptz))`,
+  )
 const semNenhumaInscricao = (funilId: number) =>
   notExists(sql`(select 1 from funil_inscricoes fi where fi.contato_id = "contatos"."id" and fi.funil_id = ${funilId})`)
 
@@ -258,7 +264,7 @@ export async function inscreverReativacao(opts: { db?: BancoCrm; agora?: Date } 
   const candidatos = await db
     .select({ id: contatos.id })
     .from(contatos)
-    .where(and(eq(contatos.status, 'cliente'), sql`${ultimaInteracao} <= ${limiteReativacao(agora).toISOString()}::timestamptz`, semInscricaoAtiva(funil.id)))
+    .where(and(eq(contatos.status, 'cliente'), sql`${ultimaInteracao} <= ${limiteReativacao(agora).toISOString()}::timestamptz`, reativavel(funil.id, limiteReativacao(agora))))
     .orderBy(asc(ultimaInteracao), asc(contatos.id))
     .limit(vagas)
   return inscrever('reativacao', candidatos.map((c) => c.id), { db, caminho: 'cron', agora })
@@ -282,18 +288,54 @@ export async function inscreverProspeccao(opts: { db?: BancoCrm; agora?: Date } 
   return inscrever('prospeccao-fria', candidatos.map((c) => c.id), { db, caminho: 'cron', agora })
 }
 
-/** Ids dos contatos com uma tag (para inscrever um lote importado com tag). */
-export async function contatosComTag(tag: string, opts: { db?: BancoCrm; limite?: number } = {}): Promise<number[]> {
+export const MAX_CONTATOS_POR_TAG = 5000
+
+/**
+ * Ids dos contatos com uma tag (para inscrever um lote importado com tag). Acima do limite,
+ * devolve os primeiros e `excedeu: true` — a tela avisa, nunca corta em silêncio.
+ */
+export async function contatosComTag(tag: string, opts: { db?: BancoCrm; limite?: number } = {}): Promise<{ ids: number[]; excedeu: boolean }> {
   const db = opts.db ?? bancoPadrao()
   const t = tag.trim().toLowerCase()
-  if (!t) return []
+  if (!t) return { ids: [], excedeu: false }
+  const limite = opts.limite ?? MAX_CONTATOS_POR_TAG
   const linhas = await db
     .select({ id: contatos.id })
     .from(contatos)
     .where(and(sql`${contatos.tags} @> ${JSON.stringify([t])}::jsonb`, ne(contatos.status, 'descadastrado')))
     .orderBy(asc(contatos.id))
-    .limit(opts.limite ?? 5000)
-  return linhas.map((l) => l.id)
+    .limit(limite + 1)
+  return { ids: linhas.slice(0, limite).map((l) => l.id), excedeu: linhas.length > limite }
+}
+
+/**
+ * Etapa diária: inscrições ativas há mais que a duração da sequência (soma das esperas + 3
+ * dias de folga) viram `concluido` e saem da lista do Brevo. A nutrição com o blog não
+ * conclui: a lista dela recebe as campanhas dos artigos novos enquanto a pessoa estiver nela.
+ */
+export async function concluirSequencias(opts: { db?: BancoCrm; agora?: Date } = {}): Promise<number> {
+  const db = opts.db ?? bancoPadrao()
+  const agora = opts.agora ?? new Date()
+  const lista = await garantirFunis({ db })
+  let total = 0
+  for (const f of lista) {
+    if (!ehSlugFunil(f.slug)) continue
+    const dias = duracaoSequenciaDias(f.slug)
+    if (dias === null) continue
+    const limite = new Date(agora.getTime() - dias * 86_400_000)
+    const concluidas = await db
+      .update(funilInscricoes)
+      .set({ status: 'concluido', saiuEm: agora, motivoSaida: 'sequência concluída', listaSync: 'pendente', listaSyncErro: null })
+      .where(and(eq(funilInscricoes.funilId, f.id), eq(funilInscricoes.status, 'ativo'), sql`${funilInscricoes.entrouEm} <= ${limite.toISOString()}::timestamptz`))
+      .returning({ contatoId: funilInscricoes.contatoId })
+    if (concluidas.length > 0) {
+      await db.insert(eventosContato).values(
+        concluidas.map((c) => ({ contatoId: c.contatoId, tipo: 'saiu_funil' as const, dados: { funil: f.slug, nome: f.nome, motivo: 'sequência concluída', concluido: true }, em: agora })),
+      )
+    }
+    total += concluidas.length
+  }
+  return total
 }
 
 /** Ids dos contatos por email (normalizado), para a inscrição manual por lista de emails. */
@@ -326,7 +368,7 @@ const PENDENTE_OU_ERRO = or(eq(funilInscricoes.listaSync, 'pendente'), eq(funilI
  * no Brevo, com `brevo_id`) e remove as encerradas. Funil sem lista conectada fica pendente.
  */
 export async function sincronizarInscricoes(
-  opts: { db?: BancoCrm; cliente?: ClienteBrevo; limite?: number; tamanhoLote?: number } = {},
+  opts: { db?: BancoCrm; cliente?: ClienteBrevo; limite?: number; tamanhoLote?: number; contatoIds?: readonly number[] } = {},
 ): Promise<ResultadoSyncInscricoes> {
   const cliente = opts.cliente ?? criarClienteBrevo()
   if (!cliente.conectado) return { conectado: false, mensagem: MENSAGEM_NAO_CONECTADO }
@@ -353,8 +395,20 @@ export async function sincronizarInscricoes(
     .from(funilInscricoes)
     .innerJoin(funis, eq(funis.id, funilInscricoes.funilId))
     .innerJoin(contatos, eq(contatos.id, funilInscricoes.contatoId))
-    .where(and(PENDENTE_OU_ERRO, isNotNull(funis.brevoListaId)))
-    .orderBy(asc(funilInscricoes.id))
+    .where(
+      and(
+        PENDENTE_OU_ERRO,
+        isNotNull(funis.brevoListaId),
+        opts.contatoIds ? inArray(funilInscricoes.contatoId, opts.contatoIds.length > 0 ? [...opts.contatoIds] : [-1]) : undefined,
+      ),
+    )
+    // Por último o que já falhou (inscrição com erro, contato com erro de sincronização), para
+    // que falhas repetidas não tomem o teto da execução.
+    .orderBy(
+      sql`(${funilInscricoes.listaSync} = 'erro')`,
+      sql`(${contatos.syncStatus} = 'erro')`,
+      asc(funilInscricoes.id),
+    )
     .limit(limite)
 
   const marcar = (ids: number[], listaSync: 'sincronizado' | 'erro', erro: string | null = null) =>
@@ -603,3 +657,31 @@ export async function membrosDoFunil(
   return { itens, total: Number(n) }
 }
 
+
+// ---------------------------------------------------------------------------
+// Boas-vindas na hora (depois da resposta do webhook do site)
+// ---------------------------------------------------------------------------
+
+export type ResultadoBoasVindasAgora = 'nao_conectado' | 'sem_lista' | 'sem_inscricao' | 'pendente' | 'adicionado'
+
+/**
+ * Leva um lead do site à lista de boas-vindas logo depois do formulário (via `after()` na
+ * rota), em vez de esperar a rotina diária: envia o contato ao Brevo e depois a inscrição.
+ * Use um cliente com timeout curto. Qualquer falha deixa tudo pendente para a rotina.
+ */
+export async function enviarBoasVindasAgora(contatoId: number, opts: { db?: BancoCrm; cliente: ClienteBrevo }): Promise<ResultadoBoasVindasAgora> {
+  const { cliente } = opts
+  if (!cliente.conectado) return 'nao_conectado'
+  const db = opts.db ?? bancoPadrao()
+  const funil = await obterFunil('boas-vindas', { db })
+  if (!funil.brevoListaId) return 'sem_lista'
+  const [i] = await db
+    .select({ status: funilInscricoes.status, listaSync: funilInscricoes.listaSync })
+    .from(funilInscricoes)
+    .where(and(eq(funilInscricoes.funilId, funil.id), eq(funilInscricoes.contatoId, contatoId)))
+  if (!i || i.status !== 'ativo' || i.listaSync === 'sincronizado') return 'sem_inscricao'
+  const c = await sincronizarPendentes({ db, cliente, ids: [contatoId], limite: 1, registrar: false })
+  if (c.conectado && c.interrompido) return 'pendente'
+  const r = await sincronizarInscricoes({ db, cliente, contatoIds: [contatoId], limite: 5 })
+  return r.conectado && r.adicionados > 0 ? 'adicionado' : 'pendente'
+}

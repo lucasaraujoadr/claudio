@@ -22,6 +22,7 @@ export function lerEmails(texto: string): { emails: string[]; invalidos: number;
 export function lerChecklist(form: FormData): ChecklistLgpd {
   return {
     avaliacaoLegitimoInteresse: form.get('avaliacao') === '1',
+    fonteDocumentada: form.get('fonte') === '1',
     descadastroEmTodoEmail: form.get('descadastro') === '1',
     volumeBaixoAquecido: form.get('volume') === '1',
   }

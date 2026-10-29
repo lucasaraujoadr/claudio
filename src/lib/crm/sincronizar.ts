@@ -51,6 +51,8 @@ export type OpcoesSincronizacao = {
   agora?: Date
   /** Grava o resultado em `sincronizacoes` (padrão: sim). */
   registrar?: boolean
+  /** Só estes contatos (envio imediato de um lead do site, E9). */
+  ids?: readonly number[]
 }
 
 /** Erros que valem para todos os contatos: não adianta continuar. */
@@ -165,31 +167,46 @@ export async function sincronizarPendentes(opts: OpcoesSincronizacao = {}): Prom
   let ultimoId = 0
   let processados = 0
 
-  while (processados < limite && !interrompido) {
-    const lote = await db
-      .select()
-      .from(contatos)
-      .where(and(AINDA_PENDENTE, gt(contatos.id, ultimoId)))
-      .orderBy(asc(contatos.id))
-      .limit(Math.min(tamanhoLote, limite - processados))
-    if (lote.length === 0) break
-    ultimoId = lote[lote.length - 1].id
-    processados += lote.length
+  // `pendente` antes de `erro`: contatos que falham sempre (ids baixos) não podem tomar o
+  // teto da execução e deixar os novos para trás. Cada fase tem o seu cursor.
+  const tentados = new Set<number>()
+  for (const fase of ['pendente', 'erro'] as const) {
+    ultimoId = 0
+    while (processados < limite && !interrompido) {
+      const lote = await db
+        .select()
+        .from(contatos)
+        .where(
+          and(
+            eq(contatos.syncStatus, fase),
+            gt(contatos.id, ultimoId),
+            opts.ids ? inArray(contatos.id, opts.ids.length > 0 ? [...opts.ids] : [-1]) : undefined,
+          ),
+        )
+        .orderBy(asc(contatos.id))
+        .limit(Math.min(tamanhoLote, limite - processados))
+      if (lote.length === 0) break
+      ultimoId = lote[lote.length - 1].id
+      // Quem falhou na fase `pendente` desta mesma execução não é tentado de novo.
+      const novos = lote.filter((c) => !tentados.has(c.id))
+      for (const c of novos) tentados.add(c.id)
+      processados += novos.length
 
-    for (let i = 0; i < lote.length && !interrompido; i += paralelo) {
-      const grupo = lote.slice(i, i + paralelo)
-      const resultados = await Promise.all(grupo.map((c) => enviarContato(cliente, c)))
-      for (let j = 0; j < grupo.length; j++) {
-        const c = grupo[j]
-        const r = resultados[j]
-        if (r.ok) {
-          await marcar(db, c, { syncStatus: 'sincronizado', syncErro: null, brevoId: r.brevoId })
-          enviados++
-        } else if (erroGeral(r.erro)) {
-          interrompido ??= r.erro.mensagem // o contato continua como estava, para a próxima rodada
-        } else {
-          await marcar(db, c, { syncStatus: 'erro', syncErro: r.erro.mensagem.slice(0, 200) })
-          erros++
+      for (let i = 0; i < novos.length && !interrompido; i += paralelo) {
+        const grupo = novos.slice(i, i + paralelo)
+        const resultados = await Promise.all(grupo.map((c) => enviarContato(cliente, c)))
+        for (let j = 0; j < grupo.length; j++) {
+          const c = grupo[j]
+          const r = resultados[j]
+          if (r.ok) {
+            await marcar(db, c, { syncStatus: 'sincronizado', syncErro: null, brevoId: r.brevoId })
+            enviados++
+          } else if (erroGeral(r.erro)) {
+            interrompido ??= r.erro.mensagem // o contato continua como estava, para a próxima rodada
+          } else {
+            await marcar(db, c, { syncStatus: 'erro', syncErro: r.erro.mensagem.slice(0, 200) })
+            erros++
+          }
         }
       }
     }

@@ -18,8 +18,22 @@ export function ehSlugFunil(v: unknown): v is SlugFunil {
 /** Caminho da inscrição: formulário do site, tela (manual ou por tag de importação) ou rotina diária. */
 export type CaminhoInscricao = 'site' | 'manual' | 'cron'
 
-/** Dias sem nenhum evento na linha do tempo para um cliente entrar na reativação. */
+/** Dias sem interação real (ver `EVENTOS_INTERACAO`) para um cliente entrar na reativação. */
 export const DIAS_SEM_INTERACAO_REATIVACAO = 180
+
+/**
+ * O que conta como interação real para o relógio da reativação. Ficam de fora os eventos
+ * automáticos: `enviado`, `aberto` (o Apple Mail Privacy Protection "abre" sem ninguém ler),
+ * `importado`, `entrou_funil`/`saiu_funil`, `bounce`, `spam`, `descadastrou` e `atualizado`
+ * que não seja manual (sincronização, planilha, Brevo).
+ */
+export const EVENTOS_INTERACAO = ['formulario', 'clicado', 'criado', 'mudou_status'] as const
+/** `atualizado` só conta quando a origem é a edição manual na tela. */
+export const ORIGEM_ATUALIZADO_INTERACAO = 'manual'
+
+/** Explicação mostrada na tela. */
+export const DEFINICAO_SEM_INTERACAO =
+  'Sem interação = nenhum formulário, clique em email, mudança de status ou edição manual (nem a criação do contato) nos últimos 180 dias. Envios e aberturas de email, importações e sincronizações não contam.'
 /** Máximo de inscrições na reativação por execução diária. */
 export const MAX_REATIVACAO_POR_DIA = 50
 /** Teto diário da prospecção fria: o usuário escolhe entre 1 e este valor. */
@@ -149,16 +163,27 @@ export function vagasHoje(teto: number | null, inscritosHoje: number): number {
 
 export type ChecklistLgpd = {
   avaliacaoLegitimoInteresse: boolean
+  fonteDocumentada: boolean
   descadastroEmTodoEmail: boolean
   volumeBaixoAquecido: boolean
 }
 
-/** Valida o pedido de ligar a prospecção fria: os três itens marcados e teto entre 1 e o máximo. */
+/**
+ * Reentrada de quem já tem linha no funil (não ativa). Pela tela, sempre (decisão do
+ * usuário). Pela rotina, só na reativação e só de quem **concluiu** a sequência — nunca de
+ * quem saiu (removido à mão, descadastrado). O site e a prospecção nunca reinscrevem.
+ */
+export function reentradaPermitida(slug: SlugFunil, caminho: CaminhoInscricao, statusAtual: 'concluido' | 'saiu'): boolean {
+  if (caminho === 'manual') return true
+  return caminho === 'cron' && slug === 'reativacao' && statusAtual === 'concluido'
+}
+
+/** Valida o pedido de ligar a prospecção fria: os quatro itens marcados e teto entre 1 e o máximo. */
 export function validarLigarProspeccao(
   checklist: ChecklistLgpd,
   teto: number | null,
 ): { ok: true; teto: number } | { ok: false; motivo: 'checklist' | 'teto' } {
-  if (!checklist.avaliacaoLegitimoInteresse || !checklist.descadastroEmTodoEmail || !checklist.volumeBaixoAquecido) {
+  if (!checklist.avaliacaoLegitimoInteresse || !checklist.fonteDocumentada || !checklist.descadastroEmTodoEmail || !checklist.volumeBaixoAquecido) {
     return { ok: false, motivo: 'checklist' }
   }
   if (teto === null || !Number.isInteger(teto) || teto < 1 || teto > TETO_MAXIMO_PROSPECCAO) return { ok: false, motivo: 'teto' }

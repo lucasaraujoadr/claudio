@@ -14,12 +14,16 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/crm/fun
     const form = await request.formData()
     const texto = typeof form.get('emails') === 'string' ? String(form.get('emails')) : ''
     const tag = typeof form.get('tag') === 'string' ? String(form.get('tag')).trim() : ''
-    const { emails, invalidos } = lerEmails(texto.slice(0, 200_000))
+    const { emails, invalidos, excedeu } = lerEmails(texto.slice(0, 200_000))
     if (emails.length === 0 && !tag) return voltar('aviso=nada-para-inscrever')
     const porEmail = await contatosPorEmail(emails)
-    const porTag = tag ? await contatosComTag(tag) : []
-    const r = await inscrever(slug, [...porEmail.ids, ...porTag], { caminho: 'manual' })
-    return voltar(paramsResultadoInscricao(r, porEmail.naoEncontrados + invalidos).toString())
+    const porTag = tag ? await contatosComTag(tag) : { ids: [], excedeu: false }
+    const r = await inscrever(slug, [...porEmail.ids, ...porTag.ids], { caminho: 'manual' })
+    const q = paramsResultadoInscricao(r, porEmail.naoEncontrados + invalidos)
+    // Acima do limite não cortamos em silêncio: a tela diz que só os primeiros foram tratados.
+    if (excedeu) q.set('excedeu_emails', '1')
+    if (porTag.excedeu) q.set('excedeu_tag', '1')
+    return voltar(q.toString())
   } catch (e) {
     console.error('crm: inscrição manual falhou:', e instanceof Error ? e.name : 'erro')
     return voltar('aviso=erro')

@@ -61,6 +61,7 @@ Ficam na Vercel (Settings > Environment Variables). Nunca coloque os valores no 
 | `BREVO_API_KEY` | Chave de API do Brevo (Brevo → SMTP e API → Chaves de API). Opcional: sem ela o CRM funciona, os contatos ficam "pendente" e a tela **CRM → Integração** diz "Brevo não conectado". |
 | `BREVO_WEBHOOK_TOKEN` | Token do webhook de eventos do Brevo (`/api/webhooks/brevo?token=…`). Já configurado. Sem ele o webhook recusa tudo. |
 | `SITE_WEBHOOK_TOKEN` | Token do webhook do formulário do site (`/api/webhooks/site?token=…`). Já configurado. Sem ele o webhook recusa tudo. |
+| `WHATSAPP_LINK` | Link do WhatsApp do escritório (ex.: `https://wa.me/55…`). Opcional: entra no lugar de `[link do WhatsApp]` nos emails prontos dos funis. |
 | `BREVO_REMETENTE_EMAIL` / `BREVO_REMETENTE_NOME` | Remetente (já validado no Brevo) dos rascunhos de campanha da nutrição com o blog. Opcional: sem ele, a tela mostra o texto para copiar. |
 
 ## Brevo e webhooks (CRM)
@@ -75,15 +76,16 @@ Ficam na Vercel (Settings > Environment Variables). Nunca coloque os valores no 
 ## Funis (CRM → Funis)
 
 - Quatro funis, cada um ligado a uma lista do Brevo; a sequência de emails roda numa **automação do Brevo** disparada por "contato adicionado à lista" (automações não podem ser criadas pela API — a tela mostra o passo a passo e os três emails prontos de cada funil, com botões de copiar).
-  - **Boas-vindas** (ligado): entra automaticamente o lead que preenche o formulário do site.
+  - **Boas-vindas** (ligado): entra automaticamente o lead que preenche o formulário do site. Com chave e lista conectada, logo depois da resposta ao Elementor (`after()`) o contato é enviado ao Brevo e posto na lista (timeout de 5 s por chamada); se falhar, fica pendente para a rotina diária.
   - **Nutrição com o blog** (ligado): leads e clientes com base legal de consentimento ou contrato, inscritos pela tela (emails colados ou uma tag de importação). Em **Temas**, um tema publicado oferece "Criar rascunho de campanha no Brevo": cria só um **rascunho** para a lista deste funil, com título, resumo e link do artigo — o painel **nunca envia**. Sem chave, sem lista ou sem remetente, a tela mostra o texto para copiar.
-  - **Reativação** (ligado): clientes sem nenhum evento na linha do tempo há 180 dias, inscritos pela rotina diária, no máximo 50 por dia.
-  - **Prospecção fria** (**desligado por padrão**): só leads com base legal de legítimo interesse. Para ligar, a tela exige marcar o checklist de LGPD (avaliação de legítimo interesse documentada, descadastro em todo email, volume baixo e aquecido) e um teto diário; a data da confirmação fica gravada.
+  - **Reativação** (ligado): clientes **sem interação real** há 180 dias, inscritos pela rotina diária, no máximo 50 por dia. Conta como interação: formulário, clique em email, mudança de status, edição manual e a criação do contato. Não contam: envio e abertura de email (o Apple Mail "abre" sozinho), importação, sincronização e entrada/saída de funil. A rotina reinscreve só quem **concluiu** a sequência há mais de 180 dias — nunca quem foi removido à mão.
+  - **Prospecção fria** (**desligado por padrão**): só leads com base legal de legítimo interesse. Para ligar, a tela exige marcar o checklist de LGPD (avaliação de legítimo interesse documentada, fonte dos contatos documentada, descadastro em todo email, volume baixo e aquecido) e um teto diário; a data da confirmação fica gravada. Todo email desta série termina com um bloco fixo: a base legal, a fonte do contato (`[fonte do contato]`, a trocar), a oferta de explicar a fonte, apagar o dado ou parar de enviar, e o descadastro.
+- **Concluído:** alguns dias depois do último email (soma das esperas + 3 dias), a rotina diária marca a inscrição como concluída e tira o contato da lista. A nutrição com o blog não conclui: a lista dela recebe as campanhas dos artigos novos.
 - Contato **descadastrado** nunca entra em funil e sai de todos ao se descadastrar (webhook do Brevo, mudança manual de status ou, por segurança, na rotina diária).
 - Entrar e sair ficam na linha do tempo do contato (`entrou_funil`, `saiu_funil`). Entrar adiciona à lista do funil (sempre por `adicionarContatosALista`, que recusa descadastrados); sair remove. Sem `BREVO_API_KEY` ou sem lista conectada, a inscrição fica guardada como **pendente** e vai para o Brevo depois — nunca é erro. O contato precisa existir no Brevo antes de entrar na lista: quem ainda não foi sincronizado espera a próxima rodada.
 - "Conectar ao Brevo", em cada funil: cria a lista "Painel OG — <funil>" na pasta "Painel OG — Funis" (a API exige pasta) ou usa o número de uma lista existente.
 - Rotina diária (`/api/cron/diario`, fonte `funis` em `sincronizacoes`): garante os quatro funis, tira descadastrados, inscreve a reativação e a prospecção fria (se ligada, no teto) e, com chave, envia os contatos pendentes e atualiza as listas. Uma falha aqui não afeta o Search Console nem o GA4. O botão "Atualizar listas do Brevo" faz a mesma sincronização na hora.
-- Nos emails, troque `[link do WhatsApp]` pelo link real antes de ativar a automação.
+- Marcadores nos emails: `[link do WhatsApp]` é trocado automaticamente quando `WHATSAPP_LINK` está definido; `[fonte do contato]` (prospecção fria) é trocado à mão. A tela do funil mostra o aviso "Antes de ativar a automação" enquanto sobrar algum, e os destaca nos textos. Confira o link de descadastro `{{ unsubscribe }}` no editor do Brevo e envie um teste antes de ativar.
 
 ## Conta de serviço do Google (Search Console)
 

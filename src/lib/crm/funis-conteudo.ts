@@ -9,7 +9,8 @@ import type { SlugFunil } from './funis-regras'
  * decisão inventados; uma chamada clara (mandar os documentos do processo ou marcar uma
  * conversa pelo WhatsApp); linha de descadastro em todo email.
  *
- * Marcadores que o usuário troca no Brevo antes de ativar: `[link do WhatsApp]`. O
+ * Marcadores que o usuário resolve antes de ativar: `[link do WhatsApp]` (trocado na hora de
+ * mostrar quando `WHATSAPP_LINK` existe) e `[fonte do contato]` (prospecção fria). O
  * `{{ unsubscribe }}` é o marcador de descadastro do editor do Brevo.
  */
 
@@ -44,10 +45,10 @@ export const DEFINICOES_FUNIS: readonly DefinicaoFunil[] = [
   {
     slug: 'reativacao',
     nome: 'Reativação de clientes',
-    descricao: 'Clientes sem nenhuma interação registrada há 180 dias.',
+    descricao: 'Clientes sem interação real (formulário, clique, mudança de status ou edição manual) há 180 dias.',
     ativoInicial: true,
     exigeBaseLegal: null,
-    quemEntra: 'Clientes sem evento na linha do tempo há 180 dias (rotina diária, no máximo 50 por dia), ou escolhidos na tela.',
+    quemEntra: 'Clientes sem interação real há 180 dias (rotina diária, no máximo 50 por dia), ou escolhidos na tela. Envios, aberturas, importações e sincronizações não contam como interação.',
   },
   {
     slug: 'prospeccao-fria',
@@ -79,14 +80,26 @@ export const LINHA_DESCADASTRO =
 const ASSINATURA = `Atenciosamente,
 Oliveira Guimarães — cálculos e perícias`
 
-function email(esperarDias: number, assunto: string, preCabecalho: string, paragrafos: string[]): EmailFunil {
+/**
+ * Bloco fixo de LGPD no fim de todo email de prospecção fria: a base legal, a oferta de
+ * explicar a fonte, apagar o dado ou parar de enviar, e o descadastro.
+ */
+export const BLOCO_LGPD_PROSPECCAO = [
+  'Por que você recebeu este email: usamos o seu contato profissional, obtido em [fonte do contato], com base no legítimo interesse previsto na LGPD, para apresentar serviços ligados à advocacia.',
+  'Se preferir, responda a este email e explicamos de onde veio o dado, apagamos o seu cadastro ou paramos de enviar.',
+  'Para não receber mais nenhum email: {{ unsubscribe }}',
+].join('\n')
+
+function email(esperarDias: number, assunto: string, preCabecalho: string, paragrafos: string[], rodape = LINHA_DESCADASTRO): EmailFunil {
   return {
     esperarDias,
     assunto,
     preCabecalho,
-    corpo: [...paragrafos, ASSINATURA, LINHA_DESCADASTRO].join('\n\n'),
+    corpo: [...paragrafos, ASSINATURA, rodape].join('\n\n'),
   }
 }
+const frio = (esperarDias: number, assunto: string, preCabecalho: string, paragrafos: string[]) =>
+  email(esperarDias, assunto, preCabecalho, paragrafos, BLOCO_LGPD_PROSPECCAO)
 
 export const EMAILS_FUNIS: Record<SlugFunil, readonly EmailFunil[]> = {
   'boas-vindas': [
@@ -97,11 +110,11 @@ export const EMAILS_FUNIS: Record<SlugFunil, readonly EmailFunil[]> = {
       'Com esse material, dizemos com clareza o que é possível calcular, o que falta e qual o prazo do trabalho, antes de qualquer compromisso.',
       'Para enviar os documentos, basta responder a este email. Se preferir conversar antes, fale conosco pelo WhatsApp: [link do WhatsApp].',
     ]),
-    email(3, 'O que o cálculo pode (e não pode) fazer pelo seu processo', 'Um laudo útil é aquele que o juiz consegue conferir.', [
+    email(3, 'O que o cálculo pode (e não pode) fazer pelo seu processo', 'Um cálculo ou parecer técnico útil é aquele que o juízo consegue conferir.', [
       'Prezado(a) Dr(a).,',
       'Um cálculo judicial bem feito não muda o direito discutido no processo: ele mostra, de forma verificável, quanto aquele direito representa segundo os critérios da decisão.',
       'Por isso o nosso trabalho segue três cuidados: cada valor tem a sua origem indicada nos autos; cada critério (índice, juros, período) é o fixado na decisão ou está explicitado quando há divergência; e a memória de cálculo permite que o juízo e a parte contrária conferam linha a linha.',
-      'Não prometemos resultado do processo. O que entregamos é um trabalho técnico que sustenta a sua argumentação e resiste à impugnação.',
+      'Não prometemos resultado do processo. O que entregamos é um trabalho técnico feito para ser conferido e debatido tecnicamente.',
       'Se houver um caso em andamento, responda a este email com os documentos ou chame no WhatsApp: [link do WhatsApp].',
     ]),
     email(7, 'Ainda podemos ajudar no seu caso?', 'Se o momento não é agora, fica o canal aberto.', [
@@ -115,7 +128,7 @@ export const EMAILS_FUNIS: Record<SlugFunil, readonly EmailFunil[]> = {
     email(0, 'Você vai receber os nossos artigos técnicos', 'Conteúdo de perícia contábil para quem advoga.', [
       'Prezado(a) Dr(a).,',
       'A partir de agora, enviaremos os artigos que publicamos no blog sobre cálculos judiciais e perícia contábil. São textos curtos, escritos para quem advoga, com foco no que costuma gerar dúvida na hora de conferir ou impugnar um cálculo.',
-      'Os envios são esporádicos: só quando há artigo novo.',
+      'Nos próximos dias enviaremos dois textos curtos de apresentação; depois disso, só escrevemos quando houver artigo novo.',
       'Se tiver um tema que gostaria de ver tratado, ou um caso em que um cálculo precisa de revisão, responda a este email. Também atendemos pelo WhatsApp: [link do WhatsApp].',
     ]),
     email(5, 'Como conferir um cálculo da parte contrária', 'Um roteiro de conferência antes de concordar ou impugnar.', [
@@ -149,23 +162,62 @@ export const EMAILS_FUNIS: Record<SlugFunil, readonly EmailFunil[]> = {
     ]),
   ],
   'prospeccao-fria': [
-    email(0, 'Cálculos e perícia contábil para escritórios de advocacia', 'Apresentação breve, sem compromisso.', [
+    frio(0, 'Cálculos e perícia contábil para escritórios de advocacia', 'Apresentação breve, sem compromisso.', [
       'Prezado(a) Dr(a).,',
-      'Somos a Oliveira Guimarães, um escritório de cálculos e perícias que atende advogados em todo o Brasil. Escrevemos porque o seu escritório atua em áreas em que cálculos judiciais e perícia contábil aparecem com frequência.',
+      'Somos a Oliveira Guimarães, um escritório de cálculos e perícias que atende advogados em todo o Brasil. Cálculos judiciais e perícia contábil aparecem em muitas áreas da advocacia, e por isso escrevemos para nos apresentar.',
       'Fazemos cálculos de liquidação, revisão de cálculos da parte contrária, pareceres técnicos e assistência técnica em perícias contábeis, com memória de cálculo que o juízo consegue conferir. Não prometemos resultado de processo; entregamos trabalho técnico verificável.',
       'Se fizer sentido, responda a este email com os documentos de um caso para uma análise inicial, ou fale conosco pelo WhatsApp: [link do WhatsApp].',
-      'Recebeu este email porque o seu contato profissional é público e relacionado à advocacia. Se não quiser receber outros, use o link de descadastro abaixo e não enviaremos mais nada.',
     ]),
-    email(5, 'Um roteiro para conferir cálculos judiciais', 'Quatro perguntas antes de concordar ou impugnar.', [
+    frio(5, 'Um roteiro para conferir cálculos judiciais', 'Quatro perguntas antes de concordar ou impugnar.', [
       'Prezado(a) Dr(a).,',
       'Deixamos um roteiro curto que usamos ao conferir um cálculo: os critérios são os da decisão? Cada valor de partida tem origem nos autos? A memória permite refazer as contas? Alguma parcela concedida ficou de fora, ou entrou parcela não concedida?',
-      'Se algum caso do seu escritório levantar essas dúvidas, podemos olhar os documentos. Responda a este email ou chame no WhatsApp: [link do WhatsApp].',
+      'Se algum caso levantar essas dúvidas, podemos olhar os documentos. Responda a este email ou chame no WhatsApp: [link do WhatsApp].',
     ]),
-    email(10, 'Encerrando o contato', 'Não enviaremos outros emails desta série.', [
+    frio(10, 'Encerrando o contato', 'Não enviaremos outros emails desta série.', [
       'Prezado(a) Dr(a).,',
       'Este é o último email desta apresentação. Se em algum momento precisar de cálculos judiciais ou de assistência técnica em perícia contábil, basta responder a este email ou chamar no WhatsApp: [link do WhatsApp].',
     ]),
   ],
+}
+
+/** Folga, em dias, depois do último email antes de marcar a sequência como concluída. */
+export const FOLGA_CONCLUSAO_DIAS = 3
+
+/**
+ * Dias até a inscrição ser marcada `concluido` (soma das esperas + folga). `null` = não
+ * conclui (a nutrição com o blog continua recebendo as campanhas dos artigos novos).
+ */
+export function duracaoSequenciaDias(slug: SlugFunil): number | null {
+  if (slug === 'nutricao-blog') return null
+  return EMAILS_FUNIS[slug].reduce((s, e) => s + e.esperarDias, 0) + FOLGA_CONCLUSAO_DIAS
+}
+
+export const MARCADOR_WHATSAPP = '[link do WhatsApp]'
+const MARCADOR = /\[(link do WhatsApp|fonte do contato)\]/g
+
+/** Troca os marcadores resolvidos pelo ambiente (hoje: `WHATSAPP_LINK`). */
+export function aplicarMarcadores(texto: string, valores: { whatsapp?: string | null }): string {
+  const w = valores.whatsapp?.trim()
+  return w ? texto.split(MARCADOR_WHATSAPP).join(w) : texto
+}
+
+/** Marcadores ainda não resolvidos num conjunto de textos, sem repetição, na ordem em que aparecem. */
+export function marcadoresPendentes(textos: readonly string[]): string[] {
+  const achados = new Set<string>()
+  for (const t of textos) for (const m of t.matchAll(MARCADOR)) achados.add(m[0])
+  return [...achados]
+}
+
+/** Link do WhatsApp configurado (`WHATSAPP_LINK`), só se for http(s). */
+export function linkWhatsapp(env: Record<string, string | undefined> = process.env): string | null {
+  const v = env.WHATSAPP_LINK?.trim()
+  if (!v) return null
+  try {
+    const u = new URL(v)
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.toString() : null
+  } catch {
+    return null
+  }
 }
 
 /** Nome da lista no Brevo para um funil (criada por "Conectar ao Brevo"). */
@@ -188,11 +240,11 @@ export function passosAutomacao(slug: SlugFunil, nomeLista: string): string[] {
     passos.push(`Enviar email ${i + 1}: assunto "${e.assunto}", pré-cabeçalho e corpo copiados do email ${i + 1} abaixo.`)
   })
   passos.push(
-    'Em cada email, troque [link do WhatsApp] pelo link real e confira se o rodapé tem o link de descadastro do Brevo.',
+    'Em cada email, confira que não sobrou marcador entre colchetes (como [link do WhatsApp]) e que o link de descadastro {{ unsubscribe }} funciona no editor do Brevo; envie um email de teste para você antes de ativar.',
     slug === 'reativacao'
-      ? 'Nas configurações da automação, permita que o contato entre de novo (o CRM só reinscreve um cliente depois de 180 dias sem interação).'
+      ? 'Nas configurações da automação, permita que o contato entre de novo: o CRM só reinscreve um cliente que concluiu a sequência há mais de 180 dias e continua sem interação (nunca quem foi removido à mão).'
       : 'Nas configurações da automação, não permita que o contato entre de novo: o CRM já decide quem reentra.',
-    'Para que quem sai do funil não receba os emails seguintes, ponha antes de cada envio a condição "o contato está na lista" (o CRM remove da lista quem sai).',
+    'Para que quem sai do funil não receba os emails seguintes, ponha antes de cada envio a condição "o contato está na lista" (o CRM remove da lista quem sai e, alguns dias depois do último email, quem concluiu a sequência).',
     'Ative a automação.',
   )
   return passos

@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import { bancoPadrao } from '@/lib/crm/banco'
 import { mudarStatus } from '@/lib/crm/contatos'
 import { lerId, lerStatus } from '@/lib/crm/formulario'
 import { sairDeTodosOsFunis } from '@/lib/crm/funis'
@@ -12,10 +13,14 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/crm/con
   try {
     const para = lerStatus(await request.formData())
     if (!para) return voltar('erro')
-    const r = await mudarStatus(id, para, { origem: 'manual' })
+    // Mudança de status e saída dos funis na mesma transação: descadastrado nunca fica
+    // inscrito, nem por um instante (a rotina diária também confere, por segurança).
+    const r = await bancoPadrao().transaction(async (tx) => {
+      const m = await mudarStatus(id, para, { db: tx, origem: 'manual' })
+      if (m.ok && m.para === 'descadastrado' && m.de !== m.para) await sairDeTodosOsFunis(id, { db: tx, motivo: 'descadastrado (manual)' })
+      return m
+    })
     if (!r.ok) return voltar(r.motivo === 'descadastrado' ? 'bloqueado' : 'erro')
-    // Descadastrado sai de todos os funis (a rotina diária também confere, por segurança).
-    if (r.para === 'descadastrado') await sairDeTodosOsFunis(id, { motivo: 'descadastrado (manual)' })
     return voltar(r.de === r.para ? 'sem-mudanca' : 'status')
   } catch (e) {
     console.error('crm: mudança de status falhou:', e instanceof Error ? e.name : 'erro')

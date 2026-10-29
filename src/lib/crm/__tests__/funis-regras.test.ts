@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  reentradaPermitida,
   inicioDoDiaBrasilia,
   MAX_REATIVACAO_POR_DIA,
   podeEntrar,
@@ -125,10 +126,18 @@ describe('auxiliares', () => {
     expect(vagasHoje(5, 3)).toBe(2)
     expect(vagasHoje(5, 9)).toBe(0)
   })
-  it('ligar a prospecção exige os três itens e teto entre 1 e 200', () => {
-    const tudo = { avaliacaoLegitimoInteresse: true, descadastroEmTodoEmail: true, volumeBaixoAquecido: true }
+  it('reentrada: tela sempre; rotina só na reativação e só de quem concluiu, nunca de quem saiu', () => {
+    expect(reentradaPermitida('boas-vindas', 'manual', 'saiu')).toBe(true)
+    expect(reentradaPermitida('reativacao', 'cron', 'concluido')).toBe(true)
+    expect(reentradaPermitida('reativacao', 'cron', 'saiu')).toBe(false)
+    expect(reentradaPermitida('prospeccao-fria', 'cron', 'concluido')).toBe(false)
+    expect(reentradaPermitida('boas-vindas', 'site', 'concluido')).toBe(false)
+  })
+  it('ligar a prospecção exige os quatro itens e teto entre 1 e 200', () => {
+    const tudo = { avaliacaoLegitimoInteresse: true, fonteDocumentada: true, descadastroEmTodoEmail: true, volumeBaixoAquecido: true }
     expect(validarLigarProspeccao(tudo, 20)).toEqual({ ok: true, teto: 20 })
     expect(validarLigarProspeccao({ ...tudo, volumeBaixoAquecido: false }, 20)).toEqual({ ok: false, motivo: 'checklist' })
+    expect(validarLigarProspeccao({ ...tudo, fonteDocumentada: false }, 20)).toEqual({ ok: false, motivo: 'checklist' })
     expect(validarLigarProspeccao(tudo, null)).toEqual({ ok: false, motivo: 'teto' })
     expect(validarLigarProspeccao(tudo, 0)).toEqual({ ok: false, motivo: 'teto' })
     expect(validarLigarProspeccao(tudo, 201)).toEqual({ ok: false, motivo: 'teto' })

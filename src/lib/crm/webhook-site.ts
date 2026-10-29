@@ -175,6 +175,11 @@ export type OpcoesWebhookSite = {
   token?: string | null
   limitador?: LimitadorPorIp
   agora?: Date
+  /**
+   * Chamado com o id do contato depois de gravar e inscrever (E9: a rota agenda com
+   * `after()` o envio imediato às boas-vindas). Não deve lançar nem demorar.
+   */
+  depoisDeGravar?: (contatoId: number) => void
 }
 
 export async function tratarWebhookSite(request: Request, opts: OpcoesWebhookSite = {}): Promise<Response> {
@@ -214,7 +219,8 @@ export async function tratarWebhookSite(request: Request, opts: OpcoesWebhookSit
   const contatoId = r.contatoId!
   const mensagem = form.mensagem?.slice(0, 5000)
   await registrarEvento(contatoId, 'formulario', { origem: 'site', ...(mensagem ? { mensagem } : {}) }, { db, em: agora })
-  // Funil de boas-vindas (E9). O gancho não faz nada hoje e precisa ignorar descadastrados.
+  // Funil de boas-vindas (E9): o gancho ignora descadastrados e quem já passou pelo funil.
   await inscreverBoasVindasDoSite(contatoId, { db })
+  opts.depoisDeGravar?.(contatoId)
   return json(200, { ok: true })
 }

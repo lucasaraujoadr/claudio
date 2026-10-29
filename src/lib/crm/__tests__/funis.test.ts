@@ -5,7 +5,9 @@ import { criarClienteBrevo } from '@/lib/brevo'
 import { LimitadorPorIp } from '@/lib/webhooks'
 import type { BancoCrm } from '../banco'
 import {
+  concluirSequencias,
   conectarListaBrevo,
+  enviarBoasVindasAgora,
   contatosComTag,
   definirAtivo,
   encerrarInscricoesDeDescadastrados,
@@ -170,8 +172,10 @@ describe('inscrição e saída', () => {
     const b = await criar({ origem: 'planilha', baseLegal: 'legitimo_interesse', tags: ['lote-x'] })
     await criar({ origem: 'planilha', baseLegal: 'consentimento', status: 'descadastrado', tags: ['lote-x'] })
     await criar({ origem: 'planilha', baseLegal: 'consentimento', tags: ['outra'] })
-    const ids = await contatosComTag('LOTE-X', { db })
+    const { ids, excedeu } = await contatosComTag('LOTE-X', { db })
     expect(ids).toEqual([a.id, b.id])
+    expect(excedeu).toBe(false)
+    expect(await contatosComTag('lote-x', { db, limite: 1 })).toEqual({ ids: [a.id], excedeu: true })
     const r = await inscrever('nutricao-blog', ids, { db, caminho: 'manual' })
     expect(r.inscritos).toEqual([a.id])
     expect(r.recusados).toEqual({ base_legal: 1 })
@@ -179,17 +183,29 @@ describe('inscrição e saída', () => {
 })
 
 describe('reativação (rotina diária)', () => {
-  it('inscreve clientes sem evento há 180 dias e mais ninguém', async () => {
-    const velho = await criar({ status: 'cliente', baseLegal: 'contrato', criadoEm: new Date(AGORA.getTime() - 400 * DIA) })
-    await db.insert(eventosContato).values({ contatoId: velho.id, tipo: 'atualizado', em: new Date(AGORA.getTime() - 200 * DIA) })
-    const recente = await criar({ status: 'cliente', baseLegal: 'contrato', criadoEm: new Date(AGORA.getTime() - 400 * DIA) })
-    await db.insert(eventosContato).values({ contatoId: recente.id, tipo: 'aberto', em: new Date(AGORA.getTime() - 10 * DIA) })
+  it('inscreve clientes sem interação real há 180 dias e mais ninguém', async () => {
+    const antes = (dias: number) => new Date(AGORA.getTime() - dias * DIA)
+    const velho = await criar({ status: 'cliente', baseLegal: 'contrato', criadoEm: antes(400) })
+    await db.insert(eventosContato).values({ contatoId: velho.id, tipo: 'atualizado', dados: { origem: 'manual' }, em: antes(200) })
+    const recente = await criar({ status: 'cliente', baseLegal: 'contrato', criadoEm: antes(400) })
+    await db.insert(eventosContato).values({ contatoId: recente.id, tipo: 'clicado', em: antes(10) })
+    const editadoNaTela = await criar({ status: 'cliente', baseLegal: 'contrato', criadoEm: antes(400) })
+    await db.insert(eventosContato).values({ contatoId: editadoNaTela.id, tipo: 'atualizado', dados: { origem: 'manual' }, em: antes(20) })
+    // Eventos automáticos não contam: abertura (Apple MPP), envio, importação, sincronização, funil.
+    const soAutomatico = await criar({ status: 'cliente', baseLegal: 'contrato', criadoEm: antes(400) })
+    await db.insert(eventosContato).values([
+      { contatoId: soAutomatico.id, tipo: 'aberto', em: antes(1) },
+      { contatoId: soAutomatico.id, tipo: 'enviado', em: antes(1) },
+      { contatoId: soAutomatico.id, tipo: 'importado', em: antes(5) },
+      { contatoId: soAutomatico.id, tipo: 'atualizado', dados: { origem: 'planilha' }, em: antes(5) },
+      { contatoId: soAutomatico.id, tipo: 'saiu_funil', em: antes(5) },
+    ])
     const semEvento = await criar({ status: 'cliente', baseLegal: 'contrato', criadoEm: new Date(AGORA.getTime() - 181 * DIA) })
     await criar({ status: 'lead', criadoEm: new Date(AGORA.getTime() - 400 * DIA) })
     await criar({ status: 'descadastrado', criadoEm: new Date(AGORA.getTime() - 400 * DIA) })
     const r = await inscreverReativacao({ db, agora: AGORA })
-    expect(r.inscritos.sort()).toEqual([velho.id, semEvento.id].sort())
-    // A entrada é uma interação: no dia seguinte ninguém reentra.
+    expect(r.inscritos.sort()).toEqual([velho.id, soAutomatico.id, semEvento.id].sort())
+    // Quem já está ativo na reativação não é escolhido de novo no dia seguinte.
     const r2 = await inscreverReativacao({ db, agora: new Date(AGORA.getTime() + DIA) })
     expect(r2.inscritos).toEqual([])
   })
@@ -219,7 +235,7 @@ describe('prospecção fria', () => {
     for (let i = 0; i < n; i++) r.push(await criar({ origem: 'planilha', baseLegal: 'legitimo_interesse' }))
     return r
   }
-  const CHECK = { avaliacaoLegitimoInteresse: true, descadastroEmTodoEmail: true, volumeBaixoAquecido: true }
+  const CHECK = { avaliacaoLegitimoInteresse: true, fonteDocumentada: true, descadastroEmTodoEmail: true, volumeBaixoAquecido: true }
 
   it('desligada: a rotina não inscreve ninguém', async () => {
     await frios(3)
@@ -385,5 +401,105 @@ describe('resumoFunis', () => {
     const r = await resumoFunis({ db })
     expect(r.find((f) => f.slug === 'boas-vindas')).toMatchObject({ ativos: 1, sairam: 1, concluidos: 0, pendentesBrevo: 2 })
     expect(r.find((f) => f.slug === 'reativacao')).toMatchObject({ ativos: 0, pendentesBrevo: 0 })
+  })
+})
+
+describe('sequências concluídas e reentrada', () => {
+  it('ativo além da duração vira concluido, sai da lista e conta no resumo; nutrição não conclui', async () => {
+    const c = await criar()
+    await inscrever('boas-vindas', [c.id], { db, caminho: 'site', agora: new Date(AGORA.getTime() - 14 * DIA) })
+    const n = await criar({ status: 'cliente', baseLegal: 'contrato' })
+    await inscrever('nutricao-blog', [n.id], { db, caminho: 'manual', agora: new Date(AGORA.getTime() - 400 * DIA) })
+    const novo = await criar()
+    await inscrever('boas-vindas', [novo.id], { db, caminho: 'site', agora: new Date(AGORA.getTime() - 12 * DIA) })
+    expect(await concluirSequencias({ db, agora: AGORA })).toBe(1)
+    expect(await inscricao(c.id, 'boas-vindas')).toMatchObject({ status: 'concluido', listaSync: 'pendente', motivoSaida: 'sequência concluída' })
+    expect((await inscricao(novo.id, 'boas-vindas')).status).toBe('ativo')
+    expect((await inscricao(n.id, 'nutricao-blog')).status).toBe('ativo')
+    expect((await eventosDe(c.id)).at(-1)).toMatchObject({ tipo: 'saiu_funil', dados: { concluido: true } })
+    expect((await resumoFunis({ db })).find((f) => f.slug === 'boas-vindas')).toMatchObject({ concluidos: 1, ativos: 1 })
+  })
+
+  it('reativação: a rotina reinscreve quem concluiu há mais de 180 dias, nunca quem saiu', async () => {
+    const antes = (dias: number) => new Date(AGORA.getTime() - dias * DIA)
+    const concluiu = await criar({ status: 'cliente', baseLegal: 'contrato', criadoEm: antes(800) })
+    const removido = await criar({ status: 'cliente', baseLegal: 'contrato', criadoEm: antes(800) })
+    const recemConcluido = await criar({ status: 'cliente', baseLegal: 'contrato', criadoEm: antes(800) })
+    await inscrever('reativacao', [concluiu.id, removido.id], { db, caminho: 'cron', agora: antes(400) })
+    await concluirSequencias({ db, agora: antes(370) })
+    await inscrever('reativacao', [recemConcluido.id], { db, caminho: 'cron', agora: antes(60) })
+    await concluirSequencias({ db, agora: antes(30) })
+    const f = await obterFunil('reativacao', { db })
+    // `removido` voltou pela tela e o usuário o tirou à mão: a linha fica `saiu`.
+    await inscrever('reativacao', [removido.id], { db, caminho: 'manual', agora: antes(300) })
+    await sair(f.id, [removido.id], { db, motivo: 'removido na tela', agora: antes(299) })
+    const r = await inscreverReativacao({ db, agora: AGORA })
+    expect(r.inscritos).toEqual([concluiu.id])
+    expect((await inscricao(removido.id, 'reativacao')).status).toBe('saiu')
+    expect((await inscricao(recemConcluido.id, 'reativacao')).status).toBe('concluido')
+  })
+})
+
+describe('boas-vindas na hora (after do webhook do site)', () => {
+  async function preparar() {
+    await garantirFunis({ db })
+    await db.update(funis).set({ brevoListaId: 42 }).where(eq(funis.slug, 'boas-vindas'))
+    const c = await criar()
+    await inscreverBoasVindasDoSite(c.id, { db })
+    return c
+  }
+
+  it('com chave e lista: envia o contato e o põe na lista', async () => {
+    const c = await preparar()
+    const b = brevoFalso()
+    expect(await enviarBoasVindasAgora(c.id, { db, cliente: b.cliente })).toBe('adicionado')
+    expect(b.contatos.get(c.emailNormalizado)?.listIds).toEqual([42])
+    expect((await inscricao(c.id, 'boas-vindas')).listaSync).toBe('sincronizado')
+    const [linha] = await db.select().from(contatos).where(eq(contatos.id, c.id))
+    expect(linha.syncStatus).toBe('sincronizado')
+  })
+
+  it('timeout do Brevo: tudo fica pendente para a rotina', async () => {
+    const c = await preparar()
+    const b = brevoFalso()
+    b.falharTudo({ ok: false, motivo: 'timeout', mensagem: 'O Brevo não respondeu em 5 s.' })
+    expect(await enviarBoasVindasAgora(c.id, { db, cliente: b.cliente })).toBe('pendente')
+    expect((await inscricao(c.id, 'boas-vindas')).listaSync).toBe('pendente')
+    const [linha] = await db.select().from(contatos).where(eq(contatos.id, c.id))
+    expect(linha.syncStatus).toBe('pendente')
+  })
+
+  it('sem chave: nenhuma chamada; sem lista: nenhuma chamada', async () => {
+    const c = await preparar()
+    expect(await enviarBoasVindasAgora(c.id, { db, cliente: criarClienteBrevo({ apiKey: null }) })).toBe('nao_conectado')
+    await db.update(funis).set({ brevoListaId: null }).where(eq(funis.slug, 'boas-vindas'))
+    const b = brevoFalso()
+    expect(await enviarBoasVindasAgora(c.id, { db, cliente: b.cliente })).toBe('sem_lista')
+    expect(b.chamadas).toHaveLength(0)
+  })
+
+  it('webhook do site chama o agendador com o id do contato', async () => {
+    const ids: number[] = []
+    const corpo = new URLSearchParams({ Nome: 'X', 'E-mail': 'agenda.e9@example.com' }).toString()
+    await tratarWebhookSite(
+      new Request('http://localhost/api/webhooks/site?token=t', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: corpo }),
+      { db, token: 't', limitador: new LimitadorPorIp(100, 60_000), depoisDeGravar: (id) => ids.push(id) },
+    )
+    const [c] = await db.select().from(contatos)
+    expect(ids).toEqual([c.id])
+  })
+})
+
+describe('fila sem inanição', () => {
+  it('inscrições de contatos com erro de sincronização vão por último', async () => {
+    await garantirFunis({ db })
+    await db.update(funis).set({ brevoListaId: 42 }).where(eq(funis.slug, 'boas-vindas'))
+    const ruim = await criar({ brevoId: '1', syncStatus: 'erro' })
+    const bom = await criar({ brevoId: '2' })
+    await inscreverBoasVindasDoSite(ruim.id, { db })
+    await inscreverBoasVindasDoSite(bom.id, { db })
+    const b = brevoFalso()
+    await sincronizarInscricoes({ db, cliente: b.cliente, limite: 1 })
+    expect(b.chamadas.find((c) => c.op === 'adicionarALista')?.corpo).toEqual([bom.emailNormalizado])
   })
 })
