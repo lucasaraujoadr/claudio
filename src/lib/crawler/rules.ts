@@ -77,15 +77,18 @@ const conteudoRaso: RegraPorPagina = (p) =>
     ? problema(p.url, 'aviso', 'conteudo-raso', `Conteúdo com ${p.palavras} palavras; o mínimo recomendado é 300`)
     : []
 
-const poucosLinksInternos: RegraPorPagina = (p) =>
-  p.linksInternos.length < 2
+const poucosLinksInternos: RegraPorPagina = (p) => {
+  // Links que saem da página: autolinks (ex.: href="#") não contam.
+  const saindo = p.linksInternos.filter((l) => l !== p.url).length
+  return saindo < 2
     ? problema(
         p.url,
         'aviso',
         'poucos-links-internos',
-        `A página tem ${p.linksInternos.length} link(s) interno(s); o mínimo recomendado é 2`,
+        `A página tem ${saindo} link(s) interno(s) saindo dela; o mínimo recomendado é 2`,
       )
     : []
+}
 
 const canonicalDivergente: RegraPorPagina = (p) => {
   if (p.canonical === null || p.canonical.trim() === '') return []

@@ -84,6 +84,26 @@ describe('title-duplicado', () => {
     const b = pagina({ url: `${BASE}b/`, title: texto(41) })
     expect(achou(avaliar([a, b], ctx({ urlInicial: a.url })), 'title-duplicado')).toHaveLength(0)
   })
+  it('compara aparado: " x" e "x" são duplicados', () => {
+    const a = pagina({ url: `${BASE}a/`, title: ` ${texto(40)}` })
+    const b = pagina({ url: `${BASE}b/`, title: texto(40) })
+    expect(achou(avaliar([a, b], ctx({ urlInicial: a.url })), 'title-duplicado')).toHaveLength(2)
+  })
+  it('não normaliza caixa: "X" e "x" não são duplicados', () => {
+    const a = pagina({ url: `${BASE}a/`, title: 'A'.repeat(40) })
+    const b = pagina({ url: `${BASE}b/`, title: 'a'.repeat(40) })
+    expect(achou(avaliar([a, b], ctx({ urlInicial: a.url })), 'title-duplicado')).toHaveLength(0)
+  })
+  it('title em branco não é duplicado', () => {
+    const a = pagina({ url: `${BASE}a/`, title: '   ' })
+    const b = pagina({ url: `${BASE}b/`, title: '  ' })
+    expect(achou(avaliar([a, b], ctx({ urlInicial: a.url })), 'title-duplicado')).toHaveLength(0)
+  })
+  it('title em branco gera title-ausente e não title-tamanho', () => {
+    const r = regrasDe(pagina({ title: '   ' }))
+    expect(achou(r, 'title-ausente')).toHaveLength(1)
+    expect(achou(r, 'title-tamanho')).toHaveLength(0)
+  })
   it('não trata title ausente como duplicado entre si', () => {
     const a = pagina({ url: `${BASE}a/`, title: null })
     const b = pagina({ url: `${BASE}b/`, title: null })
@@ -130,6 +150,31 @@ describe('meta-duplicada', () => {
     const a = pagina({ url: `${BASE}a/`, metaDescription: texto(100) })
     const b = pagina({ url: `${BASE}b/`, metaDescription: texto(101) })
     expect(achou(avaliar([a, b], ctx({ urlInicial: a.url })), 'meta-duplicada')).toHaveLength(0)
+  })
+})
+
+describe('meta em branco e duplicidade', () => {
+  it('compara aparado: " x" e "x" são duplicadas', () => {
+    const a = pagina({ url: `${BASE}a/`, metaDescription: ` ${texto(100)}` })
+    const b = pagina({ url: `${BASE}b/`, metaDescription: texto(100) })
+    expect(achou(avaliar([a, b], ctx({ urlInicial: a.url })), 'meta-duplicada')).toHaveLength(2)
+  })
+  it('não normaliza caixa: "X" e "x" não são duplicadas', () => {
+    const a = pagina({ url: `${BASE}a/`, metaDescription: 'A'.repeat(100) })
+    const b = pagina({ url: `${BASE}b/`, metaDescription: 'a'.repeat(100) })
+    expect(achou(avaliar([a, b], ctx({ urlInicial: a.url })), 'meta-duplicada')).toHaveLength(0)
+  })
+  it('metas em branco ou nulas não são duplicadas', () => {
+    const a = pagina({ url: `${BASE}a/`, metaDescription: '   ' })
+    const b = pagina({ url: `${BASE}b/`, metaDescription: '  ' })
+    const c = pagina({ url: `${BASE}c/`, metaDescription: null })
+    const d = pagina({ url: `${BASE}d/`, metaDescription: null })
+    expect(achou(avaliar([a, b, c, d], ctx({ urlInicial: a.url })), 'meta-duplicada')).toHaveLength(0)
+  })
+  it('meta em branco gera meta-ausente e não meta-tamanho', () => {
+    const r = regrasDe(pagina({ metaDescription: '   ' }))
+    expect(achou(r, 'meta-ausente')).toHaveLength(1)
+    expect(achou(r, 'meta-tamanho')).toHaveLength(0)
   })
 })
 
@@ -209,6 +254,12 @@ describe('poucos-links-internos', () => {
   })
   it('não acusa 2 links', () => {
     expect(achou(regrasDe(pagina()), 'poucos-links-internos')).toHaveLength(0)
+  })
+  it('autolink não conta como link saindo da página', () => {
+    const p = pagina({ linksInternos: [`${BASE}a/`, `${BASE}sobre-nos/`] })
+    const r = achou(regrasDe(p), 'poucos-links-internos')
+    expect(r).toHaveLength(1)
+    expect(r[0].mensagem).toContain('1 link')
   })
 })
 
@@ -318,6 +369,12 @@ describe('sitemap-invalido', () => {
     expect(r).toHaveLength(1)
     expect(r[0].url).toBeNull()
     expect(r[0].severidade).toBe('critico')
+  })
+  it('rastreamento vazio com sitemap inválido produz exatamente um problema, com url null', () => {
+    const r = avaliar([], ctx({ sitemapResolvido: false }))
+    expect(r).toHaveLength(1)
+    expect(r[0].regra).toBe('sitemap-invalido')
+    expect(r[0].url).toBeNull()
   })
   it('não emite quando o sitemap resolveu', () => {
     expect(achou(regrasDe(pagina()), 'sitemap-invalido')).toHaveLength(0)
