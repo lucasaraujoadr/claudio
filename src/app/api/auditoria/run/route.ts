@@ -5,10 +5,9 @@ import { auditIssues, auditPages, auditRuns } from '@/lib/db/schema'
 import { rastrear } from '@/lib/crawler/crawl'
 import { avaliar, type Problema } from '@/lib/crawler/rules'
 import { MINUTOS_ATE_RUN_TRAVADA, REGRA_INTERROMPIDO } from '@/lib/auditoria'
+import { siteUrl } from '@/lib/site'
 
 export const maxDuration = 300
-
-const SITE = 'https://ogpericiacontabil.com.br'
 
 
 export async function POST() {
@@ -33,7 +32,7 @@ export async function POST() {
   }
 
   try {
-    const { paginas, ctx, truncado } = await rastrear({ siteUrl: SITE })
+    const { paginas, ctx, truncado } = await rastrear({ siteUrl: siteUrl() })
     const problemas: Problema[] = avaliar(paginas, ctx)
     if (truncado) {
       problemas.push({

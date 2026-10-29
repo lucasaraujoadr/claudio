@@ -1,9 +1,9 @@
-const HOST_SITE = 'ogpericiacontabil.com.br'
+import { hostSite } from './site'
 
 export function urlPublicadaValida(valor: string): boolean {
   try {
     const u = new URL(valor)
-    return u.protocol === 'https:' && u.hostname === HOST_SITE && u.username === '' && u.password === '' && u.port === ''
+    return u.protocol === 'https:' && u.hostname === hostSite() && u.username === '' && u.password === '' && u.port === ''
   } catch {
     return false
   }

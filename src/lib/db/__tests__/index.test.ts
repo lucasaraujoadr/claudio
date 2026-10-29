@@ -29,4 +29,17 @@ describe('getDb', () => {
     expect(first).toBeDefined()
     expect(getDb()).toBe(first)
   })
+
+  it('um erro em cliente ocioso do pool é registrado (só o nome) em vez de derrubar o processo', async () => {
+    const { getDb } = await import('@/lib/db')
+    process.env.DATABASE_URL = 'postgres://u:segredo@localhost:5432/db'
+    const pool = (getDb() as unknown as { $client: import('node:events').EventEmitter }).$client
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const erro = Object.assign(new Error('conexão encerrada postgres://u:segredo@host'), { name: 'ErroDeConexao' })
+    expect(() => pool.emit('error', erro)).not.toThrow()
+    expect(log).toHaveBeenCalledTimes(1)
+    expect(log.mock.calls[0].join(' ')).toContain('ErroDeConexao')
+    expect(log.mock.calls[0].join(' ')).not.toContain('segredo')
+    log.mockRestore()
+  })
 })

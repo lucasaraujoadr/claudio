@@ -58,7 +58,7 @@ export default async function BriefingsPage({
     <div className="max-w-6xl space-y-6">
       <h1 className="text-2xl font-semibold">Briefings</h1>
       {sp.gerado === 'ok' && (
-        <p role="status" className="rounded border border-green-300 bg-green-50 p-3 text-sm text-green-900">
+        <p role="status" className="rounded border border-green-300 bg-green-50 p-3 text-sm text-green-900 dark:border-green-800 dark:bg-green-950 dark:text-green-200">
           Briefing gerado. O tema agora está como briefado.
         </p>
       )}
@@ -131,7 +131,7 @@ export default async function BriefingsPage({
             </section>
           </article>
         ) : (
-          <p role="alert" className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900">
+          <p role="alert" className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
             Este briefing está em um formato que não pôde ser lido.
           </p>
         )}

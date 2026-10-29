@@ -36,7 +36,7 @@ export function BotaoRastrear({ rotulo }: { rotulo: string }) {
         {rodando ? 'Rastreando… (pode levar alguns minutos)' : rotulo}
       </button>
       {erro && (
-        <p role="alert" className="mt-2 text-sm text-red-600">
+        <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
           {erro}
         </p>
       )}

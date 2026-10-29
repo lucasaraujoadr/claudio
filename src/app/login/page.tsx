@@ -28,7 +28,7 @@ export default async function LoginPage({
           className="w-full rounded border border-gray-300 px-3 py-2"
         />
         {erro && (
-          <p role="alert" className="text-sm text-red-600">
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
             Senha incorreta. Tente novamente.
           </p>
         )}

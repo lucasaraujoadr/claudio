@@ -2,13 +2,15 @@ import { connection } from 'next/server'
 import { asc, desc } from 'drizzle-orm'
 import { getDb } from '@/lib/db'
 import { clusters, topics, type Topic } from '@/lib/db/schema'
+import { padraoUrlPublicada, siteUrl } from '@/lib/site'
+import { BotaoEnviar } from '../botao-enviar'
 
 export const metadata = { title: 'Temas' }
 
 type Aviso = { texto: string; classe: string; role: 'status' | 'alert' }
-const VERDE = 'border-green-300 bg-green-50 text-green-900'
-const AZUL = 'border-blue-300 bg-blue-50 text-blue-900'
-const VERMELHO = 'border-red-300 bg-red-50 text-red-900'
+const VERDE = 'border-green-300 bg-green-50 text-green-900 dark:border-green-800 dark:bg-green-950 dark:text-green-200'
+const AZUL = 'border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200'
+const VERMELHO = 'border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200'
 
 const AVISOS: Record<string, Record<string, Aviso>> = {
   pesquisa: {
@@ -26,10 +28,13 @@ const AVISOS: Record<string, Record<string, Aviso>> = {
   status: {
     escolhido: { texto: 'Tema marcado como escolhido.', classe: VERDE, role: 'status' },
     publicado: { texto: 'Tema marcado como publicado.', classe: VERDE, role: 'status' },
-    'url-invalida': { texto: 'URL inválida. Informe uma URL https://ogpericiacontabil.com.br/...', classe: VERMELHO, role: 'alert' },
+    'url-invalida': { texto: `URL inválida. Informe uma URL ${siteUrl()}/...`, classe: VERMELHO, role: 'alert' },
     erro: { texto: 'Não foi possível mudar o status do tema.', classe: VERMELHO, role: 'alert' },
   },
 }
+
+const BOTAO_ENVIO =
+  'rounded border border-gray-400 hover:bg-gray-100 disabled:cursor-wait disabled:opacity-60 dark:hover:bg-gray-800'
 
 const STATUS = ['ideia', 'escolhido', 'briefado', 'publicado'] as const
 type Status = (typeof STATUS)[number]
@@ -59,17 +64,19 @@ function Acao({ t }: { t: Topic }) {
     return (
       <form method="POST" action="/api/briefings/gerar" className="text-right">
         <input type="hidden" name="id" value={t.id} />
-        <button type="submit" className="rounded border border-gray-400 px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800">
+        <BotaoEnviar rotuloEnviando="Gerando…" className={`${BOTAO_ENVIO} px-2 py-1`}>
           Gerar briefing
-        </button>
-        <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">Leva alguns segundos.</p>
+        </BotaoEnviar>
+        <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
+          Pode levar até 2 minutos (mais, se o modelo precisar de uma segunda tentativa).
+        </p>
       </form>
     )
   }
   if (t.status === 'briefado') {
     return (
       <div className="space-y-2">
-        <a href={`/briefings?tema=${t.id}`} className="text-blue-700 underline">Ver briefing</a>
+        <a href={`/briefings?tema=${t.id}`} className="text-blue-700 underline dark:text-blue-400">Ver briefing</a>
       <form method="POST" action="/api/temas/status" className="flex flex-wrap items-center gap-2">
         <input type="hidden" name="id" value={t.id} />
         <input type="hidden" name="para" value="publicado" />
@@ -79,8 +86,8 @@ function Acao({ t }: { t: Topic }) {
           name="url"
           type="url"
           required
-          pattern="https://ogpericiacontabil\.com\.br/.*"
-          placeholder="https://ogpericiacontabil.com.br/..."
+          pattern={padraoUrlPublicada()}
+          placeholder={`${siteUrl()}/...`}
           className="w-64 rounded border border-gray-400 px-2 py-1"
         />
         <button type="submit" className="rounded border border-gray-400 px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800">
@@ -92,7 +99,7 @@ function Acao({ t }: { t: Topic }) {
   }
   if (t.status === 'publicado' && t.urlPublicada) {
     return (
-      <a href={t.urlPublicada} target="_blank" rel="noopener noreferrer" className="break-all text-blue-700 underline">
+      <a href={t.urlPublicada} target="_blank" rel="noopener noreferrer" className="break-all text-blue-700 underline dark:text-blue-400">
         Ver página
       </a>
     )
@@ -165,10 +172,10 @@ export default async function TemasPage({
           </p>
         </div>
         <form method="POST" action="/api/temas/pesquisar" className="text-right">
-          <button type="submit" className="rounded border border-gray-400 px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800">
+          <BotaoEnviar rotuloEnviando="Gerando…" className={`${BOTAO_ENVIO} px-3 py-2`}>
             Pesquisar temas
-          </button>
-          <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">A pesquisa leva alguns segundos.</p>
+          </BotaoEnviar>
+          <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">A pesquisa pode levar até 2 minutos.</p>
         </form>
       </header>
 

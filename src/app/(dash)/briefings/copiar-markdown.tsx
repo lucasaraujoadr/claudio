@@ -20,7 +20,7 @@ export function CopiarMarkdown({ markdown }: { markdown: string }) {
       <button type="button" onClick={copiar} className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-gray-800">
         Copiar Markdown
       </button>
-      <p role={msg?.erro ? 'alert' : 'status'} className={`mt-2 text-sm ${msg?.erro ? 'text-red-600' : 'text-green-700'}`}>
+      <p role={msg?.erro ? 'alert' : 'status'} className={`mt-2 text-sm ${msg?.erro ? 'text-red-600 dark:text-red-400' : 'text-green-700 dark:text-green-400'}`}>
         {msg?.texto}
       </p>
       {msg?.erro && (

@@ -3,6 +3,7 @@ import { connection } from 'next/server'
 import { count, desc, eq, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db'
 import { auditIssues, auditRuns, gscSnapshots, gscTotais, topics } from '@/lib/db/schema'
+import { REGRA_INTERROMPIDO } from '@/lib/auditoria'
 import { diasDesde } from '@/lib/oportunidades'
 import { carregarOportunidadesDoSnapshot } from '@/lib/oportunidades-snapshot'
 import { calcularVariacao, escolherComparacao, type Totais, type Variacao } from '@/lib/visao-geral'
@@ -97,7 +98,7 @@ async function carregarGsc(): Promise<DadosGsc | null> {
   }
 }
 
-type DadosAuditoria = { data: Date; paginas: number; criticos: number }
+type DadosAuditoria = { data: Date; paginas: number; criticos: number; incompleta: boolean }
 
 async function carregarAuditoria(): Promise<DadosAuditoria | null> {
   const db = getDb()
@@ -108,11 +109,23 @@ async function carregarAuditoria(): Promise<DadosAuditoria | null> {
     .orderBy(desc(auditRuns.id))
     .limit(1)
   if (!run) return null
-  const [c] = await db
-    .select({ total: count() })
-    .from(auditIssues)
-    .where(sql`${auditIssues.runId} = ${run.id} and ${auditIssues.severidade} = 'critico'`)
-  return { data: run.finalizadoEm ?? run.iniciadoEm, paginas: run.paginasRastreadas, criticos: c?.total ?? 0 }
+  const [[c], [interrompido]] = await Promise.all([
+    db
+      .select({ total: count() })
+      .from(auditIssues)
+      .where(sql`${auditIssues.runId} = ${run.id} and ${auditIssues.severidade} = 'critico'`),
+    db
+      .select({ id: auditIssues.id })
+      .from(auditIssues)
+      .where(sql`${auditIssues.runId} = ${run.id} and ${auditIssues.regra} = ${REGRA_INTERROMPIDO}`)
+      .limit(1),
+  ])
+  return {
+    data: run.finalizadoEm ?? run.iniciadoEm,
+    paginas: run.paginasRastreadas,
+    criticos: c?.total ?? 0,
+    incompleta: interrompido !== undefined,
+  }
 }
 
 async function carregarTemas(): Promise<Record<(typeof STATUS)[number], number>> {
@@ -170,7 +183,7 @@ function Bloco({
     <section className={vazio ? VAZIO : CARTAO}>
       <div className="mb-2 flex items-baseline justify-between gap-2">
         <h2 className="text-lg font-semibold">{titulo}</h2>
-        <Link href={href} className="text-sm text-blue-700 underline">
+        <Link href={href} className="text-sm text-blue-700 underline dark:text-blue-400">
           Abrir
         </Link>
       </div>
@@ -190,7 +203,7 @@ function Metrica({ rotulo, valor, detalhe }: { rotulo: string; valor: string; de
 }
 
 function Indisponivel({ children }: { children: React.ReactNode }) {
-  return <p role="alert" className="text-sm text-red-900">{children}</p>
+  return <p role="alert" className="text-sm text-red-900 dark:text-red-300">{children}</p>
 }
 
 export default async function VisaoGeralPage() {
@@ -213,12 +226,12 @@ export default async function VisaoGeralPage() {
       </header>
 
       {gsc.ok && gsc.dados && diasGsc > DIAS_GSC_DESATUALIZADO && (
-        <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
           Atenção: os dados do Search Console são de {formatarData(gsc.dados.data)}, há {diasGsc} dias. Não representam a situação atual.
         </p>
       )}
       {auditoria.ok && auditoria.dados && diasAuditoria > DIAS_AUDITORIA_DESATUALIZADA && (
-        <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
           Atenção: a última auditoria foi há {diasAuditoria} dias. Rode um novo rastreamento.
         </p>
       )}
@@ -284,6 +297,12 @@ export default async function VisaoGeralPage() {
               valor={fmt(auditoria.dados.criticos)}
               detalhe={`Rastreamento de ${formatoDataHora.format(auditoria.dados.data)} · ${auditoria.dados.paginas} páginas`}
             />
+            {auditoria.dados.incompleta && (
+              <p role="alert" className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                Auditoria incompleta: o rastreamento foi interrompido por tempo depois de {auditoria.dados.paginas} páginas.
+                Pode haver problemas críticos nas páginas não visitadas.
+              </p>
+            )}
           </Bloco>
         )}
 

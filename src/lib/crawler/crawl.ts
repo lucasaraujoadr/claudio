@@ -1,7 +1,12 @@
 import { extrairSinais, normalizarUrl, type SinaisPagina } from './parse'
 import type { ContextoAuditoria } from './rules'
 
-export const USER_AGENT = 'OG-SEO-Audit/1.0 (+https://ogpericiacontabil.com.br)'
+import { siteUrl } from '@/lib/site'
+
+/** Identifica o rastreador e aponta para o site que o opera. */
+export function userAgent(): string {
+  return `OG-SEO-Audit/1.0 (+${siteUrl()})`
+}
 const LIMITE_PADRAO = 300
 const INTERVALO_PADRAO_MS = 1000
 const TIMEOUT_MS = 15_000
@@ -90,7 +95,7 @@ export async function rastrear(opts: OpcoesRastreio): Promise<{ paginas: SinaisP
     try {
       const resposta = await fetchImpl(url, {
         redirect: 'manual',
-        headers: { 'user-agent': USER_AGENT, accept: 'text/html,application/xml;q=0.9,*/*;q=0.5' },
+        headers: { 'user-agent': userAgent(), accept: 'text/html,application/xml;q=0.9,*/*;q=0.5' },
         signal: AbortSignal.timeout(TIMEOUT_MS),
       })
       return {

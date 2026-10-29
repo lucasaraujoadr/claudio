@@ -9,7 +9,14 @@ function createDb(): Db {
   if (!url) {
     throw new Error('DATABASE_URL não está definida')
   }
-  return drizzle(new Pool({ connectionString: url }), { schema })
+  const pool = new Pool({ connectionString: url })
+  // Um cliente ocioso que perde a conexão (ex.: o Neon suspende o compute) emite
+  // 'error' no pool; sem ouvinte, isso derruba o processo. Só o nome: a mensagem pode
+  // ecoar a string de conexão.
+  pool.on('error', (e: unknown) => {
+    console.error('pool do banco: erro em cliente ocioso:', e instanceof Error ? e.name : 'erro')
+  })
+  return drizzle(pool, { schema })
 }
 
 let _db: Db | undefined

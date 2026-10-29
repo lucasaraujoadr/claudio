@@ -16,7 +16,7 @@ export default function ErroDash({
   return (
     <div
       role="alert"
-      className="max-w-xl rounded-lg border border-red-200 bg-red-50 p-6 text-red-900"
+      className="max-w-xl rounded-lg border border-red-200 bg-red-50 p-6 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
     >
       <h2 className="text-lg font-semibold">Não foi possível consultar os dados</h2>
       <p className="mt-2 text-sm">

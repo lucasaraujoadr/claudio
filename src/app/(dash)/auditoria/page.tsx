@@ -10,9 +10,9 @@ export const metadata = { title: 'Auditoria técnica' }
 type Severidade = 'critico' | 'aviso' | 'info'
 
 const SEVERIDADES: { chave: Severidade; titulo: string; classe: string }[] = [
-  { chave: 'critico', titulo: 'Críticos', classe: 'border-red-300 bg-red-50 text-red-900' },
-  { chave: 'aviso', titulo: 'Avisos', classe: 'border-amber-300 bg-amber-50 text-amber-900' },
-  { chave: 'info', titulo: 'Informativos', classe: 'border-blue-300 bg-blue-50 text-blue-900' },
+  { chave: 'critico', titulo: 'Críticos', classe: 'border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200' },
+  { chave: 'aviso', titulo: 'Avisos', classe: 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200' },
+  { chave: 'info', titulo: 'Informativos', classe: 'border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200' },
 ]
 
 const formatoData = new Intl.DateTimeFormat('pt-BR', {
@@ -75,24 +75,24 @@ export default async function AuditoriaPage() {
       </header>
 
       {rodando && (
-        <p role="status" className="rounded border border-blue-300 bg-blue-50 p-3 text-sm text-blue-900">
+        <p role="status" className="rounded border border-blue-300 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
           Há um rastreamento em andamento desde {formatoData.format(ultimaRun.iniciadoEm)}. Atualize a
           página em alguns minutos.
         </p>
       )}
       {travada && (
-        <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
           O último rastreamento ({formatoData.format(ultimaRun.iniciadoEm)}) parece ter travado. Você pode
           iniciar outro.
         </p>
       )}
       {interrompido && (
-        <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
           {interrompido.mensagem}.
         </p>
       )}
       {ultimaFalhou && (
-        <p role="alert" className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900">
+        <p role="alert" className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
           O último rastreamento ({formatoData.format(ultimaRun.iniciadoEm)}) falhou.
           {ultimaConcluida ? ' Os resultados abaixo são do rastreamento anterior.' : ''}
         </p>
@@ -106,7 +106,7 @@ export default async function AuditoriaPage() {
           </p>
         </section>
       ) : problemas.length === 0 ? (
-        <section className="rounded-lg border border-green-300 bg-green-50 p-8 text-center text-green-900">
+        <section className="rounded-lg border border-green-300 bg-green-50 p-8 text-center text-green-900 dark:border-green-800 dark:bg-green-950 dark:text-green-200">
           <h2 className="text-lg font-medium">Nenhum problema encontrado</h2>
           <p className="mt-1 text-sm">
             O rastreamento analisou {ultimaConcluida.paginasRastreadas} páginas e nenhuma regra foi violada.

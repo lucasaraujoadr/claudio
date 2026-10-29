@@ -7,11 +7,11 @@ export const metadata = { title: 'Oportunidades' }
 const DIAS_ATE_DESATUALIZADO = 2
 
 const AVISOS: Record<string, { texto: string; classe: string; role: 'status' | 'alert' }> = {
-  criado: { texto: 'Tema criado.', classe: 'border-green-300 bg-green-50 text-green-900', role: 'status' },
-  existia: { texto: 'Tema já existia.', classe: 'border-blue-300 bg-blue-50 text-blue-900', role: 'status' },
+  criado: { texto: 'Tema criado.', classe: 'border-green-300 bg-green-50 text-green-900 dark:border-green-800 dark:bg-green-950 dark:text-green-200', role: 'status' },
+  existia: { texto: 'Tema já existia.', classe: 'border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200', role: 'status' },
   erro: {
     texto: 'Não foi possível criar o tema. Verifique o termo e tente novamente.',
-    classe: 'border-red-300 bg-red-50 text-red-900',
+    classe: 'border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200',
     role: 'alert',
   },
 }
@@ -53,7 +53,7 @@ export default async function OportunidadesPage({
       )}
 
       {ultimo && desatualizado && (
-        <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
           Atenção: os dados são de {formatarData(ultimo.data)}, há {dias} dias. Não representam a situação atual.
         </p>
       )}
@@ -91,7 +91,7 @@ export default async function OportunidadesPage({
                 <tr key={`${o.query}|${o.page}`} className="border-b border-gray-200 align-top">
                   <td className="py-2 pr-4 font-medium">{o.query}</td>
                   <td className="max-w-xs break-all py-2 pr-4">
-                    <a href={o.page} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline">
+                    <a href={o.page} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline dark:text-blue-400">
                       {o.page}
                     </a>
                   </td>
