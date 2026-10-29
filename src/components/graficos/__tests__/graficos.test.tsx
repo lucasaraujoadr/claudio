@@ -25,10 +25,12 @@ describe('GraficoLinha', () => {
     )
   }
 
-  it('tem nome acessível, resumo em texto e legenda para duas séries', () => {
-    desenhar()
-    const img = screen.getByRole('img', { name: 'Sessões por dia' })
-    expect(document.getElementById(img.getAttribute('aria-describedby')!)?.textContent).toBe('Total de 15 sessões.')
+  it('nome anunciado uma vez (no grupo), resumo em texto e legenda para duas séries', () => {
+    const { container } = desenhar()
+    const grupo = screen.getByRole('group', { name: /^Sessões por dia\./ })
+    expect(document.getElementById(grupo.getAttribute('aria-describedby')!)?.textContent).toBe('Total de 15 sessões.')
+    expect(screen.queryByRole('img')).toBeNull()
+    expect(container.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
     const legenda = screen.getByRole('list', { name: 'Legenda' })
     expect(within(legenda).getAllByRole('listitem').map((l) => l.textContent)).toEqual(['Sessões', 'Sessões engajadas'])
   })
@@ -48,6 +50,11 @@ describe('GraficoLinha', () => {
     expect(grupo.querySelector('[aria-live]')?.textContent).toBe('02/10/2026. Sessões: sem dado; Sessões engajadas: sem dado.')
     fireEvent.keyDown(grupo, { key: 'Home' })
     expect(grupo.querySelector('[aria-live]')?.textContent).toBe('01/10/2026. Sessões: 5 sessões; Sessões engajadas: 2 sessões.')
+  })
+
+  it('reserva a altura final antes de medir (sem salto de layout)', () => {
+    desenhar()
+    expect(screen.getByRole('group', { name: /setas/ }).style.height).toBe('220px')
   })
 
   it('a lacuna interrompe a linha (não desce a zero)', () => {
@@ -85,7 +92,8 @@ describe('GraficoBarras', () => {
     const linhas = within(tabela).getAllByRole('row')
     expect(within(linhas[1]).getByRole('rowheader').textContent).toBe('Críticos')
     expect(linhas[1].textContent).toContain('12')
-    expect(linhas[1].getAttribute('tabindex')).toBe('0')
+    // Linhas não são paradas de tabulação: o valor já está no texto da célula.
+    expect(linhas[1].hasAttribute('tabindex')).toBe(false)
     // Zero real (a auditoria contou) aparece como 0, com um traço no lugar da barra.
     expect(linhas[2].textContent).toContain('0')
   })

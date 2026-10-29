@@ -2,33 +2,71 @@ import { GraficoLinha } from '@/components/graficos/grafico-linha'
 import { GraficoSemDado } from '@/components/graficos/grafico-sem-dado'
 import { contarComDado, formatarDataIso } from '@/components/graficos/serie'
 import { Indicador } from '@/components/ui/indicador'
-import { METRICAS_GA4, serieTrafego, type DiaGa4, type MetricaGa4, type ResumoTrafego } from './trafego'
+import {
+  METRICAS_GA4,
+  indicadorUsuarios,
+  semEventosChave,
+  serieTrafego,
+  type DiaGa4,
+  type ResumoTrafego,
+  type TotaisUsuariosGa4,
+} from './trafego'
 
 function periodo(j: { inicio: string; fim: string }): string {
   return `${formatarDataIso(j.inicio)} a ${formatarDataIso(j.fim)}`
 }
 
-/** Os quatro números dos últimos 28 dias, com variação contra os 28 anteriores. */
+/**
+ * Os quatro números dos últimos 28 dias com variação contra os 28 anteriores. Sessões,
+ * sessões engajadas e eventos-chave somam a série diária; usuários vêm só dos totais
+ * deduplicados (`usuarios`): sem eles, "sem dado", nunca a soma diária.
+ */
 export function IndicadoresTrafego({
   resumo,
-  metricas = METRICAS_GA4.map((m) => m.chave),
+  usuarios,
+  falhaUsuarios = false,
 }: {
   resumo: ResumoTrafego
-  metricas?: MetricaGa4[]
+  usuarios: TotaisUsuariosGa4 | null
+  /** A leitura dos totais falhou (diferente de "ainda não há linha"). */
+  falhaUsuarios?: boolean
 }) {
   const comparacao = resumo.comparacao
+  const u = indicadorUsuarios(usuarios)
+  const indicador = (m: (typeof METRICAS_GA4)[number]) => (
+    <Indicador
+      key={m.chave}
+      rotulo={m.rotulo}
+      valor={resumo.totais[m.chave]}
+      variacao={comparacao ? comparacao.variacoes[m.chave] : null}
+      comparacao={comparacao ? 'vs. 28 dias antes' : undefined}
+      detalhe={
+        m.chave === 'eventosChave' && semEventosChave(resumo)
+          ? 'Nenhum evento-chave no período: parece que nenhum evento está marcado como chave no GA4 (ex.: clique no WhatsApp, envio de formulário).'
+          : undefined
+      }
+    />
+  )
+  const [sessoes, engajadas, eventos] = METRICAS_GA4
   return (
     <div className="grid grid-cols-2 gap-x-6 gap-y-5 lg:grid-cols-4">
-      {METRICAS_GA4.filter((m) => metricas.includes(m.chave)).map((m) => (
-        <Indicador
-          key={m.chave}
-          rotulo={m.rotulo}
-          valor={resumo.totais[m.chave]}
-          variacao={comparacao ? comparacao.variacoes[m.chave] : null}
-          comparacao={comparacao ? 'vs. 28 dias antes' : undefined}
-          detalhe={m.detalhe}
-        />
-      ))}
+      {indicador(sessoes)}
+      <Indicador
+        rotulo="Usuários"
+        valor={u?.valor ?? null}
+        textoSemDado={falhaUsuarios ? 'não foi possível carregar' : 'sem dado'}
+        variacao={u ? u.variacao : undefined}
+        comparacao={u ? 'vs. 28 dias antes' : undefined}
+        detalhe={
+          u
+            ? `Usuários únicos de ${periodo(u.periodo)}.`
+            : falhaUsuarios
+              ? undefined
+              : 'O total de usuários únicos aparece depois da próxima sincronização do Analytics.'
+        }
+      />
+      {indicador(engajadas)}
+      {indicador(eventos)}
     </div>
   )
 }

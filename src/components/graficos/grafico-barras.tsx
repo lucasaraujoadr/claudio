@@ -32,7 +32,7 @@ const fmtPadrao = (n: number) => n.toLocaleString('pt-BR')
  * Barras horizontais desenhadas como tabela: o próprio gráfico é a alternativa em texto
  * (leitor de tela lê categoria e valor, linha a linha). Uma série = uma cor (série 1);
  * a identidade de cada categoria vem do rótulo, nunca da cor. Valor na ponta da barra;
- * dica no ponteiro e no foco (cada linha é focável) com o detalhe.
+ * dica no ponteiro com o detalhe, que o leitor de tela já lê na própria célula.
  */
 export function GraficoBarras({
   titulo,
@@ -57,7 +57,7 @@ export function GraficoBarras({
         {itens.map((item) => {
           const pct = larguraPercentual(item.valor, maximo)
           return (
-            <tr key={item.chave} tabIndex={0} className="group rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foco">
+            <tr key={item.chave} className="group">
               <th scope="row" className="w-[1%] pr-3 text-left font-normal whitespace-nowrap align-middle">
                 {item.rotulo}
               </th>
@@ -68,7 +68,7 @@ export function GraficoBarras({
                     {pct > 0 ? (
                       <div
                         aria-hidden="true"
-                        className="absolute inset-y-1 left-0 rounded-r bg-serie-1 transition-opacity group-hover:opacity-80 group-focus-visible:opacity-80"
+                        className="absolute inset-y-1 left-0 rounded-r bg-serie-1 transition-opacity group-hover:opacity-80"
                         style={{ width: `max(${pct}%, 3px)` }}
                       />
                     ) : (
@@ -83,7 +83,7 @@ export function GraficoBarras({
                 {item.detalhe && (
                   <span
                     aria-hidden="true"
-                    className="pointer-events-none absolute -top-7 left-0 z-10 hidden rounded-md border border-borda bg-superficie px-2 py-1 text-xs whitespace-nowrap text-tinta shadow-cartao group-hover:block group-focus-visible:block"
+                    className="pointer-events-none absolute -top-7 left-0 z-10 hidden rounded-md border border-borda bg-superficie px-2 py-1 text-xs whitespace-nowrap text-tinta shadow-cartao group-hover:block"
                   >
                     <span className="font-semibold tabular-nums">{formatar(item.valor)}</span>{' '}
                     <span className="text-tinta-suave">

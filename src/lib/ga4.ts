@@ -1,7 +1,7 @@
 import { lt, sql } from 'drizzle-orm'
 import { google } from 'googleapis'
 import { getDb } from '@/lib/db'
-import { ga4Diario, ga4Paginas } from '@/lib/db/schema'
+import { ga4Diario, ga4Paginas, ga4Totais } from '@/lib/db/schema'
 import { iso, meiaNoiteUtc } from './janelas-gsc'
 import { normalizarChavePrivada } from './gsc'
 
@@ -33,10 +33,26 @@ export type LinhaPaginaGa4 = {
   usuarios: number
   eventosChave: number
 }
+/** Totais deduplicados de duas janelas de 28 dias (atual e anterior), sem dimensões. */
+export type TotaisGa4 = {
+  inicioAtual: string
+  fimAtual: string
+  inicioAnterior: string
+  fimAnterior: string
+  usuariosAtual: number
+  usuariosAnterior: number
+  sessoesAtual: number
+  sessoesAnterior: number
+  sessoesEngajadasAtual: number
+  sessoesEngajadasAnterior: number
+  eventosChaveAtual: number
+  eventosChaveAnterior: number
+}
 export type ResultadoGa4 = {
   snapshotDate: string
   diario: LinhaDiariaGa4[]
   paginas: LinhaPaginaGa4[]
+  totais: TotaisGa4
 }
 
 type LinhaApi = {
@@ -153,7 +169,58 @@ export async function buscarGa4(
     usuarios: num(l.metricValues?.[1]?.value),
     eventosChave: num(l.metricValues?.[3]?.value),
   }))
-  return { snapshotDate: iso(hoje), diario, paginas }
+
+  const totais = await buscarTotais(consultar, property, hoje)
+  return { snapshotDate: iso(hoje), diario, paginas, totais }
+}
+
+// Ordem das métricas na consulta de totais.
+const METRICAS_TOTAIS = ['activeUsers', 'sessions', 'engagedSessions', 'keyEvents']
+
+/**
+ * Uma consulta sem dimensões e com duas janelas: os 28 dias terminando ontem e os 28
+ * anteriores. Com mais de uma janela, a API acrescenta a dimensão `dateRange`
+ * (`date_range_0`, `date_range_1`); janela sem linha = nenhuma atividade (zeros).
+ */
+async function buscarTotais(consultar: ClienteGa4, property: string, hoje: number): Promise<TotaisGa4> {
+  const fimAtual = iso(hoje - DIA_MS)
+  const inicioAtual = iso(hoje - DIAS_PAGINAS * DIA_MS)
+  const fimAnterior = iso(hoje - (DIAS_PAGINAS + 1) * DIA_MS)
+  const inicioAnterior = iso(hoje - 2 * DIAS_PAGINAS * DIA_MS)
+  const r = await consultar({
+    property,
+    requestBody: {
+      dateRanges: [
+        { startDate: inicioAtual, endDate: fimAtual },
+        { startDate: inicioAnterior, endDate: fimAnterior },
+      ],
+      dimensions: [],
+      metrics: METRICAS_TOTAIS.map((name) => ({ name })),
+      limit: '10',
+      offset: '0',
+    },
+  })
+  const rows = r.rows ?? []
+  const daJanela = (n: number): LinhaApi | undefined =>
+    rows.find((l) => l.dimensionValues?.[0]?.value === `date_range_${n}`) ??
+    (rows.every((l) => !l.dimensionValues?.length) ? rows[n] : undefined)
+  const valores = (l: LinhaApi | undefined) => METRICAS_TOTAIS.map((_, i) => num(l?.metricValues?.[i]?.value))
+  const [ua, sa, ea, ka] = valores(daJanela(0))
+  const [ub, sb, eb, kb] = valores(daJanela(1))
+  return {
+    inicioAtual,
+    fimAtual,
+    inicioAnterior,
+    fimAnterior,
+    usuariosAtual: ua,
+    usuariosAnterior: ub,
+    sessoesAtual: sa,
+    sessoesAnterior: sb,
+    sessoesEngajadasAtual: ea,
+    sessoesEngajadasAnterior: eb,
+    eventosChaveAtual: ka,
+    eventosChaveAnterior: kb,
+  }
 }
 
 type Db = ReturnType<typeof getDb>
@@ -198,6 +265,22 @@ export async function gravarGa4Paginas(
   }
 }
 
+export async function gravarGa4Totais(t: TotaisGa4, snapshotDate: string, exec: Executor = getDb()): Promise<void> {
+  await exec
+    .insert(ga4Totais)
+    .values({ snapshotDate, ...t })
+    .onConflictDoUpdate({ target: ga4Totais.snapshotDate, set: { ...t } })
+}
+
+/** Apaga totais de snapshots anteriores ao corte (mesma retenção de ga4_paginas). */
+export async function removerGa4TotaisAntigos(corte: string, exec: Executor = getDb()): Promise<number> {
+  const apagadas = await exec
+    .delete(ga4Totais)
+    .where(lt(ga4Totais.snapshotDate, corte))
+    .returning({ data: ga4Totais.snapshotDate })
+  return apagadas.length
+}
+
 export async function removerGa4PaginasAntigas(corte: string, exec: Executor = getDb()): Promise<number> {
   const apagadas = await exec
     .delete(ga4Paginas)
@@ -210,6 +293,7 @@ export type EscritaGa4 = {
   limpar: (corte: string) => Promise<number>
   diario: (l: LinhaDiariaGa4[]) => Promise<void>
   paginas: (l: LinhaPaginaGa4[], snapshotDate: string) => Promise<void>
+  totais: (t: TotaisGa4, snapshotDate: string) => Promise<void>
 }
 export type TransacaoGa4 = <T>(fn: (e: EscritaGa4) => Promise<T>) => Promise<T>
 
@@ -218,7 +302,8 @@ export const transacaoGa4: TransacaoGa4 = (fn) =>
     fn({
       diario: (l) => gravarGa4Diario(l, tx),
       paginas: (l, d) => gravarGa4Paginas(l, d, tx),
-      limpar: (c) => removerGa4PaginasAntigas(c, tx),
+      totais: (t, d) => gravarGa4Totais(t, d, tx),
+      limpar: async (c) => (await removerGa4PaginasAntigas(c, tx)) + (await removerGa4TotaisAntigos(c, tx)),
     }),
   )
 
@@ -233,6 +318,7 @@ export async function executarGa4(d: {
   await d.transacao(async (e) => {
     await e.diario(r.diario)
     await e.paginas(r.paginas, r.snapshotDate)
+    await e.totais(r.totais, r.snapshotDate)
     await e.limpar(iso(meiaNoiteUtc(d.hoje) - RETENCAO_DIAS * DIA_MS))
   })
   return { snapshotDate: r.snapshotDate, dias: r.diario.length, paginas: r.paginas.length }

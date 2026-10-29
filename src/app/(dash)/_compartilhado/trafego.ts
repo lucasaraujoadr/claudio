@@ -13,19 +13,48 @@ export type DiaGa4 = {
   eventosChave: number
 }
 
-export type MetricaGa4 = 'sessoes' | 'usuarios' | 'sessoesEngajadas' | 'eventosChave'
+/**
+ * Métricas que se podem somar dia a dia. Usuários ficam de fora de propósito: somar os
+ * usuários de cada dia conta de novo quem voltou; o total de usuários vem de `ga4_totais`.
+ */
+export type MetricaGa4 = 'sessoes' | 'sessoesEngajadas' | 'eventosChave'
 
-export const METRICAS_GA4: readonly { chave: MetricaGa4; rotulo: string; detalhe?: string }[] = [
+export const METRICAS_GA4: readonly { chave: MetricaGa4; rotulo: string }[] = [
   { chave: 'sessoes', rotulo: 'Sessões' },
-  {
-    chave: 'usuarios',
-    rotulo: 'Usuários (soma diária)',
-    // ga4_diario guarda usuários por dia: somar os dias conta duas vezes quem voltou.
-    detalhe: 'Soma dos usuários de cada dia: quem voltou em outro dia conta de novo.',
-  },
   { chave: 'sessoesEngajadas', rotulo: 'Sessões engajadas' },
   { chave: 'eventosChave', rotulo: 'Eventos-chave' },
 ]
+
+/** Linha de `ga4_totais`: usuários deduplicados das duas janelas de 28 dias. */
+export type TotaisUsuariosGa4 = {
+  inicioAtual: string
+  fimAtual: string
+  inicioAnterior: string
+  fimAnterior: string
+  usuariosAtual: number
+  usuariosAnterior: number
+}
+
+/** Valor e variação do indicador de usuários. Sem linha: null ("sem dado", nunca uma soma). */
+export function indicadorUsuarios(t: TotaisUsuariosGa4 | null | undefined): {
+  valor: number
+  variacao: Variacao
+  periodo: Janela
+  anterior: Janela
+} | null {
+  if (!t || !Number.isFinite(t.usuariosAtual)) return null
+  return {
+    valor: t.usuariosAtual,
+    variacao: calcularVariacao(t.usuariosAtual, t.usuariosAnterior),
+    periodo: { inicio: t.inicioAtual, fim: t.fimAtual },
+    anterior: { inicio: t.inicioAnterior, fim: t.fimAnterior },
+  }
+}
+
+/** Nenhum evento-chave nas duas janelas: provavelmente nenhum evento está marcado como chave. */
+export function semEventosChave(r: Pick<ResumoTrafego, 'totais' | 'comparacao'>): boolean {
+  return r.totais.eventosChave === 0 && (r.comparacao?.totais.eventosChave ?? 0) === 0
+}
 
 export const DIAS_JANELA_TRAFEGO = 28
 export const DIAS_SERIE_TRAFEGO = 90
@@ -45,7 +74,7 @@ export function janelasComparacao(fim: string, dias = DIAS_JANELA_TRAFEGO): { at
 type Totais = Record<MetricaGa4, number>
 
 function somar(dias: readonly DiaGa4[], j: Janela): { totais: Totais; diasComDado: number } {
-  const totais: Totais = { sessoes: 0, usuarios: 0, sessoesEngajadas: 0, eventosChave: 0 }
+  const totais: Totais = { sessoes: 0, sessoesEngajadas: 0, eventosChave: 0 }
   let diasComDado = 0
   for (const d of dias) {
     if (d.data < j.inicio || d.data > j.fim) continue

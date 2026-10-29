@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { datasEntre } from '@/components/graficos/serie'
-import { faixaSincronizada, janelasComparacao, preencherDiasGa4, resumirTrafego, serieTrafego, type DiaGa4 } from '../trafego'
+import {
+  faixaSincronizada,
+  indicadorUsuarios,
+  janelasComparacao,
+  preencherDiasGa4,
+  resumirTrafego,
+  semEventosChave,
+  serieTrafego,
+  type DiaGa4,
+} from '../trafego'
 
 function dia(data: string, sessoes: number): DiaGa4 {
   return { data, sessoes, usuarios: sessoes, sessoesEngajadas: Math.floor(sessoes / 2), eventosChave: 0 }
@@ -88,5 +97,39 @@ describe('resumirTrafego', () => {
     expect(s).toHaveLength(90)
     expect(s[0].valor).toBeNull()
     expect(s.filter((p) => p.valor === null)).toHaveLength(62)
+  })
+})
+
+describe('usuários: só dos totais deduplicados', () => {
+  const t = {
+    inicioAtual: '2026-10-01', fimAtual: '2026-10-28', inicioAnterior: '2026-09-03', fimAnterior: '2026-09-30',
+    usuariosAtual: 909, usuariosAnterior: 1060,
+  }
+
+  it('usa o total da janela e a variação contra a anterior', () => {
+    const u = indicadorUsuarios(t)!
+    expect(u.valor).toBe(909)
+    expect(u.variacao.delta).toBe(-151)
+    expect(u.variacao.percentual).toBeCloseTo(-14.245, 2)
+    expect(u.periodo).toEqual({ inicio: '2026-10-01', fim: '2026-10-28' })
+  })
+
+  it('sem linha de totais: null (sem dado), nunca a soma diária', () => {
+    expect(indicadorUsuarios(null)).toBeNull()
+    expect(indicadorUsuarios(undefined)).toBeNull()
+  })
+
+  it('o resumo diário não tem mais total de usuários', () => {
+    const r = resumirTrafego(serie('2026-07-31', '2026-10-28'))!
+    expect(r.totais).not.toHaveProperty('usuarios')
+  })
+})
+
+describe('semEventosChave', () => {
+  it('verdadeiro só quando as duas janelas têm zero eventos-chave', () => {
+    const r = resumirTrafego(serie('2026-07-31', '2026-10-28'))!
+    expect(semEventosChave(r)).toBe(true)
+    const comEvento = resumirTrafego([...serie('2026-07-31', '2026-10-27'), { ...dia('2026-10-28', 10), eventosChave: 1 }])!
+    expect(semEventosChave(comEvento)).toBe(false)
   })
 })

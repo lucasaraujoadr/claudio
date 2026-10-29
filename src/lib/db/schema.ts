@@ -171,6 +171,27 @@ export const ga4Paginas = pgTable(
   (t) => [unique().on(t.snapshotDate, t.pagina, t.origemMidia)],
 )
 
+/**
+ * Totais deduplicados do GA4 (uma consulta sem dimensões, duas janelas): últimos 28 dias
+ * terminando na véspera do snapshot e os 28 anteriores. Usuários só podem vir daqui: a
+ * soma dos usuários de cada dia conta de novo quem voltou em outro dia.
+ */
+export const ga4Totais = pgTable('ga4_totais', {
+  snapshotDate: date('snapshot_date').primaryKey(),
+  inicioAtual: date('inicio_atual').notNull(),
+  fimAtual: date('fim_atual').notNull(),
+  inicioAnterior: date('inicio_anterior').notNull(),
+  fimAnterior: date('fim_anterior').notNull(),
+  usuariosAtual: integer('usuarios_atual').notNull(),
+  usuariosAnterior: integer('usuarios_anterior').notNull(),
+  sessoesAtual: integer('sessoes_atual').notNull(),
+  sessoesAnterior: integer('sessoes_anterior').notNull(),
+  sessoesEngajadasAtual: integer('sessoes_engajadas_atual').notNull(),
+  sessoesEngajadasAnterior: integer('sessoes_engajadas_anterior').notNull(),
+  eventosChaveAtual: integer('eventos_chave_atual').notNull(),
+  eventosChaveAnterior: integer('eventos_chave_anterior').notNull(),
+})
+
 /** Última execução de cada fonte da rotina diária (para "última sincronização"). */
 export const sincronizacoes = pgTable('sincronizacoes', {
   fonte: text('fonte').primaryKey(),

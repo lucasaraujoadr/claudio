@@ -4,8 +4,8 @@ import { formatarDataIso, somarDias } from '@/components/graficos/serie'
 import { Aviso, CabecalhoPagina, Cartao, CELULA_NUMERICA, EstadoVazio, Selo, Tabela } from '@/components/ui'
 import { GraficoSessoes, IndicadoresTrafego, legendaPeriodo } from '../_compartilhado/bloco-trafego'
 import { DESCRICAO_CANAL, ROTULO_CANAL, agruparPorCanal, topPaginas } from '../_compartilhado/canais'
-import { carregarDiarioGa4, carregarPaginasGa4, carregarSincronizacoesSeguro } from '../_compartilhado/carregar'
-import { estadoFonte, linhaUltimaSincronizacao, ultimaSincronizacaoOk } from '../_compartilhado/sincronizacao'
+import { carregarDiarioGa4, carregarPaginasGa4, carregarSincronizacoesSeguro, carregarTotaisGa4 } from '../_compartilhado/carregar'
+import { emailContaServico, estadoFonte, linhaUltimaSincronizacao, ultimaSincronizacaoOk } from '../_compartilhado/sincronizacao'
 import { resumirTrafego } from '../_compartilhado/trafego'
 
 export const metadata = { title: 'Tráfego' }
@@ -34,10 +34,11 @@ function Indisponivel({ oque }: { oque: string }) {
 
 export default async function TrafegoPage() {
   await connection()
-  const [diario, paginas, sinc] = await Promise.all([
+  const [diario, paginas, sinc, totais] = await Promise.all([
     carregar('série diária', () => carregarDiarioGa4()),
     carregar('páginas', carregarPaginasGa4),
     carregarSincronizacoesSeguro(),
+    carregar('totais', carregarTotaisGa4),
   ])
   const registroGa4 = sinc?.ga4
   const estado = estadoFonte(registroGa4)
@@ -62,7 +63,17 @@ export default async function TrafegoPage() {
 
       {estado === 'sem_permissao' && (
         <Aviso tipo="alerta" titulo="O Google Analytics recusou o acesso na última sincronização">
-          A conta de serviço precisa da função Leitor na propriedade do GA4. Os números abaixo são da última sincronização que deu certo.
+          <p>
+            Um administrador da propriedade precisa dar a função Leitor à conta abaixo (Analytics → Administrador →
+            Gerenciamento de acesso à propriedade → Adicionar usuário → Leitor). A rotina diária volta a sincronizar
+            sozinha depois disso. Os números abaixo são da última sincronização que deu certo.
+          </p>
+          <p className="mt-2">
+            Conta a adicionar:{' '}
+            <code className="rounded border border-borda bg-superficie px-1.5 py-0.5 font-mono text-[0.8125rem] break-all text-tinta select-all">
+              {emailContaServico()}
+            </code>
+          </p>
         </Aviso>
       )}
       {estado === 'erro' && (
@@ -86,7 +97,7 @@ export default async function TrafegoPage() {
       ) : (
         <>
           <Cartao titulo="Últimos 28 dias" descricao={legendaPeriodo(resumo)}>
-            <IndicadoresTrafego resumo={resumo} />
+            <IndicadoresTrafego resumo={resumo} usuarios={totais.ok ? totais.dados : null} falhaUsuarios={!totais.ok} />
           </Cartao>
           <Cartao titulo="Sessões por dia" descricao="Últimos 90 dias. Passe o ponteiro ou use as setas para ver cada dia.">
             <GraficoSessoes dias={diario.dados} resumo={resumo} />

@@ -1,8 +1,8 @@
 import { asc, desc, eq, gte, max } from 'drizzle-orm'
 import { getDb } from '@/lib/db'
-import { ga4Diario, ga4Paginas, gscTotais, sincronizacoes } from '@/lib/db/schema'
+import { ga4Diario, ga4Paginas, ga4Totais, gscTotais, sincronizacoes } from '@/lib/db/schema'
 import { somarDias } from '@/components/graficos/serie'
-import type { DiaGa4 } from './trafego'
+import type { DiaGa4, TotaisUsuariosGa4 } from './trafego'
 import type { LinhaOrigem } from './canais'
 import type { LinhaTotaisGsc } from './search-console'
 import type { RegistroSincronizacao } from './sincronizacao'
@@ -70,4 +70,10 @@ export async function carregarTotaisGsc(dias = 90): Promise<LinhaTotaisGsc[]> {
     .orderBy(desc(gscTotais.snapshotDate))
     .limit(dias)
   return linhas.reverse()
+}
+
+/** Totais deduplicados do snapshot mais recente do GA4 (usuários). Null sem nenhuma linha. */
+export async function carregarTotaisGa4(): Promise<TotaisUsuariosGa4 | null> {
+  const [linha] = await getDb().select().from(ga4Totais).orderBy(desc(ga4Totais.snapshotDate)).limit(1)
+  return linha ?? null
 }

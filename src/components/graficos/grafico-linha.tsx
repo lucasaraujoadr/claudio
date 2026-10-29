@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
+import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
 import { CELULA_NUMERICA, Tabela } from '@/components/ui/tabela'
 import { cx } from '@/components/ui/cx'
 import {
@@ -54,15 +54,16 @@ const fmt = (n: number) => n.toLocaleString('pt-BR')
  */
 export function GraficoLinha({ titulo, resumo, datas, series, unidade, altura = 220, className }: GraficoLinhaProps) {
   const ref = useRef<HTMLDivElement>(null)
-  const [largura, setLargura] = useState(640)
+  // Null até medir o contêiner: nada é desenhado esticado; a altura já fica reservada.
+  const [medida, setMedida] = useState<number | null>(null)
   const [indice, setIndice] = useState<number | null>(null)
   const [anuncio, setAnuncio] = useState('')
   const idResumo = useId()
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
-    const medir = () => setLargura(Math.max(260, Math.round(el.getBoundingClientRect().width)))
+    const medir = () => setMedida(Math.max(260, Math.round(el.getBoundingClientRect().width)))
     medir()
     if (typeof ResizeObserver === 'undefined') return
     const ro = new ResizeObserver(medir)
@@ -70,6 +71,7 @@ export function GraficoLinha({ titulo, resumo, datas, series, unidade, altura = 
     return () => ro.disconnect()
   }, [])
 
+  const largura = medida ?? 640
   const total = datas.length
   const maximo = Math.max(0, ...series.flatMap((s) => s.valores.filter((v): v is number => v !== null)))
   const ticks = ticksEixo(maximo, altura < 180 ? 3 : 4)
@@ -145,16 +147,17 @@ export function GraficoLinha({ titulo, resumo, datas, series, unidade, altura = 
         onKeyDown={aoTeclar}
         onFocus={() => setIndice((i) => i ?? (total > 0 ? total - 1 : null))}
         onBlur={() => setIndice(null)}
+        style={{ height: altura }}
         className="relative w-full rounded-md focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-foco"
       >
+        {/* O grupo acima já tem o nome e o resumo: o SVG é só desenho (nome anunciado uma vez). */}
+        {medida !== null && (
         <svg
-          role="img"
-          aria-label={titulo}
-          aria-describedby={idResumo}
+          aria-hidden="true"
+          width={largura}
+          height={altura}
           viewBox={`0 0 ${largura} ${altura}`}
-          // Antes da primeira medição (HTML do servidor), o SVG escala para a largura do
-          // contêiner; depois, a largura medida coincide com ela e nada é esticado.
-          className="block h-auto w-full overflow-visible"
+          className="block overflow-visible"
         >
           {/* Grade: linhas finas, sólidas, um tom acima da superfície. */}
           <g aria-hidden="true">
@@ -242,6 +245,7 @@ export function GraficoLinha({ titulo, resumo, datas, series, unidade, altura = 
             onPointerLeave={() => setIndice(null)}
           />
         </svg>
+        )}
 
         {dica !== null && (
           <div

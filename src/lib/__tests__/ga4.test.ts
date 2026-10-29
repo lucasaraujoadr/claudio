@@ -4,6 +4,7 @@ import {
   executarGa4,
   gravarGa4Diario,
   gravarGa4Paginas,
+  gravarGa4Totais,
   type ClienteGa4,
   type PedidoGa4,
   type ResultadoGa4,
@@ -27,7 +28,10 @@ describe('buscarGa4', () => {
     const pedidos: PedidoGa4[] = []
     const cliente: ClienteGa4 = async (p) => {
       pedidos.push(p)
-      return p.requestBody.dimensions[0].name === 'date'
+      if (p.requestBody.dimensions.length === 0) {
+        return { rows: [linha(['date_range_1'], [70, 90, 50, 0]), linha(['date_range_0'], [60, 80, 40, 3])] }
+      }
+      return p.requestBody.dimensions[0]?.name === 'date'
         ? { rows: [linha(['20261028'], [10, 8, 6, 2])] }
         : { rows: [linha(['/a?x=1', 'google / organic'], [5, 4, 0, 1])] }
     }
@@ -45,12 +49,43 @@ describe('buscarGa4', () => {
     expect(pedidos[0].requestBody.metrics.map((m) => m.name)).toEqual([
       'sessions', 'activeUsers', 'engagedSessions', 'keyEvents',
     ])
+    // Totais deduplicados: sem dimensões, duas janelas de 28 dias.
+    expect(pedidos[2].requestBody.dimensions).toEqual([])
+    expect(pedidos[2].requestBody.dateRanges).toEqual([
+      { startDate: '2026-10-01', endDate: '2026-10-28' },
+      { startDate: '2026-09-03', endDate: '2026-09-30' },
+    ])
+    expect(pedidos[2].requestBody.metrics.map((m) => m.name)).toEqual(['activeUsers', 'sessions', 'engagedSessions', 'keyEvents'])
+    // Casa cada linha pela janela (date_range_N), não pela ordem de chegada.
+    expect(r.totais).toEqual({
+      inicioAtual: '2026-10-01',
+      fimAtual: '2026-10-28',
+      inicioAnterior: '2026-09-03',
+      fimAnterior: '2026-09-30',
+      usuariosAtual: 60,
+      usuariosAnterior: 70,
+      sessoesAtual: 80,
+      sessoesAnterior: 90,
+      sessoesEngajadasAtual: 40,
+      sessoesEngajadasAnterior: 50,
+      eventosChaveAtual: 3,
+      eventosChaveAnterior: 0,
+    })
+  })
+
+  it('janela sem linha nos totais vira zeros (nenhuma atividade), sem lançar', async () => {
+    const cliente: ClienteGa4 = async (p) =>
+      p.requestBody.dimensions.length === 0 ? { rows: [linha(['date_range_0'], [5, 6, 2, 0])] } : { rows: [] }
+    const r = await buscarGa4({ propertyId: '1', hoje: HOJE }, cliente)
+    expect(r.totais.usuariosAtual).toBe(5)
+    expect(r.totais.usuariosAnterior).toBe(0)
+    expect(r.totais.sessoesAnterior).toBe(0)
   })
 
   it('pagina por offset/limit e limita a 1000 linhas de páginas', async () => {
     const offsets: string[] = []
     const cliente: ClienteGa4 = async (p) => {
-      if (p.requestBody.dimensions[0].name === 'date') return { rows: [] }
+      if (p.requestBody.dimensions.length === 0 || p.requestBody.dimensions[0]?.name === 'date') return { rows: [] }
       offsets.push(`${p.requestBody.offset}/${p.requestBody.limit}`)
       const n = Number(p.requestBody.limit)
       return { rows: Array.from({ length: n }, (_, i) => linha([`/p${p.requestBody.offset}-${i}`, 'x'], [1, 1, 1, 0])) }
@@ -63,7 +98,7 @@ describe('buscarGa4', () => {
   it('para quando a última página vem incompleta', async () => {
     let chamadas = 0
     const cliente: ClienteGa4 = async (p) => {
-      if (p.requestBody.dimensions[0].name === 'date') return { rows: [] }
+      if (p.requestBody.dimensions.length === 0 || p.requestBody.dimensions[0]?.name === 'date') return { rows: [] }
       chamadas++
       return { rows: [linha(['/a', 'x'], [1, 1, 1, 0])] }
     }
@@ -102,9 +137,26 @@ describe('gravação idempotente', () => {
     expect(chamadas[0].values).toHaveLength(2)
     expect(chamadas[0].values[0]).toMatchObject({ snapshotDate: '2026-10-29' })
   })
+  it('totais usa upsert por snapshot_date', async () => {
+    const { exec, chamadas } = falsoDb()
+    const t = {
+      inicioAtual: '2026-10-01', fimAtual: '2026-10-28', inicioAnterior: '2026-09-03', fimAnterior: '2026-09-30',
+      usuariosAtual: 9, usuariosAnterior: 7, sessoesAtual: 1, sessoesAnterior: 1,
+      sessoesEngajadasAtual: 1, sessoesEngajadasAnterior: 1, eventosChaveAtual: 0, eventosChaveAnterior: 0,
+    }
+    await gravarGa4Totais(t, '2026-10-29', exec)
+    expect(chamadas).toHaveLength(1)
+    expect(chamadas[0].values).toMatchObject({ snapshotDate: '2026-10-29', usuariosAtual: 9 })
+    expect(chamadas[0].conflito).toHaveProperty('target')
+  })
   it('executarGa4 busca fora da transação e grava dentro dela', async () => {
     const ordem: string[] = []
-    const res: ResultadoGa4 = { snapshotDate: '2026-10-29', diario: [], paginas: [] }
+    const totais = {
+      inicioAtual: '2026-10-01', fimAtual: '2026-10-28', inicioAnterior: '2026-09-03', fimAnterior: '2026-09-30',
+      usuariosAtual: 1, usuariosAnterior: 1, sessoesAtual: 1, sessoesAnterior: 1,
+      sessoesEngajadasAtual: 1, sessoesEngajadasAnterior: 1, eventosChaveAtual: 0, eventosChaveAnterior: 0,
+    }
+    const res: ResultadoGa4 = { snapshotDate: '2026-10-29', diario: [], paginas: [], totais }
     const r = await executarGa4({
       hoje: HOJE,
       propertyId: '1',
@@ -117,6 +169,7 @@ describe('gravação idempotente', () => {
         return fn({
           diario: async () => void ordem.push('d'),
           paginas: async () => void ordem.push('p'),
+          totais: async (t, d) => void ordem.push(`t:${d}:${t.usuariosAtual}`),
           limpar: async (c) => {
             ordem.push(`l:${c}`)
             return 0
@@ -124,7 +177,7 @@ describe('gravação idempotente', () => {
         })
       },
     })
-    expect(ordem).toEqual(['busca', 'tx', 'd', 'p', 'l:2026-07-31'])
+    expect(ordem).toEqual(['busca', 'tx', 'd', 'p', 't:2026-10-29:1', 'l:2026-07-31'])
     expect(r).toEqual({ snapshotDate: '2026-10-29', dias: 0, paginas: 0 })
   })
 })

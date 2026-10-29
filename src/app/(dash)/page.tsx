@@ -11,7 +11,7 @@ import { calcularVariacao, escolherComparacao, type Totais } from '@/lib/visao-g
 import { Aviso, CabecalhoPagina, Cartao, EstadoVazio, Indicador, Selo } from '@/components/ui'
 import { AvisoSearchConsole } from './_compartilhado/aviso-search-console'
 import { GraficoSessoes, IndicadoresTrafego, legendaPeriodo } from './_compartilhado/bloco-trafego'
-import { carregarDiarioGa4, carregarSincronizacoesSeguro, carregarTotaisGsc } from './_compartilhado/carregar'
+import { carregarDiarioGa4, carregarSincronizacoesSeguro, carregarTotaisGa4, carregarTotaisGsc } from './_compartilhado/carregar'
 import { GraficosSearchConsole } from './_compartilhado/graficos-search-console'
 import { seriesSearchConsole } from './_compartilhado/search-console'
 import { emailContaServico, explicarSearchConsole, ultimaSincronizacaoOk } from './_compartilhado/sincronizacao'
@@ -216,7 +216,7 @@ function SemDado({ titulo, children }: { titulo: string; children: ReactNode }) 
 
 export default async function VisaoGeralPage() {
   await connection()
-  const [gsc, auditoria, temas, trafego, totaisGsc, ultimosBriefings, sinc] = await Promise.all([
+  const [gsc, auditoria, temas, trafego, totaisGsc, ultimosBriefings, sinc, totaisGa4] = await Promise.all([
     carregar('gsc', carregarGsc),
     carregar('auditoria', carregarAuditoria),
     carregar('temas', carregarTemas),
@@ -224,6 +224,7 @@ export default async function VisaoGeralPage() {
     carregar('totais gsc', () => carregarTotaisGsc()),
     carregar('briefings', carregarUltimosBriefings),
     carregarSincronizacoesSeguro(),
+    carregar('totais ga4', carregarTotaisGa4),
   ])
 
   const diasGsc = gsc.ok && gsc.dados ? diasDesde(gsc.dados.data) : 0
@@ -267,7 +268,11 @@ export default async function VisaoGeralPage() {
           </SemDado>
         ) : (
           <div className="space-y-6">
-            <IndicadoresTrafego resumo={resumoTrafego} />
+            <IndicadoresTrafego
+              resumo={resumoTrafego}
+              usuarios={totaisGa4.ok ? totaisGa4.dados : null}
+              falhaUsuarios={!totaisGa4.ok}
+            />
             <GraficoSessoes dias={trafego.dados} resumo={resumoTrafego} altura={200} comEngajadas={false} />
           </div>
         )}
