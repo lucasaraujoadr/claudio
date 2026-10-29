@@ -208,6 +208,21 @@ export function relatorioCsv(r: Relatorio): string {
 
 export type ResultadoSalvar = { ok: true; id: string } | { ok: false; erro: Extract<ResultadoCsv, { ok: false }>['erro']; mensagem: string }
 
+/**
+ * Apaga os lotes com mais de 24 horas (com o CSV inteiro em `conteudo`). Roda a cada upload
+ * e na rotina diária, para que uma planilha abandonada não fique guardada até o próximo
+ * upload. Devolve quantos apagou.
+ */
+export async function apagarLotesVencidos(opts: { db?: BancoCrm; agora?: Date } = {}): Promise<number> {
+  const db = opts.db ?? bancoPadrao()
+  const agora = opts.agora ?? new Date()
+  const apagados = await db
+    .delete(importacoesContatos)
+    .where(lt(importacoesContatos.criadoEm, new Date(agora.getTime() - VALIDADE_LOTE_MS)))
+    .returning({ id: importacoesContatos.id })
+  return apagados.length
+}
+
 /** Lê o texto, recusa se inválido ou acima do limite, e guarda para a pré-visualização. */
 export async function salvarLote(
   entrada: { nomeArquivo: string; texto: string },
@@ -217,7 +232,7 @@ export async function salvarLote(
   if (!csv.ok) return { ok: false, erro: csv.erro, mensagem: csv.mensagem }
   const db = opts.db ?? bancoPadrao()
   const agora = opts.agora ?? new Date()
-  await db.delete(importacoesContatos).where(lt(importacoesContatos.criadoEm, new Date(agora.getTime() - VALIDADE_LOTE_MS)))
+  await apagarLotesVencidos({ db, agora })
   const id = randomUUID()
   await db.insert(importacoesContatos).values({
     id,

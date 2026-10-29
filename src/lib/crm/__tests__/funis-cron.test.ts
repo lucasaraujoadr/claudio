@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { criarClienteBrevo } from '@/lib/brevo'
 import { executarCronDiario, type RegistroSincronizacao } from '@/lib/cron-diario'
-import { contatos, funilInscricoes, funis } from '@/lib/db/schema'
+import { contatos, funilInscricoes, funis, importacoesContatos } from '@/lib/db/schema'
 import type { BancoCrm } from '../banco'
 import { executarEtapaFunis, FalhaEtapaFunis } from '../funis-cron'
+import { INTERROMPIDO_POR_TEMPO } from '../funis'
 import { criarBancoTesteFunis } from './banco-teste-funis'
 import { brevoFalso } from './brevo-fake'
 
@@ -104,5 +105,58 @@ describe('rotina diária com funis', () => {
       registrar: reg2,
     })
     expect(r2.find((x) => x.fonte === 'funis')?.mensagem).toBe('Falha em: reativacao. Reativação: —.')
+  })
+})
+
+describe('dados mínimos: lotes de planilha vencidos', () => {
+  it('a etapa diária apaga lotes com mais de 24 h (com o CSV inteiro) e mantém os recentes', async () => {
+    await db.insert(importacoesContatos).values([
+      { id: 'velho', nomeArquivo: 'a.csv', conteudo: 'email\nfulano@example.com', totalLinhas: 1, criadoEm: new Date(AGORA.getTime() - 25 * 3_600_000) },
+      { id: 'novo', nomeArquivo: 'b.csv', conteudo: 'email\nciclano@example.com', totalLinhas: 1, criadoEm: new Date(AGORA.getTime() - 3_600_000) },
+    ])
+    const r = await executarEtapaFunis({ db, cliente: criarClienteBrevo({ apiKey: null }), agora: AGORA })
+    expect((await db.select().from(importacoesContatos)).map((l) => l.id)).toEqual(['novo'])
+    expect(r.detalhes.lotesApagados).toBe(1)
+  })
+})
+
+describe('prazo interno da etapa de funis', () => {
+  it('passou do prazo: para entre subetapas/lotes e a rotina grava "interrompido por tempo", nunca ok', async () => {
+    await db.insert(contatos).values(
+      Array.from({ length: 12 }, (_, i) => ({ nome: 'C', email: `t${i}@example.com`, emailNormalizado: `t${i}@example.com`, origem: 'planilha' as const, baseLegal: 'contrato' as const, status: 'cliente' as const, criadoEm: ANTIGO })),
+    )
+    const b = brevoFalso()
+    let agoraMs = 0
+    const upsert = b.cliente.upsertContato
+    // Cada envio ao Brevo "demora" 20 s no relógio falso.
+    b.cliente.upsertContato = async (c) => {
+      agoraMs += 20_000
+      return upsert(c)
+    }
+    const e = await executarEtapaFunis({ db, cliente: b.cliente, agora: AGORA, relogio: () => agoraMs, prazoMs: 90_000 }).catch((x: unknown) => x)
+    expect(e).toBeInstanceOf(FalhaEtapaFunis)
+    const f = e as FalhaEtapaFunis
+    expect(f.mensagemSegura).toMatch(/^Interrompido por tempo/)
+    expect(f.mensagemSegura).toContain('listas')
+    // Parou dentro do envio de contatos: nem todos foram, e a etapa das listas não rodou.
+    expect(b.chamadas.filter((c) => c.op === 'upsert').length).toBeLessThan(12)
+    expect(b.chamadas.filter((c) => c.op === 'adicionarALista')).toHaveLength(0)
+
+    const regs: RegistroSincronizacao[] = []
+    await executarCronDiario({
+      hoje: AGORA,
+      gsc: null,
+      ga4: null,
+      funis: async () => {
+        throw e
+      },
+      registrar: async (r) => void regs.push(r),
+    })
+    expect(regs.find((x) => x.fonte === 'funis')).toMatchObject({ status: 'erro', mensagem: expect.stringMatching(/^Interrompido por tempo/) })
+  })
+
+  it('dentro do prazo: nada é interrompido', async () => {
+    const r = await executarEtapaFunis({ db, cliente: brevoFalso().cliente, agora: AGORA, relogio: () => 0 })
+    expect(r.mensagem).not.toContain(INTERROMPIDO_POR_TEMPO)
   })
 })

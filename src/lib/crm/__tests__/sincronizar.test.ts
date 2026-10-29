@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { criarClienteBrevo } from '@/lib/brevo'
-import { contatos, sincronizacoes } from '@/lib/db/schema'
+import { contatos, eventosContato, funilInscricoes, sincronizacoes } from '@/lib/db/schema'
 import type { BancoCrm } from '../banco'
 import { mudarStatus, upsertContato } from '../contatos'
+import { inscrever, INTERROMPIDO_POR_TEMPO } from '../funis'
 import { adicionarContatosALista, importarDoBrevo, sincronizarPendentes } from '../sincronizar'
 import { criarBancoTesteBrevo } from './banco-teste-brevo'
 import { brevoFalso } from './brevo-fake'
@@ -218,5 +219,45 @@ describe('estadoIntegracao', () => {
     expect(e.porSync).toEqual({ pendente: 1, sincronizado: 1, erro: 1 })
     expect(e.ultimaSincronizacao?.status).toBe('parcial')
     expect(e.ultimaImportacao).toBeNull()
+  })
+})
+
+describe('leitura de volta do bloqueio no Brevo', () => {
+  it('contato já existente no Brevo e bloqueado lá vira descadastrado (origem brevo) e sai dos funis', async () => {
+    const id = await criar('bloq@example.com')
+    await db.update(contatos).set({ brevoId: '55', status: 'cliente' }).where(eq(contatos.id, id))
+    await inscrever('nutricao-blog', [id], { db, caminho: 'manual' })
+    const b = brevoFalso([{ id: 55, email: 'bloq@example.com', emailBlacklisted: true, listIds: [3], atributos: {} }])
+    const r = await sincronizarPendentes({ db, cliente: b.cliente, registrar: false })
+    expect(r).toMatchObject({ enviados: 1, interrompido: null })
+    const c = await linha(id)
+    expect(c.status).toBe('descadastrado')
+    const evs = await db.select().from(eventosContato).where(eq(eventosContato.contatoId, id))
+    expect(evs.find((e) => e.tipo === 'mudou_status')?.dados).toMatchObject({ de: 'cliente', para: 'descadastrado', origem: 'brevo' })
+    const [i] = await db.select().from(funilInscricoes).where(eq(funilInscricoes.contatoId, id))
+    expect(i.status).toBe('saiu')
+    // Fica pendente para a próxima rodada levar o bloqueio e tirar das listas.
+    expect(c.syncStatus).toBe('pendente')
+    await sincronizarPendentes({ db, cliente: b.cliente, registrar: false })
+    expect(b.contatos.get('bloq@example.com')?.listIds).toEqual([])
+  })
+
+  it('não bloqueado no Brevo: nada muda', async () => {
+    const id = await criar('livre@example.com')
+    const b = brevoFalso([{ id: 56, email: 'livre@example.com', emailBlacklisted: false, listIds: [], atributos: {} }])
+    await sincronizarPendentes({ db, cliente: b.cliente, registrar: false })
+    expect(await linha(id)).toMatchObject({ status: 'lead', syncStatus: 'sincronizado', brevoId: '56' })
+  })
+})
+
+describe('prazo da rotina (deveParar)', () => {
+  it('para entre lotes e diz que foi por tempo; o resto fica pendente', async () => {
+    for (let i = 0; i < 4; i++) await criar(`p${i}@example.com`)
+    const b = brevoFalso()
+    let chamadas = 0
+    const r = await sincronizarPendentes({ db, cliente: b.cliente, tamanhoLote: 2, paralelo: 2, registrar: false, deveParar: () => chamadas++ > 0 })
+    expect(r).toMatchObject({ enviados: 2, interrompido: INTERROMPIDO_POR_TEMPO })
+    const pendentes = (await db.select().from(contatos)).filter((c) => c.syncStatus === 'pendente')
+    expect(pendentes).toHaveLength(2)
   })
 })

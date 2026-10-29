@@ -19,6 +19,8 @@ const ROW_LIMIT = 25000
 const TAMANHO_LOTE = 500
 const MAX_LINHAS = 100000
 const DIA_MS = 24 * 60 * 60 * 1000
+/** Teto por chamada à API do Search Console (como em `ga4.ts`): sem ele, uma conexão presa segura a rotina diária. */
+const TIMEOUT_MS = 60_000
 
 /** Campos da resposta de searchanalytics.query que usamos. */
 type LinhaApi = {
@@ -71,7 +73,7 @@ function clienteReal(): ClienteGsc {
   })
   const sc = google.searchconsole({ version: 'v1', auth })
   return async (pedido) => {
-    const r = await sc.searchanalytics.query(pedido)
+    const r = await sc.searchanalytics.query(pedido, { timeout: TIMEOUT_MS })
     return { rows: r.data.rows }
   }
 }

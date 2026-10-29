@@ -75,7 +75,10 @@ describe('navegação', () => {
     expect(menu.hidden).toBe(true)
 
     fireEvent.click(botao)
-    fireEvent.click(within(menu).getByRole('link', { name: 'Temas' }))
+    const link = within(menu).getByRole('link', { name: 'Temas' })
+    // O jsdom não navega entre documentos (e avisa no console): só o fechamento interessa aqui.
+    link.addEventListener('click', (e) => e.preventDefault())
+    fireEvent.click(link)
     expect(menu.hidden).toBe(true)
   })
 

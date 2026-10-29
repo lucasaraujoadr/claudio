@@ -6,6 +6,7 @@ import { BASES_LEGAIS, ROTULO_BASE_LEGAL } from '@/lib/crm/campos'
 import { estadoIntegracao, type EstadoIntegracao } from '@/lib/crm/sincronizar'
 import { formatarQuando } from '../contatos/_compartilhado'
 import { UrlSecreta } from './url-secreta'
+import { LIMITE_POR_MINUTO } from '@/lib/crm/webhook-site'
 
 export const metadata = { title: 'Integração' }
 
@@ -207,7 +208,7 @@ export default async function IntegracaoPage({
             ]}
           />
           <p className="text-xs text-tinta-suave">
-            Proteções: token obrigatório, até 20 envios por minuto por IP e corpo de até 64 KB. E-mail inválido é recusado sem gravar nada.
+            Proteções: token obrigatório, até {LIMITE_POR_MINUTO} envios por minuto por IP e corpo de até 64 KB. E-mail inválido ou acima do limite responde 200 com <code>{'{ok: false}'}</code> sem gravar nada (o Elementor mostra sucesso ao visitante; o envio simplesmente não aparece no CRM).
           </p>
         </div>
       </Cartao>

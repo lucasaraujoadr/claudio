@@ -10,7 +10,8 @@ import {
 import { contatos, sincronizacoes, type Contato } from '@/lib/db/schema'
 import { bancoPadrao, type BancoCrm } from './banco'
 import type { BaseLegal, DadosContato } from './campos'
-import { upsertContatos } from './contatos'
+import { mudarStatus, upsertContatos } from './contatos'
+import { INTERROMPIDO_POR_TEMPO, sairDeTodosOsFunis } from './funis'
 
 /**
  * Sincronização CRM → Brevo. O CRM é a fonte da verdade; o Brevo só envia.
@@ -53,6 +54,8 @@ export type OpcoesSincronizacao = {
   registrar?: boolean
   /** Só estes contatos (envio imediato de um lead do site, E9). */
   ids?: readonly number[]
+  /** Checado entre lotes: `true` para parar (prazo da rotina diária). */
+  deveParar?: () => boolean
 }
 
 /** Erros que valem para todos os contatos: não adianta continuar. */
@@ -79,7 +82,8 @@ export function atributosDoContato(c: Pick<Contato, 'nome' | 'telefone' | 'escri
   return a
 }
 
-type Envio = { ok: true; brevoId: string | null } | { ok: false; erro: ErroBrevo }
+/** `bloqueado`: o contato já existia no Brevo e está bloqueado lá (descadastro feito no Brevo). */
+type Envio = { ok: true; brevoId: string | null; bloqueado?: boolean } | { ok: false; erro: ErroBrevo }
 
 async function enviarContato(cliente: ClienteBrevo, c: Contato): Promise<Envio> {
   const email = c.emailNormalizado
@@ -101,11 +105,28 @@ async function enviarContato(cliente: ClienteBrevo, c: Contato): Promise<Envio> 
 
   const r = await cliente.upsertContato({ email, atributos })
   if (!r.ok) return { ok: false, erro: r }
+  // Contato criado agora no Brevo: não tem como estar bloqueado lá.
   if (r.dados.id !== null) return { ok: true, brevoId: String(r.dados.id) }
-  if (c.brevoId) return { ok: true, brevoId: c.brevoId }
+  // Já existia no Brevo: lê de volta para saber se a pessoa se descadastrou por lá (o
+  // webhook do Brevo pode não chegar, por exemplo com a proteção da Vercel ligada).
   const atual = await cliente.obterContato(email)
   if (!atual.ok) return { ok: false, erro: atual }
-  return { ok: true, brevoId: atual.dados ? String(atual.dados.id) : null }
+  return {
+    ok: true,
+    brevoId: atual.dados ? String(atual.dados.id) : c.brevoId,
+    bloqueado: atual.dados?.emailBlacklisted === true,
+  }
+}
+
+const MOTIVO_BLOQUEIO_BREVO = 'bloqueado no Brevo (descadastro, bounce ou spam registrado lá)'
+
+/** Bloqueado no Brevo → descadastrado no CRM e fora de todos os funis, numa transação. */
+async function descadastrarBloqueado(db: BancoCrm, id: number) {
+  await db.transaction(async (tx) => {
+    const banco = tx as unknown as BancoCrm
+    await mudarStatus(id, 'descadastrado', { db: banco, origem: 'brevo', motivo: MOTIVO_BLOQUEIO_BREVO })
+    await sairDeTodosOsFunis(id, { db: banco, motivo: MOTIVO_BLOQUEIO_BREVO })
+  })
 }
 
 /**
@@ -173,6 +194,10 @@ export async function sincronizarPendentes(opts: OpcoesSincronizacao = {}): Prom
   for (const fase of ['pendente', 'erro'] as const) {
     ultimoId = 0
     while (processados < limite && !interrompido) {
+      if (opts.deveParar?.()) {
+        interrompido = INTERROMPIDO_POR_TEMPO
+        break
+      }
       const lote = await db
         .select()
         .from(contatos)
@@ -193,6 +218,10 @@ export async function sincronizarPendentes(opts: OpcoesSincronizacao = {}): Prom
       processados += novos.length
 
       for (let i = 0; i < novos.length && !interrompido; i += paralelo) {
+        if (i > 0 && opts.deveParar?.()) {
+          interrompido = INTERROMPIDO_POR_TEMPO
+          break
+        }
         const grupo = novos.slice(i, i + paralelo)
         const resultados = await Promise.all(grupo.map((c) => enviarContato(cliente, c)))
         for (let j = 0; j < grupo.length; j++) {
@@ -201,6 +230,7 @@ export async function sincronizarPendentes(opts: OpcoesSincronizacao = {}): Prom
           if (r.ok) {
             // Dados apagados a pedido: o id do Brevo também não volta a ser guardado.
             await marcar(db, c, { syncStatus: 'sincronizado', syncErro: null, brevoId: c.dadosApagadosEm ? null : r.brevoId })
+            if (r.bloqueado) await descadastrarBloqueado(db, c.id)
             enviados++
           } else if (erroGeral(r.erro)) {
             interrompido ??= r.erro.mensagem // o contato continua como estava, para a próxima rodada

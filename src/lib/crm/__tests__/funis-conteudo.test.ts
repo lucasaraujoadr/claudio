@@ -12,7 +12,7 @@ import {
   marcadoresPendentes,
   passosAutomacao,
 } from '../funis-conteudo'
-import { SLUGS_FUNIS } from '../funis-regras'
+import { reentradaPermitida, SLUGS_FUNIS } from '../funis-regras'
 
 describe('textos dos funis', () => {
   it('quatro funis definidos; só a prospecção fria nasce desligada', () => {
@@ -132,5 +132,17 @@ describe('comporCampanhaBlog', () => {
     expect(linkComUtm('https://ogpericiacontabil.com.br/a?p=1', 3)).toBe(
       'https://ogpericiacontabil.com.br/a?p=1&utm_source=brevo&utm_medium=email&utm_campaign=nutricao-blog-tema-3',
     )
+  })
+})
+
+describe('automação do Brevo × reentrada pela tela', () => {
+  it('todo funil aceita reentrada manual, e as instruções mandam permitir reentrada no Brevo (senão o email não sai)', () => {
+    for (const slug of SLUGS_FUNIS) {
+      expect(reentradaPermitida(slug, 'manual', 'saiu')).toBe(true)
+      expect(reentradaPermitida(slug, 'manual', 'concluido')).toBe(true)
+      const texto = passosAutomacao(slug, 'Lista').join('\n')
+      expect(texto).not.toMatch(/não permita/i)
+      expect(texto).toMatch(/permita que o contato entre de novo/i)
+    }
   })
 })

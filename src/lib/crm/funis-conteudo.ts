@@ -242,8 +242,8 @@ export function passosAutomacao(slug: SlugFunil, nomeLista: string): string[] {
   passos.push(
     'Em cada email, confira que não sobrou marcador entre colchetes (como [link do WhatsApp]) e que o link de descadastro {{ unsubscribe }} funciona no editor do Brevo; envie um email de teste para você antes de ativar.',
     slug === 'reativacao'
-      ? 'Nas configurações da automação, permita que o contato entre de novo: o CRM só reinscreve um cliente que concluiu a sequência há mais de 180 dias e continua sem interação (nunca quem foi removido à mão).'
-      : 'Nas configurações da automação, não permita que o contato entre de novo: o CRM já decide quem reentra.',
+      ? 'Nas configurações da automação, permita que o contato entre de novo: o CRM só reinscreve sozinho um cliente que concluiu a sequência há mais de 180 dias e continua sem interação (nunca quem foi removido à mão), e você pode reinscrever alguém pela tela.'
+      : 'Nas configurações da automação, permita que o contato entre de novo: quem decide a reentrada é o CRM (só acontece quando você reinscreve alguém pela tela). Sem essa opção, o Brevo não envia nada a quem já passou pela automação.',
     'Para que quem sai do funil não receba os emails seguintes, ponha antes de cada envio a condição "o contato está na lista" (o CRM remove da lista quem sai e, alguns dias depois do último email, quem concluiu a sequência).',
     'Ative a automação.',
   )

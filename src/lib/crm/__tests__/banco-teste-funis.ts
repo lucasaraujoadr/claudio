@@ -22,6 +22,7 @@ export async function criarBancoTesteFunis(): Promise<{ db: BancoCrm; pg: PGlite
     syncStatus: schema.syncStatus,
     eventoContatoTipo: schema.eventoContatoTipo,
     contatos: schema.contatos,
+    importacoesContatos: schema.importacoesContatos,
     eventosContato: schema.eventosContato,
     brevoEventosRecebidos: schema.brevoEventosRecebidos,
     sincronizacoes: schema.sincronizacoes,
