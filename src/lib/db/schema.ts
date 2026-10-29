@@ -207,7 +207,7 @@ export const sincronizacoes = pgTable('sincronizacoes', {
 })
 
 export const potencial = pgEnum('potencial', ['alto', 'medio', 'baixo'])
-export const teseStatus = pgEnum('tese_status', ['nova', 'virou_tema', 'descartada'])
+export const teseStatus = pgEnum('tese_status', ['nova', 'virou_tema', 'virou_artigo', 'descartada'])
 
 /** Fatos recentes (decisões, leis, índices) coletados pela busca diária; só com fonte verificada. */
 export const tendencias = pgTable('tendencias', {
@@ -243,6 +243,54 @@ export const tesesSugeridas = pgTable(
 
 export type Tendencia = typeof tendencias.$inferSelect
 export type TeseSugerida = typeof tesesSugeridas.$inferSelect
+
+// ---------------------------------------------------------------------------
+// Artigos → WordPress: um artigo por tema, da geração ao envio.
+// ---------------------------------------------------------------------------
+
+export const artigoSituacao = pgEnum('artigo_situacao', [
+  'gerando',
+  'erro_geracao',
+  'rascunho',
+  'pronto',
+  'agendado',
+  'publicado',
+])
+
+export const artigos = pgTable('artigos', {
+  id: serial('id').primaryKey(),
+  /** Um artigo por tema; o índice único é a trava da reivindicação atômica da geração. */
+  topicId: integer('topic_id')
+    .notNull()
+    .unique()
+    .references(() => topics.id),
+  teseId: integer('tese_id').references(() => tesesSugeridas.id),
+  situacao: artigoSituacao('situacao').notNull().default('gerando'),
+  titulo: text('titulo'),
+  slug: text('slug'),
+  metaDescription: text('meta_description'),
+  /** HTML sanitizado no servidor (lista branca de tags). */
+  conteudoHtml: text('conteudo_html'),
+  fontes: jsonb('fontes').notNull().$type<{ titulo?: string; url: string }[]>().default([]),
+  categoriaId: integer('categoria_id'),
+  capaMediaId: integer('capa_media_id'),
+  capaUrl: text('capa_url'),
+  revisado: boolean('revisado').notNull().default(false),
+  agendadoPara: timestamp('agendado_para', { withTimezone: true }),
+  wpPostId: integer('wp_post_id'),
+  wpStatus: text('wp_status'),
+  wpLink: text('wp_link'),
+  wpModificadoGmt: text('wp_modificado_gmt'),
+  enviadoEm: timestamp('enviado_em', { withTimezone: true }),
+  alteradoAposEnvio: boolean('alterado_apos_envio').notNull().default(false),
+  erro: text('erro'),
+  modelo: text('modelo'),
+  geradoEm: timestamp('gerado_em', { withTimezone: true }),
+  criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
+  atualizadoEm: timestamp('atualizado_em', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export type Artigo = typeof artigos.$inferSelect
 
 // ---------------------------------------------------------------------------
 // CRM (E7): contatos, linha do tempo e lotes de importação de planilha.
