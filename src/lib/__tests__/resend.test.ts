@@ -123,7 +123,7 @@ describe('erros', () => {
 })
 
 describe('contatos', () => {
-  const contato = { email: 'a@b.com', nome: 'Ana Silva', escritorio: 'Silva Adv', descadastrado: false }
+  const contato = { email: 'a@b.com', nome: 'Ana Silva', descadastrado: false }
 
   it('salvarContato cria quando não existe', async () => {
     const { f, chamadas } = fetchFalso([{ status: 404 }, { status: 201, json: { object: 'contact', id: 'c1' } }])
@@ -136,8 +136,16 @@ describe('contatos', () => {
       email: 'a@b.com',
       first_name: 'Ana Silva',
       unsubscribed: false,
-      properties: { escritorio: 'Silva Adv' },
     })
+  })
+
+  it('não envia properties e manda first_name null quando não há nome', async () => {
+    const { f, chamadas } = fetchFalso([{ status: 404 }, { status: 201, json: { id: 'c2' } }])
+    await criarClienteResend(cfg, f).salvarContato({ ...contato, nome: null })
+    for (const c of chamadas) {
+      expect(c.corpo).not.toHaveProperty('properties')
+      expect(c.corpo).toMatchObject({ first_name: null })
+    }
   })
 
   it('salvarContato em contato existente atualiza', async () => {
@@ -187,9 +195,10 @@ describe('broadcasts', () => {
   it('criarBroadcast inclui segment e html', async () => {
     const { f, chamadas } = fetchFalso([{ status: 201, json: { object: 'broadcast', id: 'b1' } }])
     const r = await criarClienteResend(cfg, f).criarBroadcast({
-      segmentoId: 's1', nome: 'Newsletter 10', assunto: 'Assunto', preCabecalho: 'Prévia', html: '<p>x</p>', texto: 'x',
+      segmentoId: 's1', nome: 'Newsletter 10', assunto: 'Assunto', html: '<p>x</p>', texto: 'x',
     })
     expect(r).toEqual({ id: 'b1' })
+    expect(chamadas[0].corpo).not.toHaveProperty('preview_text')
     expect(chamadas[0].url).toBe('https://api.resend.com/broadcasts')
     expect(chamadas[0].corpo).toEqual({
       segment_id: 's1',
@@ -197,7 +206,6 @@ describe('broadcasts', () => {
       from: cfg.remetente,
       reply_to: 'resp@dupim.com.br',
       subject: 'Assunto',
-      preview_text: 'Prévia',
       html: '<p>x</p>',
       text: 'x',
     })

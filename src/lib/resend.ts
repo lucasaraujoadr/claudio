@@ -4,13 +4,14 @@
  * Endpoints usados:
  * - `POST /emails` (cabeçalho `Idempotency-Key`; corpo `from`, `to[]`, `subject`, `html`, `text`,
  *   `reply_to`, `headers`, `tags[{name,value}]`) → `{id}`.
- * - `PATCH /contacts/{id ou email}` (`first_name`, `unsubscribed`, `properties`) → `{id}`; 404 se não existe.
- * - `POST /contacts` (`email`, `first_name`, `unsubscribed`, `properties`) → `{id}`.
+ * - `PATCH /contacts/{id ou email}` (`first_name`, `unsubscribed`) → `{id}`; 404 se não existe.
+ * - `POST /contacts` (`email`, `first_name`, `unsubscribed`) → `{id}`. Sem propriedades personalizadas.
  * - `GET /segments?limit&after` → `{has_more, data:[{id,name}]}`; `POST /segments {name}` → `{id}`.
  *   (Segments substitui a API Audiences, descontinuada.)
  * - `POST /contacts/{email}/segments/{segmentId}` e `DELETE` no mesmo caminho.
- * - `POST /broadcasts` (`segment_id`, `name`, `from`, `reply_to`, `subject`, `preview_text`, `html`, `text`;
- *   `send` fica falso: nasce como rascunho) → `{id}`.
+ * - `POST /broadcasts` (`segment_id`, `name`, `from`, `reply_to`, `subject`, `html`, `text`;
+ *   `send` fica falso: nasce como rascunho) → `{id}`. `preview_text` não é documentado na criação, então
+ *   não é enviado: o pré-cabeçalho vai no HTML (div oculto), montado por quem chama.
  * - `POST /broadcasts/{id}/send` (`scheduled_at` ISO 8601, opcional) → `{id}`.
  * - `GET /broadcasts/{id}` → `{id, status, ...}`.
  *
@@ -142,22 +143,15 @@ export function criarClienteResend(cfg: ConfigResend, f: typeof fetch = fetch) {
     async salvarContato(c: {
       email: string
       nome: string | null
-      escritorio: string | null
       descadastrado: boolean
     }): Promise<{ id: string }> {
-      const dados = {
-        first_name: c.nome ?? '',
-        unsubscribed: c.descadastrado,
-        properties: { escritorio: c.escritorio },
-      }
+      const dados = { first_name: c.nome, unsubscribed: c.descadastrado }
       const atualizado = await chamar('PATCH', `/contacts/${encodeURIComponent(c.email)}`, { json: dados, aceitar404: true })
       if (atualizado.status !== 404) return { id: lerId(atualizado.json) }
       const criado = await chamar('POST', '/contacts', {
         json: {
           email: c.email,
-          first_name: c.nome ?? '',
-          unsubscribed: c.descadastrado,
-          properties: c.escritorio === null ? {} : { escritorio: c.escritorio },
+          ...dados,
         },
       })
       return { id: lerId(criado.json) }
@@ -194,7 +188,6 @@ export function criarClienteResend(cfg: ConfigResend, f: typeof fetch = fetch) {
       segmentoId: string
       nome: string
       assunto: string
-      preCabecalho: string
       html: string
       texto: string
     }): Promise<{ id: string }> {
@@ -205,7 +198,6 @@ export function criarClienteResend(cfg: ConfigResend, f: typeof fetch = fetch) {
           from: cfg.remetente,
           ...(cfg.responderPara ? { reply_to: cfg.responderPara } : {}),
           subject: b.assunto,
-          preview_text: b.preCabecalho,
           html: b.html,
           text: b.texto,
         },
