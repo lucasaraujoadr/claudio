@@ -7,6 +7,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: true,
+    // O PGlite cria o schema a cada teste; sob carga paralela o hook passa dos 10 s padrão.
+    hookTimeout: 30000,
     // Fuso atrás do UTC: expõe aritmética de datas em horário local.
     env: { TZ: 'America/Sao_Paulo' },
   },

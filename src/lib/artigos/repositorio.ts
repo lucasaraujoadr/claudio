@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, lt, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, isNull, lt, or } from 'drizzle-orm'
 import { artigos, tesesSugeridas, topics, type Artigo } from '@/lib/db/schema'
 import { bancoPadrao, type BancoCrm } from '@/lib/crm/banco'
 
@@ -269,4 +269,21 @@ export async function listarAgendados(db: BancoCrm = bancoPadrao()): Promise<Art
     .select()
     .from(artigos)
     .where(and(eq(artigos.situacao, 'agendado'), isNotNull(artigos.wpPostId)))
+}
+
+/** Trava do envio: um envio por artigo por vez; uma trava com mais de 2 minutos é considerada solta. */
+const MINUTOS_ENVIO_PRESO = 2
+
+export async function reivindicarEnvio(id: number, agora: Date, db: BancoCrm = bancoPadrao()): Promise<boolean> {
+  const limite = new Date(agora.getTime() - MINUTOS_ENVIO_PRESO * 60_000)
+  const r = await db
+    .update(artigos)
+    .set({ enviandoDesde: agora })
+    .where(and(eq(artigos.id, id), or(isNull(artigos.enviandoDesde), lt(artigos.enviandoDesde, limite))))
+    .returning({ id: artigos.id })
+  return r.length > 0
+}
+
+export async function liberarEnvio(id: number, db: BancoCrm = bancoPadrao()): Promise<void> {
+  await db.update(artigos).set({ enviandoDesde: null }).where(eq(artigos.id, id))
 }

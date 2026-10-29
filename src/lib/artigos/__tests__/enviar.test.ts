@@ -4,7 +4,7 @@ import { artigos, topics } from '@/lib/db/schema'
 import type { BancoCrm } from '@/lib/crm/banco'
 import { ErroWp, type DadosPost, type PostWp, type criarClienteWp } from '@/lib/wordpress'
 import { criarBancoTesteArtigos } from './banco-teste-artigos'
-import { obterArtigo } from '../repositorio'
+import { obterArtigo, reivindicarEnvio, liberarEnvio } from '../repositorio'
 import { enviarArtigo, sincronizarAgendados } from '../enviar'
 
 type Cliente = ReturnType<typeof criarClienteWp>
@@ -248,5 +248,82 @@ describe('sincronizarAgendados', () => {
       },
     })
     expect(await sincronizarAgendados(ruim, db)).toBe(0)
+  })
+})
+
+describe('correções da revisão', () => {
+  const publicado = { situacao: 'publicado' as const, wpPostId: 77, wpStatus: 'publish', wpLink: 'https://site.test/x/', wpModificadoGmt: '2026-10-29T10:00:00' }
+  const lerIgual = async () => ({ id: 77, status: 'publish', link: 'https://site.test/x/', modificadoGmt: '2026-10-29T10:00:00', metaGravada: true })
+
+  it('artigo publicado: rascunho e agendar são bloqueados; publicar atualiza', async () => {
+    const a = await criarArtigo({ ...publicado, agendadoPara: new Date('2026-11-05T13:30:00Z') })
+    const { cliente, chamadas } = fake({ lerPost: lerIgual })
+    for (const modo of ['rascunho', 'agendar'] as const) {
+      const r = await enviarArtigo(a.id, modo, opts(cliente))
+      expect(r.tipo).toBe('bloqueado')
+      if (r.tipo === 'bloqueado') expect(r.itens.some((i) => i.id === 'publicado' && i.nivel === 'bloqueia')).toBe(true)
+    }
+    expect(chamadas.atualizar).toHaveLength(0)
+    expect((await enviarArtigo(a.id, 'publicar', opts(cliente))).tipo).toBe('ok')
+    expect(chamadas.atualizar[0].d.dataGmt).toBe('2026-10-29T12:00:00')
+  })
+
+  it('WP devolve future para publicar: fica agendado e o tema não vira publicado', async () => {
+    const a = await criarArtigo({ situacao: 'agendado', wpPostId: 77, wpStatus: 'future', wpModificadoGmt: '2026-10-29T10:00:00' })
+    const { cliente } = fake({
+      lerPost: async () => ({ id: 77, status: 'future', link: 'l', modificadoGmt: '2026-10-29T10:00:00', metaGravada: true }),
+      atualizarPost: async (id) => ({ id, status: 'future', link: 'https://site.test/x/', modificadoGmt: '2026-10-29T12:00:00', metaGravada: true }),
+    })
+    await enviarArtigo(a.id, 'publicar', opts(cliente))
+    const s = await obterArtigo(a.id, db)
+    expect(s?.situacao).toBe('agendado')
+    expect(s?.wpStatus).toBe('future')
+    const [t] = await db.select().from(topics).where(eq(topics.id, a.topicId))
+    expect(t.status).not.toBe('publicado')
+  })
+
+  it('status desconhecido do WP (pending) vira draft', async () => {
+    const a = await criarArtigo()
+    const { cliente } = fake({
+      criarPost: async (d) => ({ id: 500, status: 'pending', link: 'l', modificadoGmt: 'm', metaGravada: true, ...(d ? {} : {}) }),
+    })
+    await enviarArtigo(a.id, 'rascunho', opts(cliente))
+    expect((await obterArtigo(a.id, db))?.wpStatus).toBe('draft')
+  })
+
+  it('sincronizar não esconde edição do WP: próximo publicar dá conflito', async () => {
+    const a = await criarArtigo({ situacao: 'agendado', wpPostId: 10, wpStatus: 'future', wpModificadoGmt: '2026-10-29T10:00:00' })
+    const lido = { id: 10, status: 'publish', link: 'https://site.test/a/', modificadoGmt: '2026-11-05T13:30:00', metaGravada: true }
+    const { cliente } = fake({ lerPost: async () => lido })
+    expect(await sincronizarAgendados(cliente, db)).toBe(1)
+    const s = await obterArtigo(a.id, db)
+    expect(s?.situacao).toBe('publicado')
+    expect(s?.wpModificadoGmt).toBe('2026-10-29T10:00:00')
+    expect(await enviarArtigo(a.id, 'publicar', opts(cliente))).toEqual({ tipo: 'conflito' })
+  })
+
+  it('sincronizar propaga credencial e nao_encontrado, ignora outros erros', async () => {
+    await criarArtigo({ situacao: 'agendado', wpPostId: 10, wpStatus: 'future' })
+    for (const t of ['credencial', 'nao_encontrado'] as const) {
+      const { cliente } = fake({ lerPost: async () => { throw new ErroWp(t) } })
+      await expect(sincronizarAgendados(cliente, db)).rejects.toBeInstanceOf(ErroWp)
+    }
+  })
+
+  it('envio concorrente: segundo é recusado; trava é liberada após sucesso e após ErroWp', async () => {
+    const a = await criarArtigo()
+    expect(await reivindicarEnvio(a.id, AGORA, db)).toBe(true)
+    expect(await reivindicarEnvio(a.id, new Date(AGORA.getTime() + 60_000), db)).toBe(false)
+    const { cliente, chamadas } = fake()
+    expect(await enviarArtigo(a.id, 'rascunho', opts(cliente, { agora: new Date(AGORA.getTime() + 60_000) }))).toEqual({ tipo: 'erro', mensagem: 'envio já em andamento; aguarde' })
+    expect(chamadas.criar).toHaveLength(0)
+    expect(await reivindicarEnvio(a.id, new Date(AGORA.getTime() + 3 * 60_000), db)).toBe(true) // expirou
+    await liberarEnvio(a.id, db)
+    expect((await enviarArtigo(a.id, 'rascunho', opts(cliente))).tipo).toBe('ok')
+    expect((await obterArtigo(a.id, db))?.enviandoDesde).toBeNull()
+    const b = fake({ criarPost: async () => { throw new ErroWp('rede') } })
+    await db.update(artigos).set({ wpPostId: null, wpStatus: null }).where(eq(artigos.id, a.id))
+    expect((await enviarArtigo(a.id, 'rascunho', opts(b.cliente))).tipo).toBe('erro')
+    expect((await obterArtigo(a.id, db))?.enviandoDesde).toBeNull()
   })
 })

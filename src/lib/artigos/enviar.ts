@@ -3,7 +3,15 @@ import { ErroWp, type DadosPost, type criarClienteWp } from '@/lib/wordpress'
 import { conferir, podePublicar, type ItemConferencia } from './conferencia'
 import { slugValido } from './formato'
 import { paraGutenberg, removerVerificar, sanitizarHtml } from './html'
-import { desvincularDoWp, listarAgendados, obterArtigo, registrarEnvio, registrarErroEnvio } from './repositorio'
+import {
+  desvincularDoWp,
+  liberarEnvio,
+  listarAgendados,
+  obterArtigo,
+  reivindicarEnvio,
+  registrarEnvio,
+  registrarErroEnvio,
+} from './repositorio'
 
 export type ModoEnvio = 'rascunho' | 'agendar' | 'publicar'
 type ClienteWp = ReturnType<typeof criarClienteWp>
@@ -17,7 +25,7 @@ export type ResultadoEnvio =
 const MARGEM_AGENDAMENTO_MS = 5 * 60_000
 const STATUS_WP = { rascunho: 'draft', agendar: 'future', publicar: 'publish' } as const
 
-export async function enviarArtigo(
+async function enviarInterno(
   id: number,
   modo: ModoEnvio,
   opts: { sobrescrever?: boolean; cliente: ClienteWp; db?: BancoCrm; agora?: Date; keyword: string },
@@ -31,7 +39,7 @@ export async function enviarArtigo(
   try {
     const slug = a.slug ?? ''
     const slugEmUso = slugValido(slug) ? await cliente.slugEmUso(slug, a.wpPostId ?? undefined) : null
-    const itens = conferir({
+    const itens: ItemConferencia[] = conferir({
       titulo: a.titulo ?? '',
       slug,
       metaDescription: a.metaDescription ?? '',
@@ -42,6 +50,11 @@ export async function enviarArtigo(
       revisado: a.revisado,
       slugEmUso,
     })
+    // Ruling C: artigo já publicado só aceita "Atualizar no site"; rascunho/agendar tirariam o post do ar.
+    if (a.wpStatus === 'publish' && modo !== 'publicar') {
+      itens.push({ id: 'publicado', nivel: 'bloqueia', texto: 'Este artigo já está publicado; use "Atualizar no site".' })
+      return { tipo: 'bloqueado', itens }
+    }
     if (modo === 'rascunho') {
       if (itens.some((i) => i.nivel === 'bloqueia' && (i.id === 'titulo_vazio' || i.id === 'slug'))) {
         return { tipo: 'bloqueado', itens }
@@ -73,14 +86,21 @@ export async function enviarArtigo(
       categorias: a.categoriaId != null ? [a.categoriaId] : [],
       capaId: a.capaMediaId,
       metaDescription: a.metaDescription ?? '',
-      ...(modo === 'agendar' && a.agendadoPara ? { dataGmt: a.agendadoPara.toISOString().slice(0, 19) } : {}),
+      // Publicar com data = agora: o WP mantém um date_gmt futuro antigo e deixaria o post agendado.
+      ...(modo === 'agendar' && a.agendadoPara
+        ? { dataGmt: a.agendadoPara.toISOString().slice(0, 19) }
+        : modo === 'publicar'
+          ? { dataGmt: agora.toISOString().slice(0, 19) }
+          : {}),
     }
     const post = wpPostId !== null ? await cliente.atualizarPost(wpPostId, dados) : await cliente.criarPost(dados)
+    // O que vale é o status que o WP devolveu, não o pedido.
+    const wpStatus = post.status === 'future' || post.status === 'publish' ? post.status : 'draft'
     await registrarEnvio(
       id,
       {
         wpPostId: post.id,
-        wpStatus: STATUS_WP[modo],
+        wpStatus,
         wpLink: post.link,
         wpModificadoGmt: post.modificadoGmt,
       },
@@ -97,6 +117,21 @@ export async function enviarArtigo(
   }
 }
 
+export async function enviarArtigo(
+  id: number,
+  modo: ModoEnvio,
+  opts: { sobrescrever?: boolean; cliente: ClienteWp; db?: BancoCrm; agora?: Date; keyword: string },
+): Promise<ResultadoEnvio> {
+  const db = opts.db ?? bancoPadrao()
+  const agora = opts.agora ?? new Date()
+  if (!(await reivindicarEnvio(id, agora, db))) return { tipo: 'erro', mensagem: 'envio já em andamento; aguarde' }
+  try {
+    return await enviarInterno(id, modo, { ...opts, db, agora })
+  } finally {
+    await liberarEnvio(id, db)
+  }
+}
+
 /** Reflete no painel o que o WordPress fez com os agendados. Devolve quantos já foram publicados. */
 export async function sincronizarAgendados(cliente: ClienteWp, db: BancoCrm = bancoPadrao()): Promise<number> {
   let publicados = 0
@@ -109,7 +144,8 @@ export async function sincronizarAgendados(cliente: ClienteWp, db: BancoCrm = ba
       } else if (post.status === 'publish') {
         await registrarEnvio(
           a.id,
-          { wpPostId: post.id, wpStatus: 'publish', wpLink: post.link, wpModificadoGmt: post.modificadoGmt },
+          // Mantém o `modified_gmt` guardado: assim uma edição feita no WP ainda aparece como conflito.
+          { wpPostId: post.id, wpStatus: 'publish', wpLink: post.link, wpModificadoGmt: a.wpModificadoGmt ?? post.modificadoGmt },
           new Date(),
           db,
         )
@@ -118,6 +154,8 @@ export async function sincronizarAgendados(cliente: ClienteWp, db: BancoCrm = ba
     } catch (e) {
       // Um post com problema não impede os demais; tenta de novo no próximo dia.
       if (!(e instanceof ErroWp)) throw e
+      // Credencial ou endereço errados afetam todos os posts: o cron deve acusar erro.
+      if (e.tipo === 'credencial' || e.tipo === 'nao_encontrado') throw e
     }
   }
   return publicados

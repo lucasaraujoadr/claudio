@@ -288,6 +288,8 @@ export const artigos = pgTable('artigos', {
   modelo: text('modelo'),
   geradoEm: timestamp('gerado_em', { withTimezone: true }),
   criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
+  /** Trava do envio ao WordPress: evita dois posts por duplo clique; expira em 2 min. */
+  enviandoDesde: timestamp('enviando_desde', { withTimezone: true }),
   atualizadoEm: timestamp('atualizado_em', { withTimezone: true }).notNull().defaultNow(),
 })
 
