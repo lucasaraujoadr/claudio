@@ -31,7 +31,7 @@ export const NAVEGACAO: GrupoNavegacao[] = [
     titulo: 'CRM',
     itens: [
       { rotulo: 'Contatos', href: '/crm/contatos' },
-      { rotulo: 'Funis' },
+      { rotulo: 'Funis', href: '/crm/funis' },
       { rotulo: 'Importar', href: '/crm/importar' },
       { rotulo: 'Integração', href: '/crm/integracao' },
     ],

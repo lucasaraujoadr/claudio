@@ -100,9 +100,15 @@ function Acao({ t }: { t: Topic }) {
   }
   if (t.status === 'publicado' && t.urlPublicada) {
     return (
-      <a href={t.urlPublicada} target="_blank" rel="noopener noreferrer" className="text-sm font-medium break-all text-acento-texto underline-offset-2 hover:underline">
-        Ver página
-      </a>
+      <div className="flex flex-col items-end gap-1.5 text-right">
+        <a href={t.urlPublicada} target="_blank" rel="noopener noreferrer" className="text-sm font-medium break-all text-acento-texto underline-offset-2 hover:underline">
+          Ver página
+        </a>
+        {/* Nutrição com o blog (E9): leva à tela do rascunho; nada é enviado. */}
+        <a href={`/temas/${t.id}/campanha`} className={classesBotao('secundario', 'sm')}>
+          Criar rascunho de campanha no Brevo
+        </a>
+      </div>
     )
   }
   return null

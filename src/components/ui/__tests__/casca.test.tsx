@@ -33,29 +33,19 @@ describe('navegação', () => {
     ])
   })
 
-  it('telas que não existem são "em breve", não são links e são anunciadas como indisponíveis', () => {
+  it('todas as telas são links (Funis ligado na E9); nenhum item "em breve"', () => {
     desenhar('/')
     const lateral = screen.getAllByRole('navigation', { name: 'Módulos' }).at(-1)!
-    for (const rotulo of ['Funis']) {
-      expect(within(lateral).queryByRole('link', { name: new RegExp(rotulo) })).toBeNull()
-      const item = within(lateral).getByText(rotulo).closest('[data-indisponivel]')!
-      expect(item.textContent).toContain('em breve')
-      // O leitor de tela ouve "(indisponível)"; o selo visual fica oculto para ele.
-      const sr = item.querySelector('.sr-only')
-      expect(sr?.textContent).toContain('(indisponível)')
-      expect(item.querySelector('[aria-hidden="true"]')?.textContent).toBe('em breve')
-      expect(item.querySelector('[aria-disabled]')).toBeNull()
-    }
+    expect(within(lateral).queryByText('em breve')).toBeNull()
+    expect(lateral.querySelector('[data-indisponivel]')).toBeNull()
     const hrefs = within(lateral).getAllByRole('link').map((a) => a.getAttribute('href'))
-    expect(hrefs).toEqual(['/', '/oportunidades', '/temas', '/briefings', '/tendencias', '/auditoria', '/trafego', '/crm/contatos', '/crm/importar', '/crm/integracao'])
+    expect(hrefs).toEqual(['/', '/oportunidades', '/temas', '/briefings', '/tendencias', '/auditoria', '/trafego', '/crm/contatos', '/crm/funis', '/crm/importar', '/crm/integracao'])
   })
 
-  it('o selo "em breve" tem pelo menos 11 px (acima de 10 px)', () => {
-    desenhar('/')
+  it('Funis é um link ativo em /crm/funis e nas subtelas', () => {
+    desenhar('/crm/funis/boas-vindas')
     const lateral = screen.getAllByRole('navigation', { name: 'Módulos' }).at(-1)!
-    const selo = within(lateral).getAllByText('em breve')[0]
-    expect(selo.className).toContain('text-[0.6875rem]')
-    expect(selo.className).not.toContain('text-[0.625rem]')
+    expect(within(lateral).getByRole('link', { name: 'Funis' }).getAttribute('aria-current')).toBe('page')
   })
 
   it('Tráfego é um link ativo em /trafego', () => {

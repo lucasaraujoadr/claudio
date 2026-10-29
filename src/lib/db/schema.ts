@@ -347,3 +347,63 @@ export const brevoEventosRecebidos = pgTable('brevo_eventos_recebidos', {
 export type Contato = typeof contatos.$inferSelect
 export type EventoContato = typeof eventosContato.$inferSelect
 export type ImportacaoContatos = typeof importacoesContatos.$inferSelect
+
+// ---------------------------------------------------------------------------
+// Funis (E9): cada funil corresponde a uma lista do Brevo; o CRM decide quem está em qual.
+// ---------------------------------------------------------------------------
+
+export const funilInscricaoStatus = pgEnum('funil_inscricao_status', ['ativo', 'concluido', 'saiu'])
+
+/**
+ * Os quatro funis são criados por `garantirFunis()` (upsert por `slug`). `ativo`, a lista do
+ * Brevo, o teto diário e o checklist são estado do usuário: o upsert nunca os sobrescreve.
+ */
+export const funis = pgTable('funis', {
+  id: serial('id').primaryKey(),
+  slug: text('slug').notNull().unique(),
+  nome: text('nome').notNull(),
+  descricao: text('descricao').notNull(),
+  ativo: boolean('ativo').notNull().default(false),
+  brevoListaId: integer('brevo_lista_id'),
+  /** Máximo de inscrições por dia (fuso de Brasília); null = sem teto próprio. */
+  tetoDiario: integer('teto_diario'),
+  /** Base legal exigida para entrar (prospecção fria: legítimo interesse). */
+  exigeBaseLegal: baseLegal('exige_base_legal'),
+  /** Quando o checklist de LGPD foi confirmado na tela (exigido para ligar a prospecção fria). */
+  checklistLgpdEm: timestamp('checklist_lgpd_em', { withTimezone: true }),
+  criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
+  atualizadoEm: timestamp('atualizado_em', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/**
+ * Participação de um contato num funil. Uma linha por contato e funil (reentrada reabre a
+ * linha). `lista_sync` diz se o Brevo já reflete o estado: `pendente` com status `ativo` =
+ * falta adicionar à lista; `pendente` com `saiu`/`concluido` = falta remover.
+ */
+export const funilInscricoes = pgTable(
+  'funil_inscricoes',
+  {
+    id: serial('id').primaryKey(),
+    contatoId: integer('contato_id')
+      .notNull()
+      .references(() => contatos.id, { onDelete: 'cascade' }),
+    funilId: integer('funil_id')
+      .notNull()
+      .references(() => funis.id),
+    status: funilInscricaoStatus('status').notNull().default('ativo'),
+    /** `site` | `manual` | `cron`. */
+    origem: text('origem').notNull(),
+    entrouEm: timestamp('entrou_em', { withTimezone: true }).notNull().defaultNow(),
+    saiuEm: timestamp('saiu_em', { withTimezone: true }),
+    motivoSaida: text('motivo_saida'),
+    listaSync: syncStatus('lista_sync').notNull().default('pendente'),
+    listaSyncErro: text('lista_sync_erro'),
+  },
+  (t) => [
+    unique('funil_inscricoes_contato_funil_uq').on(t.contatoId, t.funilId),
+    index('funil_inscricoes_funil_status_idx').on(t.funilId, t.status),
+  ],
+)
+
+export type Funil = typeof funis.$inferSelect
+export type FunilInscricao = typeof funilInscricoes.$inferSelect

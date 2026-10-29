@@ -61,6 +61,7 @@ Ficam na Vercel (Settings > Environment Variables). Nunca coloque os valores no 
 | `BREVO_API_KEY` | Chave de API do Brevo (Brevo → SMTP e API → Chaves de API). Opcional: sem ela o CRM funciona, os contatos ficam "pendente" e a tela **CRM → Integração** diz "Brevo não conectado". |
 | `BREVO_WEBHOOK_TOKEN` | Token do webhook de eventos do Brevo (`/api/webhooks/brevo?token=…`). Já configurado. Sem ele o webhook recusa tudo. |
 | `SITE_WEBHOOK_TOKEN` | Token do webhook do formulário do site (`/api/webhooks/site?token=…`). Já configurado. Sem ele o webhook recusa tudo. |
+| `BREVO_REMETENTE_EMAIL` / `BREVO_REMETENTE_NOME` | Remetente (já validado no Brevo) dos rascunhos de campanha da nutrição com o blog. Opcional: sem ele, a tela mostra o texto para copiar. |
 
 ## Brevo e webhooks (CRM)
 
@@ -70,6 +71,19 @@ Ficam na Vercel (Settings > Environment Variables). Nunca coloque os valores no 
 - `POST /api/webhooks/brevo?token=…`: descadastro, hard bounce e spam viram "Descadastrado" e tiram o contato dos funis; abertura, clique e entrega só entram na linha do tempo. O mesmo evento repetido não grava nada (tabela `brevo_eventos_recebidos`). Email que não está no CRM e evento desconhecido são aceitos e ignorados.
 - `POST /api/webhooks/site?token=…`: ação "Webhook" do Elementor Forms, com ou sem "Dados avançados" (form-urlencoded) ou JSON. Cria/atualiza o lead com origem "Site" e base legal "Consentimento"; a mensagem fica na linha do tempo. Até 20 envios por minuto por IP; corpo de até 64 KB.
 - **Atenção:** a produção está atrás da proteção de login da Vercel (Deployment Protection), então o Brevo e o Elementor ainda **não conseguem** chamar `/api/webhooks/*`. Para ligar, restrinja a proteção às prévias (Preview) ou crie um "Protection Bypass for Automation" e acrescente `&x-vercel-protection-bypass=…` às URLs.
+
+## Funis (CRM → Funis)
+
+- Quatro funis, cada um ligado a uma lista do Brevo; a sequência de emails roda numa **automação do Brevo** disparada por "contato adicionado à lista" (automações não podem ser criadas pela API — a tela mostra o passo a passo e os três emails prontos de cada funil, com botões de copiar).
+  - **Boas-vindas** (ligado): entra automaticamente o lead que preenche o formulário do site.
+  - **Nutrição com o blog** (ligado): leads e clientes com base legal de consentimento ou contrato, inscritos pela tela (emails colados ou uma tag de importação). Em **Temas**, um tema publicado oferece "Criar rascunho de campanha no Brevo": cria só um **rascunho** para a lista deste funil, com título, resumo e link do artigo — o painel **nunca envia**. Sem chave, sem lista ou sem remetente, a tela mostra o texto para copiar.
+  - **Reativação** (ligado): clientes sem nenhum evento na linha do tempo há 180 dias, inscritos pela rotina diária, no máximo 50 por dia.
+  - **Prospecção fria** (**desligado por padrão**): só leads com base legal de legítimo interesse. Para ligar, a tela exige marcar o checklist de LGPD (avaliação de legítimo interesse documentada, descadastro em todo email, volume baixo e aquecido) e um teto diário; a data da confirmação fica gravada.
+- Contato **descadastrado** nunca entra em funil e sai de todos ao se descadastrar (webhook do Brevo, mudança manual de status ou, por segurança, na rotina diária).
+- Entrar e sair ficam na linha do tempo do contato (`entrou_funil`, `saiu_funil`). Entrar adiciona à lista do funil (sempre por `adicionarContatosALista`, que recusa descadastrados); sair remove. Sem `BREVO_API_KEY` ou sem lista conectada, a inscrição fica guardada como **pendente** e vai para o Brevo depois — nunca é erro. O contato precisa existir no Brevo antes de entrar na lista: quem ainda não foi sincronizado espera a próxima rodada.
+- "Conectar ao Brevo", em cada funil: cria a lista "Painel OG — <funil>" na pasta "Painel OG — Funis" (a API exige pasta) ou usa o número de uma lista existente.
+- Rotina diária (`/api/cron/diario`, fonte `funis` em `sincronizacoes`): garante os quatro funis, tira descadastrados, inscreve a reativação e a prospecção fria (se ligada, no teto) e, com chave, envia os contatos pendentes e atualiza as listas. Uma falha aqui não afeta o Search Console nem o GA4. O botão "Atualizar listas do Brevo" faz a mesma sincronização na hora.
+- Nos emails, troque `[link do WhatsApp]` pelo link real antes de ativar a automação.
 
 ## Conta de serviço do Google (Search Console)
 

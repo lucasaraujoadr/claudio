@@ -1,4 +1,4 @@
-import type { ClienteBrevo, ContatoBrevo, ErroBrevo, ResultadoBrevo } from '@/lib/brevo'
+import type { ClienteBrevo, ContatoBrevo, ErroBrevo, ListaBrevo, PastaBrevo, RascunhoCampanha, ResultadoBrevo } from '@/lib/brevo'
 
 /**
  * Brevo em memória para os testes: guarda contatos, listas e bloqueios e registra cada
@@ -10,6 +10,10 @@ export function brevoFalso(inicial: ContatoBrevo[] = []) {
   const chamadas: { op: string; email?: string; listaId?: number; corpo?: unknown }[] = []
   const falhas = new Map<string, ErroBrevo>()
   let falhaGeral: ErroBrevo | null = null
+  const pastas: PastaBrevo[] = []
+  const listas = new Map<number, ListaBrevo>()
+  const campanhas: RascunhoCampanha[] = []
+  let proximoIdLista = 10
 
   const erroDe = (email: string): ErroBrevo | null => falhaGeral ?? falhas.get(email) ?? null
 
@@ -53,6 +57,7 @@ export function brevoFalso(inicial: ContatoBrevo[] = []) {
     },
     async adicionarALista(listaId, emails) {
       chamadas.push({ op: 'adicionarALista', listaId, corpo: emails })
+      if (falhaGeral) return falhaGeral
       for (const e of emails) {
         const c = contatos.get(e)
         if (c && !c.listIds.includes(listaId)) c.listIds.push(listaId)
@@ -61,6 +66,7 @@ export function brevoFalso(inicial: ContatoBrevo[] = []) {
     },
     async removerDaLista(listaId, emails) {
       chamadas.push({ op: 'removerDaLista', listaId, corpo: emails })
+      if (falhaGeral) return falhaGeral
       for (const e of emails) {
         const c = contatos.get(e)
         if (c) c.listIds = c.listIds.filter((l) => l !== listaId)
@@ -75,9 +81,35 @@ export function brevoFalso(inicial: ContatoBrevo[] = []) {
       const lim = p.limite ?? 500
       return { ok: true, dados: { contatos: todos.slice(offset, offset + lim), total: todos.length } }
     },
-    async criarRascunhoCampanha(): Promise<ResultadoBrevo<{ id: number }>> {
-      chamadas.push({ op: 'campanha' })
-      return { ok: true, dados: { id: 1 } }
+    async criarRascunhoCampanha(c): Promise<ResultadoBrevo<{ id: number }>> {
+      chamadas.push({ op: 'campanha', corpo: c })
+      if (falhaGeral) return falhaGeral
+      campanhas.push(c)
+      return { ok: true, dados: { id: campanhas.length } }
+    },
+    async listarPastas() {
+      chamadas.push({ op: 'listarPastas' })
+      if (falhaGeral) return falhaGeral
+      return { ok: true, dados: [...pastas] }
+    },
+    async criarPasta(nome) {
+      chamadas.push({ op: 'criarPasta', corpo: nome })
+      if (falhaGeral) return falhaGeral
+      const p = { id: pastas.length + 1, nome }
+      pastas.push(p)
+      return { ok: true, dados: { id: p.id } }
+    },
+    async criarLista(nome, pastaId) {
+      chamadas.push({ op: 'criarLista', corpo: { nome, pastaId } })
+      if (falhaGeral) return falhaGeral
+      const l = { id: proximoIdLista++, nome, pastaId }
+      listas.set(l.id, l)
+      return { ok: true, dados: { id: l.id } }
+    },
+    async obterLista(listaId) {
+      chamadas.push({ op: 'obterLista', listaId })
+      if (falhaGeral) return falhaGeral
+      return { ok: true, dados: listas.get(listaId) ?? null }
     },
   }
 
@@ -85,6 +117,9 @@ export function brevoFalso(inicial: ContatoBrevo[] = []) {
     cliente,
     contatos,
     chamadas,
+    pastas,
+    listas,
+    campanhas,
     falhar(email: string, e: ErroBrevo) {
       falhas.set(email, e)
     },

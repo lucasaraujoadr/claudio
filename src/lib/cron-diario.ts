@@ -2,7 +2,7 @@ import { getDb } from '@/lib/db'
 import { sincronizacoes } from '@/lib/db/schema'
 
 export type StatusFonte = 'ok' | 'nao_configurado' | 'sem_permissao' | 'erro'
-export type FonteDiaria = 'gsc' | 'ga4'
+export type FonteDiaria = 'gsc' | 'ga4' | 'funis'
 
 export type RelatorioFonte = {
   status: StatusFonte
@@ -13,10 +13,17 @@ export type RelatorioFonte = {
   erro?: string
   mensagem?: string
 }
-export type RelatorioDiario = Record<FonteDiaria, RelatorioFonte>
+export type RelatorioDiario = Record<'gsc' | 'ga4', RelatorioFonte> & { funis?: RelatorioFonte }
 
-/** Uma fonte pronta para rodar; `null` = não configurada. */
-export type ExecutorFonte = () => Promise<{ linhas: number; detalhes?: Record<string, number | string> }>
+/** Uma fonte pronta para rodar; `null` = não configurada. `mensagem` não pode ter dado pessoal. */
+export type ExecutorFonte = () => Promise<{ linhas: number; detalhes?: Record<string, number | string>; mensagem?: string }>
+
+/** Erro que traz uma frase própria, já sem dado pessoal, para gravar em `sincronizacoes`. */
+function mensagemSegura(e: unknown): string | null {
+  if (typeof e !== 'object' || e === null || !('mensagemSegura' in e)) return null
+  const m = (e as { mensagemSegura: unknown }).mensagemSegura
+  return typeof m === 'string' ? m.slice(0, 500) : null
+}
 
 export type RegistroSincronizacao = {
   fonte: FonteDiaria
@@ -54,14 +61,17 @@ async function rodar(fonte: FonteDiaria, executor: ExecutorFonte | null): Promis
   if (!executor) return { status: 'nao_configurado', mensagem: MSG_NAO_CONFIGURADO }
   try {
     const r = await executor()
-    return { status: 'ok', linhas: r.linhas, detalhes: r.detalhes }
+    return { status: 'ok', linhas: r.linhas, detalhes: r.detalhes, ...(r.mensagem ? { mensagem: r.mensagem } : {}) }
   } catch (e) {
     // Mensagem só no log do servidor: nunca na resposta HTTP nem em `sincronizacoes`.
+    // Nos funis, nem no log: um erro do banco pode ecoar dado de contato.
     console.error(
       `cron diario: ${fonte} falhou:`,
-      e instanceof Error ? `${e.name}: ${e.message}` : 'erro',
+      e instanceof Error ? (fonte === 'funis' ? e.name : `${e.name}: ${e.message}`) : 'erro',
     )
-    return classificarErro(e)
+    const c = classificarErro(e)
+    const propria = mensagemSegura(e)
+    return propria ? { ...c, mensagem: propria } : c
   }
 }
 
@@ -69,11 +79,14 @@ export async function executarCronDiario(d: {
   hoje: Date
   gsc: ExecutorFonte | null
   ga4: ExecutorFonte | null
+  /** Etapa dos funis do CRM (E9); ausente = não roda (testes antigos). */
+  funis?: ExecutorFonte | null
   registrar: (r: RegistroSincronizacao) => Promise<void>
 }): Promise<RelatorioDiario> {
   const fontes: [FonteDiaria, ExecutorFonte | null][] = [
     ['gsc', d.gsc],
     ['ga4', d.ga4],
+    ...(d.funis !== undefined ? [['funis', d.funis] as [FonteDiaria, ExecutorFonte | null]] : []),
   ]
   // Em paralelo: uma chamada do Google pendurada numa fonte não atrasa a outra.
   const resultados = await Promise.all(

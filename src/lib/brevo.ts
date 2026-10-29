@@ -9,6 +9,13 @@
  * - `POST /v3/contacts/lists/{id}/contacts/add` e `/remove` com `{emails}`.
  * - `POST /v3/emailCampaigns`: cria a campanha como **rascunho** (sem `scheduledAt` ela não é
  *   agendada; este cliente nunca chama `sendNow`).
+ * - Listas e pastas (funis, E9; conferidos em 29/10/2026):
+ *   `GET /v3/contacts/folders?limit&offset&sort` → `{count, folders:[{id,name}]}`
+ *   (https://developers.brevo.com/reference/get-folders); `POST /v3/contacts/folders {name}` → 201 `{id}`
+ *   (https://developers.brevo.com/reference/createfolder); `POST /v3/contacts/lists {name, folderId}`
+ *   → 201 `{id}`, `folderId` obrigatório (https://developers.brevo.com/reference/create-list);
+ *   `GET /v3/contacts/lists/{id}` → `{id, name, folderId, ...}`, 404 se não existe
+ *   (https://developers.brevo.com/reference/get-list).
  *
  * Autenticação pelo cabeçalho `api-key`. Sem `BREVO_API_KEY`, toda operação devolve
  * `{ ok: false, motivo: 'nao_conectado' }` — nunca lança, para que nenhuma rota vire 500.
@@ -87,7 +94,15 @@ export type ClienteBrevo = {
   removerDaLista(listaId: number, emails: string[]): Promise<ResultadoBrevo<{ sucesso: string[]; falha: string[] }>>
   listarContatos(p?: { limite?: number; offset?: number }): Promise<ResultadoBrevo<{ contatos: ContatoBrevo[]; total: number | null }>>
   criarRascunhoCampanha(c: RascunhoCampanha): Promise<ResultadoBrevo<{ id: number }>>
+  listarPastas(): Promise<ResultadoBrevo<PastaBrevo[]>>
+  criarPasta(nome: string): Promise<ResultadoBrevo<{ id: number }>>
+  criarLista(nome: string, pastaId: number): Promise<ResultadoBrevo<{ id: number }>>
+  /** `null` quando a lista não existe (404). */
+  obterLista(listaId: number): Promise<ResultadoBrevo<ListaBrevo | null>>
 }
+
+export type PastaBrevo = { id: number; nome: string }
+export type ListaBrevo = { id: number; nome: string; pastaId: number | null }
 
 export function brevoConfigurado(): boolean {
   return Boolean(process.env.BREVO_API_KEY?.trim())
@@ -263,6 +278,53 @@ export function criarClienteBrevo(opts: OpcoesClienteBrevo = {}): ClienteBrevo {
         return { ok: false, motivo: 'resposta_invalida', mensagem: 'Resposta inesperada do Brevo ao criar a campanha.' }
       }
       return { ok: true, dados: { id: j.id } }
+    },
+
+    async listarPastas() {
+      const r = await chamar('GET', '/contacts/folders?limit=50&offset=0&sort=asc')
+      if (!r.ok) return r
+      const j = r.dados.json
+      // Conta sem pasta: o Brevo pode responder sem `folders`.
+      const itens = ehObjeto(j) && Array.isArray(j.folders) ? j.folders : ehObjeto(j) ? [] : null
+      if (itens === null) return { ok: false, motivo: 'resposta_invalida', mensagem: 'Resposta inesperada do Brevo ao listar pastas.' }
+      const pastas = itens
+        .filter((f): f is Record<string, unknown> => ehObjeto(f) && typeof f.id === 'number')
+        .map((f) => ({ id: f.id as number, nome: typeof f.name === 'string' ? f.name : '' }))
+      return { ok: true, dados: pastas }
+    },
+
+    async criarPasta(nome) {
+      const r = await chamar('POST', '/contacts/folders', { name: nome })
+      if (!r.ok) return r
+      const j = r.dados.json
+      if (!ehObjeto(j) || typeof j.id !== 'number') {
+        return { ok: false, motivo: 'resposta_invalida', mensagem: 'Resposta inesperada do Brevo ao criar a pasta.' }
+      }
+      return { ok: true, dados: { id: j.id } }
+    },
+
+    async criarLista(nome, pastaId) {
+      const r = await chamar('POST', '/contacts/lists', { name: nome, folderId: pastaId })
+      if (!r.ok) return r
+      const j = r.dados.json
+      if (!ehObjeto(j) || typeof j.id !== 'number') {
+        return { ok: false, motivo: 'resposta_invalida', mensagem: 'Resposta inesperada do Brevo ao criar a lista.' }
+      }
+      return { ok: true, dados: { id: j.id } }
+    },
+
+    async obterLista(listaId) {
+      const r = await chamar('GET', `/contacts/lists/${Math.trunc(listaId)}`, undefined, true)
+      if (!r.ok) return r
+      if (r.dados.status === 404) return { ok: true, dados: null }
+      const j = r.dados.json
+      if (!ehObjeto(j) || typeof j.id !== 'number') {
+        return { ok: false, motivo: 'resposta_invalida', mensagem: 'Resposta inesperada do Brevo ao ler a lista.' }
+      }
+      return {
+        ok: true,
+        dados: { id: j.id, nome: typeof j.name === 'string' ? j.name : '', pastaId: typeof j.folderId === 'number' ? j.folderId : null },
+      }
     },
   }
 }

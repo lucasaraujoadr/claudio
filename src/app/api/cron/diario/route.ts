@@ -1,11 +1,12 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { executarCronDiario, registrarSincronizacao, type ExecutorFonte } from '@/lib/cron-diario'
+import { executarEtapaFunis } from '@/lib/crm/funis-cron'
 import { buscarGa4, executarGa4, transacaoGa4 } from '@/lib/ga4'
 import { buscarSearchAnalytics, executarCronGsc, transacaoGsc } from '@/lib/gsc'
 
 export const runtime = 'nodejs'
-// Search Console (2 janelas paginadas) + GA4 (série de 90 dias e até 1 000 páginas) em sequência.
+// Search Console (2 janelas paginadas) + GA4 (série de 90 dias e até 1 000 páginas) + funis do CRM.
 export const maxDuration = 120
 
 function sha256(v: string): Buffer {
@@ -47,6 +48,13 @@ export async function GET(request: Request) {
         }
       : null
 
-  const relatorio = await executarCronDiario({ hoje, gsc, ga4, registrar: registrarSincronizacao })
+  // Funis do CRM: só precisam do banco (o Brevo é opcional). Rodam em paralelo com as fontes
+  // do Google e falham sem afetá-las.
+  const funis: ExecutorFonte = async () => {
+    const r = await executarEtapaFunis({ agora: hoje })
+    return { linhas: r.linhas, detalhes: r.detalhes, mensagem: r.mensagem }
+  }
+
+  const relatorio = await executarCronDiario({ hoje, gsc, ga4, funis, registrar: registrarSincronizacao })
   return NextResponse.json(relatorio)
 }

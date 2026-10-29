@@ -4,7 +4,7 @@ import { generateDrizzleJson, generateMigration } from 'drizzle-kit/api'
 import * as schema from '@/lib/db/schema'
 import type { BancoCrm } from '../banco'
 
-/** Como `banco-teste.ts`, mais as tabelas da integração com o Brevo (E8). */
+/** Como `banco-teste.ts`, mais as tabelas da integração com o Brevo (E8) e dos funis (E9). */
 export async function criarBancoTesteBrevo(): Promise<{ db: BancoCrm; fechar: () => Promise<void> }> {
   const pg = new PGlite()
   const tabelas = {
@@ -17,6 +17,10 @@ export async function criarBancoTesteBrevo(): Promise<{ db: BancoCrm; fechar: ()
     eventosContato: schema.eventosContato,
     brevoEventosRecebidos: schema.brevoEventosRecebidos,
     sincronizacoes: schema.sincronizacoes,
+    // Funis (E9): os ganchos chamados pelos webhooks gravam aqui.
+    funilInscricaoStatus: schema.funilInscricaoStatus,
+    funis: schema.funis,
+    funilInscricoes: schema.funilInscricoes,
   }
   const comandos = await generateMigration(generateDrizzleJson({}), generateDrizzleJson(tabelas))
   for (const c of comandos) await pg.exec(c)
