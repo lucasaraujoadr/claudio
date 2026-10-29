@@ -50,6 +50,7 @@ const ROTULO_EVENTO: Record<EventoContato['tipo'], string> = {
   bounce: 'Bounce',
   spam: 'Marcou como spam',
   formulario: 'Mensagem pelo site',
+  dados_apagados: 'Dados apagados a pedido',
 }
 
 function rotuloOrigem(v: unknown): string | null {

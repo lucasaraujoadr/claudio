@@ -72,6 +72,16 @@ function avisoInscricao(sp: Record<string, string | string[] | undefined>): { te
   return { texto: `${partes.join('; ')}.`, tipo: inscritos > 0 && !excedeu ? 'sucesso' : 'alerta' }
 }
 
+/** A lista escolhida já é de outro funil (`outro` = slug dele). */
+function avisoListaEmUso(sp: Record<string, string | string[] | undefined>): { texto: string; tipo: TipoAviso } | null {
+  if (sp.aviso !== 'lista-em-uso') return null
+  const outro = typeof sp.outro === 'string' && ehSlugFunil(sp.outro) ? definicaoFunil(sp.outro).nome : null
+  return {
+    texto: `Essa lista do Brevo já está ligada ${outro ? `ao funil "${outro}"` : 'a outro funil'}. Cada funil precisa de uma lista própria: concluir ou sair de um funil tira o contato da lista, o que o cortaria também do outro. Crie uma lista nova ou informe outra.`,
+    tipo: 'erro',
+  }
+}
+
 async function carregar(slug: SlugFunil, status: FunilInscricao['status'] | undefined, pagina: number) {
   try {
     const db = bancoPadrao()
@@ -264,7 +274,7 @@ export default async function FunilPage({
   const sp = await searchParams
   const status = sp.status === 'todos' ? undefined : sp.status === 'saiu' || sp.status === 'concluido' ? sp.status : 'ativo'
   const pagina = Math.max(1, numero(sp.pagina) || 1)
-  const aviso = avisoInscricao(sp) ?? (typeof sp.aviso === 'string' ? AVISOS[sp.aviso] : undefined)
+  const aviso = avisoInscricao(sp) ?? avisoListaEmUso(sp) ?? (typeof sp.aviso === 'string' ? AVISOS[sp.aviso] : undefined)
   const conectado = brevoConfigurado()
   const def = definicaoFunil(slug)
   const dados = await carregar(slug, status, pagina)
@@ -328,7 +338,7 @@ export default async function FunilPage({
 
       <Cartao
         titulo="Automação no Brevo"
-        descricao={`Automações não podem ser criadas pela API do Brevo: crie esta uma vez, à mão.${duracao !== null ? ` ${duracao} dias depois da entrada, o CRM marca a sequência como concluída e tira o contato da lista.` : ' Este funil não conclui: a lista continua recebendo as campanhas dos artigos novos.'}`}
+        descricao={`Automações não podem ser criadas pela API do Brevo: crie esta uma vez, à mão.${duracao !== null ? ` ${duracao} dias depois de o contato entrar na lista do Brevo (não da inscrição: sem lista conectada, nada conta), o CRM marca a sequência como concluída e tira o contato da lista.` : ' Este funil não conclui: a lista continua recebendo as campanhas dos artigos novos.'}`}
       >
         <ol className="list-decimal space-y-1.5 pl-5 text-sm text-tinta">
           {passosAutomacao(slug, nomeLista).map((p, i) => <li key={i}>{p}</li>)}
