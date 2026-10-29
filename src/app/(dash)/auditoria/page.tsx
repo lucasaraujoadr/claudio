@@ -3,16 +3,18 @@ import { desc, eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db'
 import { auditIssues, auditPages, auditRuns } from '@/lib/db/schema'
 import { REGRA_INTERROMPIDO, runTravada } from '@/lib/auditoria'
+import { GraficoBarras } from '@/components/graficos/grafico-barras'
+import { Aviso, CabecalhoPagina, Cartao, EstadoVazio, Indicador, SELO_SEVERIDADE, Selo, Tabela } from '@/components/ui'
 import { BotaoRastrear } from './botao-rastrear'
 
 export const metadata = { title: 'Auditoria técnica' }
 
 type Severidade = 'critico' | 'aviso' | 'info'
 
-const SEVERIDADES: { chave: Severidade; titulo: string; classe: string }[] = [
-  { chave: 'critico', titulo: 'Críticos', classe: 'border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200' },
-  { chave: 'aviso', titulo: 'Avisos', classe: 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200' },
-  { chave: 'info', titulo: 'Informativos', classe: 'border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200' },
+const SEVERIDADES: { chave: Severidade; titulo: string }[] = [
+  { chave: 'critico', titulo: 'Críticos' },
+  { chave: 'aviso', titulo: 'Avisos' },
+  { chave: 'info', titulo: 'Informativos' },
 ]
 
 const formatoData = new Intl.DateTimeFormat('pt-BR', {
@@ -55,87 +57,117 @@ export default async function AuditoriaPage() {
   const interrompido = problemas.find((p) => p.regra === REGRA_INTERROMPIDO)
   const ultimaFalhou = ultimaRun?.status === 'falhou'
 
+  const contagem = Object.fromEntries(
+    SEVERIDADES.map(({ chave }) => [chave, problemas.filter((p) => p.severidade === chave).length]),
+  ) as Record<Severidade, number>
+
   return (
-    <div className="max-w-4xl space-y-6">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Auditoria técnica</h1>
-          {ultimaConcluida ? (
-            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-              Último rastreamento concluído em {formatoData.format(ultimaConcluida.finalizadoEm ?? ultimaConcluida.iniciadoEm)} ·{' '}
-              {ultimaConcluida.paginasRastreadas} páginas rastreadas
-            </p>
-          ) : (
-            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-              Nenhum rastreamento concluído até agora.
-            </p>
-          )}
-        </div>
-        {!rodando && <BotaoRastrear rotulo="Rastrear agora" />}
-      </header>
+    <div className="mx-auto max-w-6xl space-y-6">
+      <CabecalhoPagina
+        secao="SEO"
+        titulo="Auditoria técnica"
+        subtitulo={
+          ultimaConcluida
+            ? `Último rastreamento concluído em ${formatoData.format(ultimaConcluida.finalizadoEm ?? ultimaConcluida.iniciadoEm)} · ${ultimaConcluida.paginasRastreadas} páginas rastreadas`
+            : 'Nenhum rastreamento concluído até agora.'
+        }
+        acoes={!rodando && <BotaoRastrear rotulo="Rastrear agora" />}
+      />
 
       {rodando && (
-        <p role="status" className="rounded border border-blue-300 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
+        <Aviso tipo="info" role="status">
           Há um rastreamento em andamento desde {formatoData.format(ultimaRun.iniciadoEm)}. Atualize a
           página em alguns minutos.
-        </p>
+        </Aviso>
       )}
       {travada && (
-        <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+        <Aviso tipo="alerta" role="alert">
           O último rastreamento ({formatoData.format(ultimaRun.iniciadoEm)}) parece ter travado. Você pode
           iniciar outro.
-        </p>
+        </Aviso>
       )}
       {interrompido && (
-        <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+        <Aviso tipo="alerta" role="alert">
           {interrompido.mensagem}.
-        </p>
+        </Aviso>
       )}
       {ultimaFalhou && (
-        <p role="alert" className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+        <Aviso tipo="erro" role="alert">
           O último rastreamento ({formatoData.format(ultimaRun.iniciadoEm)}) falhou.
           {ultimaConcluida ? ' Os resultados abaixo são do rastreamento anterior.' : ''}
-        </p>
+        </Aviso>
       )}
 
       {!ultimaConcluida ? (
-        <section className="rounded-lg border border-dashed border-gray-300 p-8 text-center">
-          <h2 className="text-lg font-medium">O site ainda não foi rastreado</h2>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            Não sabemos se há problemas. Clique em &ldquo;Rastrear agora&rdquo; para fazer a primeira auditoria.
-          </p>
-        </section>
+        <EstadoVazio
+          titulo="O site ainda não foi rastreado"
+          explicacao={<>Não sabemos se há problemas. Clique em &ldquo;Rastrear agora&rdquo; para fazer a primeira auditoria.</>}
+        />
       ) : problemas.length === 0 ? (
-        <section className="rounded-lg border border-green-300 bg-green-50 p-8 text-center text-green-900 dark:border-green-800 dark:bg-green-950 dark:text-green-200">
-          <h2 className="text-lg font-medium">Nenhum problema encontrado</h2>
-          <p className="mt-1 text-sm">
-            O rastreamento analisou {ultimaConcluida.paginasRastreadas} páginas e nenhuma regra foi violada.
-          </p>
-        </section>
+        <Aviso tipo="sucesso" titulo="Nenhum problema encontrado" role="status">
+          O rastreamento analisou {ultimaConcluida.paginasRastreadas} páginas e nenhuma regra foi violada.
+        </Aviso>
       ) : (
-        SEVERIDADES.map(({ chave, titulo, classe }) => {
-          const doGrupo = problemas.filter((p) => p.severidade === chave)
-          return (
-            <section key={chave} aria-labelledby={`sev-${chave}`}>
-              <h2 id={`sev-${chave}`} className="mb-2 text-lg font-semibold">
-                {titulo} ({doGrupo.length})
-              </h2>
-              {doGrupo.length === 0 ? (
-                <p className="text-sm text-gray-600 dark:text-gray-400">Nenhum problema nesta categoria.</p>
-              ) : (
-                <ul className="space-y-2">
-                  {doGrupo.map((p) => (
-                    <li key={p.id} className={`rounded border p-3 text-sm ${classe}`}>
-                      <span className="font-mono text-xs opacity-70">{p.regra}</span>
-                      <p>{p.mensagem}</p>
-                      <p className="break-all text-xs opacity-70">{p.url ?? 'Site inteiro'}</p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-          )
-        })
+        <>
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+            <Cartao titulo="Resumo">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-5">
+                <Indicador rotulo="Páginas rastreadas" valor={ultimaConcluida.paginasRastreadas} />
+                <Indicador rotulo="Problemas encontrados" valor={problemas.length} />
+                <Indicador rotulo="Críticos" valor={contagem.critico} />
+                <Indicador rotulo="Avisos" valor={contagem.aviso} />
+              </div>
+            </Cartao>
+            <Cartao titulo="Problemas por severidade" descricao="Último rastreamento concluído. Cada barra é uma contagem; a severidade está no rótulo.">
+              <GraficoBarras
+                titulo="Problemas por severidade no último rastreamento concluído"
+                rotuloCategoria="Severidade"
+                rotuloValor="Problemas"
+                itens={SEVERIDADES.map(({ chave, titulo }) => ({
+                  chave,
+                  rotulo: <Selo variante={SELO_SEVERIDADE[chave].variante}>{titulo}</Selo>,
+                  rotuloTexto: titulo,
+                  valor: contagem[chave],
+                  detalhe: `${((contagem[chave] / problemas.length) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% dos problemas`,
+                }))}
+              />
+            </Cartao>
+          </div>
+
+          {SEVERIDADES.map(({ chave, titulo }) => {
+            const doGrupo = problemas.filter((p) => p.severidade === chave)
+            return (
+              <section key={chave} aria-labelledby={`sev-${chave}`} className="space-y-3">
+                <h2 id={`sev-${chave}`} className="flex items-center gap-3 font-titulo text-xl font-semibold text-tinta">
+                  {titulo} ({doGrupo.length})
+                  <Selo variante={SELO_SEVERIDADE[chave].variante}>{SELO_SEVERIDADE[chave].rotulo}</Selo>
+                </h2>
+                {doGrupo.length === 0 ? (
+                  <p className="text-sm text-tinta-suave">Nenhum problema nesta categoria.</p>
+                ) : (
+                  <Tabela legenda={`Problemas: ${titulo.toLowerCase()}`} compacta>
+                    <thead>
+                      <tr>
+                        <th scope="col">Regra</th>
+                        <th scope="col">Problema</th>
+                        <th scope="col">Página</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {doGrupo.map((p) => (
+                        <tr key={p.id}>
+                          <td className="font-mono text-xs whitespace-nowrap text-tinta-suave">{p.regra}</td>
+                          <td className="min-w-[16rem] text-tinta">{p.mensagem}</td>
+                          <td className="max-w-[20rem] text-xs break-all text-tinta-suave">{p.url ?? 'Site inteiro'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Tabela>
+                )}
+              </section>
+            )
+          })}
+        </>
       )}
     </div>
   )

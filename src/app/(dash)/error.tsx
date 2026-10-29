@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect } from 'react'
+import { Aviso } from '@/components/ui/aviso'
+import { Botao } from '@/components/ui/botao'
 
 export default function ErroDash({
   error,
@@ -14,22 +16,18 @@ export default function ErroDash({
   }, [error])
 
   return (
-    <div
-      role="alert"
-      className="max-w-xl rounded-lg border border-red-200 bg-red-50 p-6 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+    <Aviso
+      tipo="erro"
+      titulo="Não foi possível consultar os dados"
+      className="max-w-xl"
+      acao={
+        <Botao variante="secundario" onClick={() => retry()}>
+          Tentar novamente
+        </Botao>
+      }
     >
-      <h2 className="text-lg font-semibold">Não foi possível consultar os dados</h2>
-      <p className="mt-2 text-sm">
-        A consulta ao banco falhou, então não sabemos o que há aqui. Isso não significa que
-        não haja dados. Tente novamente em instantes.
-      </p>
-      <button
-        type="button"
-        onClick={() => retry()}
-        className="mt-4 rounded bg-red-900 px-3 py-2 text-sm font-medium text-white hover:bg-red-800"
-      >
-        Tentar novamente
-      </button>
-    </div>
+      A consulta ao banco falhou, então não sabemos o que há aqui. Isso não significa que
+      não haja dados. Tente novamente em instantes.
+    </Aviso>
   )
 }

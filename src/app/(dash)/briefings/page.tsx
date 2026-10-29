@@ -4,6 +4,7 @@ import { briefingParaMarkdown } from '@/lib/ai/briefing'
 import { briefingSchema } from '@/lib/ai/schemas'
 import { getDb } from '@/lib/db'
 import { briefings, topics } from '@/lib/db/schema'
+import { Aviso, CabecalhoPagina, Cartao, EstadoVazio, Selo, cx } from '@/components/ui'
 import { CopiarMarkdown } from './copiar-markdown'
 
 export const metadata = { title: 'Briefings' }
@@ -26,14 +27,16 @@ export default async function BriefingsPage({
 
   if (lista.length === 0) {
     return (
-      <div className="max-w-4xl space-y-6">
-        <h1 className="text-2xl font-semibold">Briefings</h1>
-        <section className="rounded-lg border border-dashed border-gray-300 p-8 text-center">
-          <h2 className="text-lg font-medium">Nenhum briefing gerado ainda</h2>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            Escolha um tema em <a href="/temas" className="underline">Temas</a> e use &ldquo;Gerar briefing&rdquo;.
-          </p>
-        </section>
+      <div className="mx-auto max-w-6xl space-y-6">
+        <CabecalhoPagina secao="SEO" titulo="Briefings" subtitulo="Roteiros de conteúdo gerados para os temas escolhidos." />
+        <EstadoVazio
+          titulo="Nenhum briefing gerado ainda"
+          explicacao={
+            <>
+              Escolha um tema em <a href="/temas" className="font-medium text-acento-texto underline">Temas</a> e use &ldquo;Gerar briefing&rdquo;.
+            </>
+          }
+        />
       </div>
     )
   }
@@ -55,92 +58,114 @@ export default async function BriefingsPage({
   const b = parsed.success ? parsed.data : null
   const ajustes = Array.isArray(linha.ajustes) ? (linha.ajustes as unknown[]) : []
 
+  const SUBTITULO = 'text-sm font-semibold tracking-wide text-tinta-suave uppercase'
+
   return (
-    <div className="max-w-6xl space-y-6">
-      <h1 className="text-2xl font-semibold">Briefings</h1>
+    <div className="mx-auto max-w-6xl space-y-6">
+      <CabecalhoPagina secao="SEO" titulo="Briefings" subtitulo="Roteiros de conteúdo gerados para os temas escolhidos." />
       {sp.gerado === 'ok' && (
-        <p role="status" className="rounded border border-green-300 bg-green-50 p-3 text-sm text-green-900 dark:border-green-800 dark:bg-green-950 dark:text-green-200">
+        <Aviso tipo="sucesso" role="status">
           Briefing gerado. O tema agora está como briefado.
-        </p>
+        </Aviso>
       )}
-      <div className="grid gap-6 md:grid-cols-[18rem_1fr]">
+      <div className="grid gap-6 md:grid-cols-[18rem_minmax(0,1fr)]">
         <nav aria-label="Briefings gerados">
-          <ul className="space-y-1">
-            {lista.map((i) => (
-              <li key={i.id}>
-                <a
-                  href={`/briefings?id=${i.id}`}
-                  aria-current={i.id === selecionado.id ? 'page' : undefined}
-                  className={`block rounded border p-2 text-sm ${i.id === selecionado.id ? 'border-gray-900' : 'border-gray-300'}`}
-                >
-                  <span className="block font-medium">{i.tema}</span>
-                  <span className="block text-xs text-gray-600 dark:text-gray-400">{formatoData.format(i.criadoEm)}</span>
-                </a>
-              </li>
-            ))}
+          <ul className="space-y-1.5">
+            {lista.map((i) => {
+              const ativo = i.id === selecionado.id
+              return (
+                <li key={i.id}>
+                  <a
+                    href={`/briefings?id=${i.id}`}
+                    aria-current={ativo ? 'page' : undefined}
+                    className={cx(
+                      'relative block rounded-lg border p-3 text-sm transition-colors',
+                      ativo
+                        ? 'border-acento/50 bg-acento-suave before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-full before:bg-acento'
+                        : 'border-borda bg-superficie hover:bg-elevada',
+                    )}
+                  >
+                    <span className="block font-medium text-tinta">{i.tema}</span>
+                    <span className="mt-0.5 block text-xs text-tinta-suave">{formatoData.format(i.criadoEm)}</span>
+                  </a>
+                </li>
+              )
+            })}
           </ul>
         </nav>
 
         {b ? (
-          <article className="space-y-5">
-            <CopiarMarkdown markdown={briefingParaMarkdown(b)} />
-            <header>
-              <h2 className="text-xl font-semibold">{b.title}</h2>
-              <p className="mt-1 text-sm text-gray-700 dark:text-gray-300">{b.metaDescription}</p>
-              {ajustes.includes('title') && (
-                <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">Title encurtado automaticamente</p>
-              )}
-              {ajustes.includes('metaDescription') && (
-                <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">Meta description encurtada automaticamente</p>
-              )}
-            </header>
-            <section>
-              <h3 className="font-medium">Estrutura</h3>
-              <ol className="mt-1 list-decimal space-y-1 pl-5">
-                {b.outline.map((s, i) => (
-                  <li key={i}>
-                    {s.h2}
-                    {s.h3.length > 0 && (
-                      <ul className="list-disc pl-5 text-sm text-gray-700 dark:text-gray-300">
-                        {s.h3.map((h, j) => <li key={j}>{h}</li>)}
-                      </ul>
-                    )}
-                  </li>
-                ))}
-              </ol>
-            </section>
-            <section>
-              <h3 className="font-medium">FAQ</h3>
-              <dl className="mt-1 space-y-2">
-                {b.faq.map((f, i) => (
-                  <div key={i}>
-                    <dt className="font-medium">{f.pergunta}</dt>
-                    <dd className="text-sm text-gray-700 dark:text-gray-300">{f.resposta}</dd>
-                  </div>
-                ))}
-              </dl>
-            </section>
-            <section>
-              <h3 className="font-medium">Links internos</h3>
-              {b.linksInternos.length > 0 ? (
-                <ul className="mt-1 list-disc pl-5 text-sm">
-                  {b.linksInternos.map((l, i) => (
-                    <li key={i}>{l.ancora}: <span className="break-all">{l.url}</span></li>
+          <Cartao as="article" className="min-w-0">
+            <div className="space-y-6">
+              <CopiarMarkdown markdown={briefingParaMarkdown(b)} />
+              <header className="border-b border-borda pb-5">
+                <p className={SUBTITULO}>Title</p>
+                <h2 className="mt-1 font-titulo text-2xl leading-snug font-semibold text-tinta">{b.title}</h2>
+                <p className={cx(SUBTITULO, 'mt-4')}>Meta description</p>
+                <p className="mt-1 text-sm text-tinta">{b.metaDescription}</p>
+                {(ajustes.includes('title') || ajustes.includes('metaDescription')) && (
+                  <p className="mt-3 flex flex-wrap gap-2">
+                    {ajustes.includes('title') && <Selo variante="aviso">Title encurtado automaticamente</Selo>}
+                    {ajustes.includes('metaDescription') && <Selo variante="aviso">Meta description encurtada automaticamente</Selo>}
+                  </p>
+                )}
+              </header>
+              <section>
+                <h3 className={SUBTITULO}>Estrutura</h3>
+                <ol className="mt-2 list-decimal space-y-2 pl-5 text-tinta marker:text-tinta-suave">
+                  {b.outline.map((s, i) => (
+                    <li key={i} className="font-medium">
+                      {s.h2}
+                      {s.h3.length > 0 && (
+                        <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm font-normal text-tinta-suave">
+                          {s.h3.map((h, j) => <li key={j}>{h}</li>)}
+                        </ul>
+                      )}
+                    </li>
                   ))}
-                </ul>
-              ) : (
-                <p className="text-sm text-gray-600 dark:text-gray-400">Nenhum link interno sugerido.</p>
-              )}
-            </section>
-            <section>
-              <h3 className="font-medium">Keywords secundárias</h3>
-              <p className="text-sm">{b.keywordsSecundarias.join(', ') || 'Nenhuma.'}</p>
-            </section>
-          </article>
+                </ol>
+              </section>
+              <section>
+                <h3 className={SUBTITULO}>FAQ</h3>
+                <dl className="mt-2 space-y-3">
+                  {b.faq.map((f, i) => (
+                    <div key={i} className="rounded-lg border border-borda bg-elevada p-3">
+                      <dt className="font-medium text-tinta">{f.pergunta}</dt>
+                      <dd className="mt-1 text-sm text-tinta-suave">{f.resposta}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+              <section>
+                <h3 className={SUBTITULO}>Links internos</h3>
+                {b.linksInternos.length > 0 ? (
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-tinta">
+                    {b.linksInternos.map((l, i) => (
+                      <li key={i}>{l.ancora}: <span className="break-all text-tinta-suave">{l.url}</span></li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-sm text-tinta-suave">Nenhum link interno sugerido.</p>
+                )}
+              </section>
+              <section>
+                <h3 className={SUBTITULO}>Keywords secundárias</h3>
+                {b.keywordsSecundarias.length > 0 ? (
+                  <ul className="mt-2 flex flex-wrap gap-1.5">
+                    {b.keywordsSecundarias.map((k, i) => (
+                      <li key={i}><Selo variante="neutro">{k}</Selo></li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-sm text-tinta-suave">Nenhuma.</p>
+                )}
+              </section>
+            </div>
+          </Cartao>
         ) : (
-          <p role="alert" className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+          <Aviso tipo="erro" role="alert">
             Este briefing está em um formato que não pôde ser lido.
-          </p>
+          </Aviso>
         )}
       </div>
     </div>

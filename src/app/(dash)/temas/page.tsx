@@ -3,14 +3,15 @@ import { asc, desc } from 'drizzle-orm'
 import { getDb } from '@/lib/db'
 import { clusters, topics, type Topic } from '@/lib/db/schema'
 import { padraoUrlPublicada, siteUrl } from '@/lib/site'
-import { BotaoEnviar } from '../botao-enviar'
+import { Aviso as CaixaAviso, BotaoEnviar, CabecalhoPagina, Cartao, EstadoVazio, Selo, classesBotao, cx, type TipoAviso, type VarianteSelo } from '@/components/ui'
+import { classesCampo } from '@/components/ui/campo'
 
 export const metadata = { title: 'Temas' }
 
-type Aviso = { texto: string; classe: string; role: 'status' | 'alert' }
-const VERDE = 'border-green-300 bg-green-50 text-green-900 dark:border-green-800 dark:bg-green-950 dark:text-green-200'
-const AZUL = 'border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200'
-const VERMELHO = 'border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200'
+type Aviso = { texto: string; classe: TipoAviso; role: 'status' | 'alert' }
+const VERDE: TipoAviso = 'sucesso'
+const AZUL: TipoAviso = 'info'
+const VERMELHO: TipoAviso = 'erro'
 
 const AVISOS: Record<string, Record<string, Aviso>> = {
   pesquisa: {
@@ -33,8 +34,6 @@ const AVISOS: Record<string, Record<string, Aviso>> = {
   },
 }
 
-const BOTAO_ENVIO =
-  'rounded border border-gray-400 hover:bg-gray-100 disabled:cursor-wait disabled:opacity-60 dark:hover:bg-gray-800'
 
 const STATUS = ['ideia', 'escolhido', 'briefado', 'publicado'] as const
 type Status = (typeof STATUS)[number]
@@ -43,6 +42,8 @@ const ROTULO_INTENCAO: Record<string, string> = {
   informacional: 'Informacional', comercial: 'Comercial', transacional: 'Transacional', navegacional: 'Navegacional',
 }
 const ROTULO_PRIORIDADE: Record<string, string> = { alta: 'Alta', media: 'Média', baixa: 'Baixa' }
+/** Estágio do tema: identidade pelo texto; em andamento em dourado, publicado com o tom de concluído. */
+const SELO_STATUS: Record<Status, VarianteSelo> = { ideia: 'neutro', escolhido: 'acento', briefado: 'acento', publicado: 'sucesso' }
 
 function ehStatus(v: unknown): v is Status {
   return typeof v === 'string' && (STATUS as readonly string[]).includes(v)
@@ -54,7 +55,7 @@ function Acao({ t }: { t: Topic }) {
       <form method="POST" action="/api/temas/status">
         <input type="hidden" name="id" value={t.id} />
         <input type="hidden" name="para" value="escolhido" />
-        <button type="submit" className="rounded border border-gray-400 px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800">
+        <button type="submit" className={classesBotao('secundario', 'sm')}>
           Escolher
         </button>
       </form>
@@ -64,10 +65,10 @@ function Acao({ t }: { t: Topic }) {
     return (
       <form method="POST" action="/api/briefings/gerar" className="text-right">
         <input type="hidden" name="id" value={t.id} />
-        <BotaoEnviar rotuloEnviando="Gerando…" className={`${BOTAO_ENVIO} px-2 py-1`}>
+        <BotaoEnviar rotuloEnviando="Gerando…" variante="primario" tamanho="sm">
           Gerar briefing
         </BotaoEnviar>
-        <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
+        <p className="mt-1 max-w-56 text-xs text-tinta-suave">
           Pode levar até 2 minutos (mais, se o modelo precisar de uma segunda tentativa).
         </p>
       </form>
@@ -76,7 +77,7 @@ function Acao({ t }: { t: Topic }) {
   if (t.status === 'briefado') {
     return (
       <div className="space-y-2">
-        <a href={`/briefings?tema=${t.id}`} className="text-blue-700 underline dark:text-blue-400">Ver briefing</a>
+        <a href={`/briefings?tema=${t.id}`} className="text-sm font-medium text-acento-texto underline-offset-2 hover:underline">Ver briefing</a>
       <form method="POST" action="/api/temas/status" className="flex flex-wrap items-center gap-2">
         <input type="hidden" name="id" value={t.id} />
         <input type="hidden" name="para" value="publicado" />
@@ -88,9 +89,9 @@ function Acao({ t }: { t: Topic }) {
           required
           pattern={padraoUrlPublicada()}
           placeholder={`${siteUrl()}/...`}
-          className="w-64 rounded border border-gray-400 px-2 py-1"
+          className={classesCampo('h-8 w-64 py-1')}
         />
-        <button type="submit" className="rounded border border-gray-400 px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800">
+        <button type="submit" className={classesBotao('secundario', 'sm')}>
           Marcar como publicado
         </button>
       </form>
@@ -99,7 +100,7 @@ function Acao({ t }: { t: Topic }) {
   }
   if (t.status === 'publicado' && t.urlPublicada) {
     return (
-      <a href={t.urlPublicada} target="_blank" rel="noopener noreferrer" className="break-all text-blue-700 underline dark:text-blue-400">
+      <a href={t.urlPublicada} target="_blank" rel="noopener noreferrer" className="text-sm font-medium break-all text-acento-texto underline-offset-2 hover:underline">
         Ver página
       </a>
     )
@@ -109,14 +110,16 @@ function Acao({ t }: { t: Topic }) {
 
 function ListaTemas({ itens }: { itens: Topic[] }) {
   return (
-    <ul className="divide-y divide-gray-200">
+    <ul className="divide-y divide-borda">
       {itens.map((t) => (
-        <li key={t.id} className="flex flex-wrap items-start justify-between gap-3 py-2">
-          <div className="min-w-0">
-            <p className="font-medium">{t.titulo}</p>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              {t.keyword} · {ROTULO_INTENCAO[t.intencao]} · Prioridade {ROTULO_PRIORIDADE[t.prioridade].toLowerCase()} ·{' '}
-              {ROTULO_STATUS[t.status]}
+        <li key={t.id} className="flex flex-wrap items-start justify-between gap-3 px-5 py-3">
+          <div className="min-w-0 flex-1">
+            <p className="flex flex-wrap items-center gap-2 font-medium text-tinta">
+              {t.titulo}
+              <Selo variante={SELO_STATUS[t.status]}>{ROTULO_STATUS[t.status]}</Selo>
+            </p>
+            <p className="mt-0.5 text-sm text-tinta-suave">
+              {t.keyword} · {ROTULO_INTENCAO[t.intencao]} · Prioridade {ROTULO_PRIORIDADE[t.prioridade].toLowerCase()}
             </p>
           </div>
           <Acao t={t} />
@@ -162,72 +165,68 @@ export default async function TemasPage({
     .filter((g) => g.itens.length > 0)
   const semCluster = visiveis.filter((t) => t.clusterId === null)
 
+  const pilula = (ativo: boolean) =>
+    cx(
+      'inline-flex h-8 items-center rounded-full border px-3 text-sm transition-colors',
+      ativo ? 'border-acento bg-acento-suave font-semibold text-tinta' : 'border-borda bg-superficie text-tinta-suave hover:bg-elevada hover:text-tinta',
+    )
+
   return (
-    <div className="max-w-6xl space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Temas</h1>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            Clusters de conteúdo e temas, do primeiro rascunho até a publicação.
-          </p>
-        </div>
-        <form method="POST" action="/api/temas/pesquisar" className="text-right">
-          <BotaoEnviar rotuloEnviando="Gerando…" className={`${BOTAO_ENVIO} px-3 py-2`}>
-            Pesquisar temas
-          </BotaoEnviar>
-          <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">A pesquisa pode levar até 2 minutos.</p>
-        </form>
-      </header>
+    <div className="mx-auto max-w-6xl space-y-6">
+      <CabecalhoPagina
+        secao="SEO"
+        titulo="Temas"
+        subtitulo="Clusters de conteúdo e temas, do primeiro rascunho até a publicação."
+        acoes={
+          <form method="POST" action="/api/temas/pesquisar" className="sm:text-right">
+            <BotaoEnviar rotuloEnviando="Gerando…">Pesquisar temas</BotaoEnviar>
+            <p className="mt-1 text-xs text-tinta-suave">A pesquisa pode levar até 2 minutos.</p>
+          </form>
+        }
+      />
 
       {aviso && (
-        <p role={aviso.role} className={`rounded border p-3 text-sm ${aviso.classe}`}>
+        <CaixaAviso tipo={aviso.classe} role={aviso.role}>
           {aviso.texto}
-        </p>
+        </CaixaAviso>
       )}
 
       {todosTemas.length === 0 ? (
-        <section className="rounded-lg border border-dashed border-gray-300 p-8 text-center">
-          <h2 className="text-lg font-medium">Nenhum tema ainda</h2>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            Use &ldquo;Pesquisar temas&rdquo; para gerar clusters com IA ou crie temas a partir das oportunidades.
-          </p>
-        </section>
+        <EstadoVazio
+          titulo="Nenhum tema ainda"
+          explicacao={<>Use &ldquo;Pesquisar temas&rdquo; para gerar clusters com IA ou crie temas a partir das oportunidades.</>}
+        />
       ) : (
         <>
-          <nav aria-label="Filtro por status" className="flex flex-wrap gap-2 text-sm">
-            <a href="/temas" aria-current={!filtro ? 'page' : undefined} className={`rounded border px-2 py-1 ${!filtro ? 'border-gray-900 font-semibold' : 'border-gray-300'}`}>
+          <nav aria-label="Filtro por status" className="flex flex-wrap gap-2">
+            <a href="/temas" aria-current={!filtro ? 'page' : undefined} className={pilula(!filtro)}>
               Todos
             </a>
             {STATUS.map((s) => (
-              <a key={s} href={`/temas?filtro=${s}`} aria-current={filtro === s ? 'page' : undefined} className={`rounded border px-2 py-1 ${filtro === s ? 'border-gray-900 font-semibold' : 'border-gray-300'}`}>
+              <a key={s} href={`/temas?filtro=${s}`} aria-current={filtro === s ? 'page' : undefined} className={pilula(filtro === s)}>
                 {ROTULO_STATUS[s]}
               </a>
             ))}
           </nav>
 
           {visiveis.length === 0 ? (
-            <section className="rounded-lg border border-gray-300 p-8 text-center">
-              <h2 className="text-lg font-medium">Nenhum tema com esse status</h2>
-              <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Escolha outro filtro para ver os demais temas.</p>
-            </section>
+            <EstadoVazio titulo="Nenhum tema com esse status" explicacao="Escolha outro filtro para ver os demais temas." />
           ) : (
             <div className="space-y-6">
               {grupos.map(({ cluster, itens }) => (
-                <section key={cluster.id} className="rounded-lg border border-gray-300 p-4">
-                  <h2 className="text-lg font-medium">{cluster.nome}</h2>
-                  <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">
-                    Pilar: {cluster.keywordPilar} · {ROTULO_INTENCAO[cluster.intencao]} · Prioridade{' '}
-                    {ROTULO_PRIORIDADE[cluster.prioridade].toLowerCase()}
-                  </p>
+                <Cartao
+                  key={cluster.id}
+                  titulo={cluster.nome}
+                  descricao={`Pilar: ${cluster.keywordPilar} · ${ROTULO_INTENCAO[cluster.intencao]} · Prioridade ${ROTULO_PRIORIDADE[cluster.prioridade].toLowerCase()}`}
+                  semPreenchimento
+                >
                   <ListaTemas itens={itens} />
-                </section>
+                </Cartao>
               ))}
               {semCluster.length > 0 && (
-                <section className="rounded-lg border border-gray-300 p-4">
-                  <h2 className="text-lg font-medium">Sem cluster</h2>
-                  <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">Temas criados a partir de oportunidades do Search Console.</p>
+                <Cartao titulo="Sem cluster" descricao="Temas criados a partir de oportunidades do Search Console." semPreenchimento>
                   <ListaTemas itens={semCluster} />
-                </section>
+                </Cartao>
               )}
             </div>
           )}

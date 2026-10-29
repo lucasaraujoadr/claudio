@@ -1,17 +1,23 @@
 import { connection } from 'next/server'
 import { diasDesde } from '@/lib/oportunidades'
 import { carregarOportunidadesDoSnapshot } from '@/lib/oportunidades-snapshot'
+import { Aviso, CabecalhoPagina, Cartao, CELULA_NUMERICA, EstadoVazio, Selo, Tabela, classesBotao, type TipoAviso } from '@/components/ui'
+import { AvisoSearchConsole } from '../_compartilhado/aviso-search-console'
+import { carregarSincronizacoesSeguro, carregarTotaisGsc } from '../_compartilhado/carregar'
+import { GraficosSearchConsole } from '../_compartilhado/graficos-search-console'
+import { seriesSearchConsole } from '../_compartilhado/search-console'
+import { emailContaServico, explicarSearchConsole } from '../_compartilhado/sincronizacao'
 
 export const metadata = { title: 'Oportunidades' }
 
 const DIAS_ATE_DESATUALIZADO = 2
 
-const AVISOS: Record<string, { texto: string; classe: string; role: 'status' | 'alert' }> = {
-  criado: { texto: 'Tema criado.', classe: 'border-green-300 bg-green-50 text-green-900 dark:border-green-800 dark:bg-green-950 dark:text-green-200', role: 'status' },
-  existia: { texto: 'Tema já existia.', classe: 'border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200', role: 'status' },
+const AVISOS: Record<string, { texto: string; tipo: TipoAviso; role: 'status' | 'alert' }> = {
+  criado: { texto: 'Tema criado.', tipo: 'sucesso', role: 'status' },
+  existia: { texto: 'Tema já existia.', tipo: 'info', role: 'status' },
   erro: {
     texto: 'Não foi possível criar o tema. Verifique o termo e tente novamente.',
-    classe: 'border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200',
+    tipo: 'erro',
     role: 'alert',
   },
 }
@@ -19,6 +25,16 @@ const AVISOS: Record<string, { texto: string; classe: string; role: 'status' | '
 function formatarData(iso: string): string {
   const [a, m, d] = iso.split('-')
   return `${d}/${m}/${a}`
+}
+
+/** Totais por dia para o gráfico; `undefined` se a leitura falhar (não derruba a página). */
+async function carregarSeriesGsc() {
+  try {
+    return seriesSearchConsole(await carregarTotaisGsc())
+  } catch (e) {
+    console.error('oportunidades: totais do gsc falharam:', e instanceof Error ? e.name : 'erro')
+    return undefined
+  }
 }
 
 export default async function OportunidadesPage({
@@ -30,96 +46,106 @@ export default async function OportunidadesPage({
   const { tema } = await searchParams
   const aviso = typeof tema === 'string' ? AVISOS[tema] : undefined
 
-  const ultimo = await carregarOportunidadesDoSnapshot()
+  const [ultimo, sinc, series] = await Promise.all([
+    carregarOportunidadesDoSnapshot(),
+    carregarSincronizacoesSeguro(),
+    carregarSeriesGsc(),
+  ])
   const oportunidades = ultimo?.todas ?? []
   const dias = ultimo ? diasDesde(ultimo.data) : 0
   const desatualizado = dias > DIAS_ATE_DESATUALIZADO
+  const explicacao = sinc ? explicarSearchConsole(sinc.gsc, ultimo !== null, emailContaServico()) : null
 
   return (
-    <div className="max-w-6xl space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Oportunidades</h1>
-        <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-          {ultimo
+    <div className="mx-auto max-w-6xl space-y-6">
+      <CabecalhoPagina
+        secao="SEO"
+        titulo="Oportunidades"
+        subtitulo={
+          ultimo
             ? `Dados do Search Console de ${formatarData(ultimo.data)} (janela de 28 dias). Termos nas posições 5 a 20, ordenados pelo ganho estimado.`
-            : 'Termos nas posições 5 a 20 do Search Console, ordenados pelo ganho estimado.'}
-        </p>
-      </header>
+            : 'Termos nas posições 5 a 20 do Search Console, ordenados pelo ganho estimado.'
+        }
+      />
 
       {aviso && (
-        <p role={aviso.role} className={`rounded border p-3 text-sm ${aviso.classe}`}>
+        <Aviso tipo={aviso.tipo} role={aviso.role}>
           {aviso.texto}
-        </p>
+        </Aviso>
       )}
+
+      {explicacao && <AvisoSearchConsole explicacao={explicacao} />}
 
       {ultimo && desatualizado && (
-        <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+        <Aviso tipo="alerta" role="alert">
           Atenção: os dados são de {formatarData(ultimo.data)}, há {dias} dias. Não representam a situação atual.
-        </p>
+        </Aviso>
       )}
 
+      <Cartao titulo="Cliques e impressões por dia" descricao="Search Console, total da janela de 28 dias a cada sincronização.">
+        <GraficosSearchConsole series={series} explicacao={ultimo ? null : explicacao} />
+      </Cartao>
+
       {!ultimo ? (
-        <section className="rounded-lg border border-dashed border-gray-300 p-8 text-center">
-          <h2 className="text-lg font-medium">O Search Console ainda não foi sincronizado</h2>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            Ainda não há dados para analisar. Não sabemos quais termos são oportunidades até a primeira sincronização.
-          </p>
-        </section>
+        <EstadoVazio
+          titulo="O Search Console ainda não foi sincronizado"
+          explicacao={
+            explicacao?.tipo === 'alerta'
+              ? 'Falta liberar o acesso da conta de serviço no Search Console (veja o aviso acima). Até lá, não sabemos quais termos são oportunidades.'
+              : 'Ainda não há dados para analisar. Não sabemos quais termos são oportunidades até a primeira sincronização.'
+          }
+        />
       ) : oportunidades.length === 0 ? (
-        <section className="rounded-lg border border-gray-300 p-8 text-center">
-          <h2 className="text-lg font-medium">Nenhum termo entre as posições 5 e 20</h2>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            O Search Console foi sincronizado ({formatarData(ultimo.data)}), mas nenhum termo ranqueia nessa faixa.
-          </p>
-        </section>
+        <EstadoVazio
+          titulo="Nenhum termo entre as posições 5 e 20"
+          explicacao={`O Search Console foi sincronizado (${formatarData(ultimo.data)}), mas nenhum termo ranqueia nessa faixa.`}
+        />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-300 text-left">
-                <th scope="col" className="py-2 pr-4">Termo</th>
-                <th scope="col" className="py-2 pr-4">URL que já ranqueia</th>
-                <th scope="col" className="py-2 pr-4 text-right">Impressões</th>
-                <th scope="col" className="py-2 pr-4 text-right">Posição</th>
-                <th scope="col" className="py-2 pr-4 text-right">CTR</th>
-                <th scope="col" className="py-2 pr-4 text-right">Ganho estimado (cliques/28 dias)</th>
-                <th scope="col" className="py-2"><span className="sr-only">Ação</span></th>
+        <Tabela legenda="Oportunidades: termos nas posições 5 a 20, pelo ganho estimado">
+          <thead>
+            <tr>
+              <th scope="col">Termo</th>
+              <th scope="col">URL que já ranqueia</th>
+              <th scope="col" className={CELULA_NUMERICA}>Impressões</th>
+              <th scope="col" className={CELULA_NUMERICA}>Posição</th>
+              <th scope="col" className={CELULA_NUMERICA}>CTR</th>
+              <th scope="col" className={CELULA_NUMERICA}>Ganho estimado (cliques/28 dias)</th>
+              <th scope="col"><span className="sr-only">Ação</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {oportunidades.map((o) => (
+              <tr key={`${o.query}|${o.page}`}>
+                <td className="font-medium text-tinta">{o.query}</td>
+                <td className="max-w-xs break-all">
+                  <a href={o.page} target="_blank" rel="noopener noreferrer" className="text-acento-texto underline-offset-2 hover:underline">
+                    {o.page}
+                  </a>
+                </td>
+                <td className={CELULA_NUMERICA}>{o.impressions.toLocaleString('pt-BR')}</td>
+                <td className={CELULA_NUMERICA}>
+                  {o.position.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                </td>
+                <td className={CELULA_NUMERICA}>
+                  {(o.ctr * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
+                </td>
+                <td className={`${CELULA_NUMERICA} font-semibold text-tinta`}>{Math.round(o.ganho).toLocaleString('pt-BR')}</td>
+                <td>
+                  {o.coberta ? (
+                    <Selo variante="neutro">Tema já criado</Selo>
+                  ) : (
+                    <form method="POST" action="/api/temas/criar-de-query">
+                      <input type="hidden" name="query" value={o.query} />
+                      <button type="submit" className={classesBotao('secundario', 'sm')}>
+                        Criar tema
+                      </button>
+                    </form>
+                  )}
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {oportunidades.map((o) => (
-                <tr key={`${o.query}|${o.page}`} className="border-b border-gray-200 align-top">
-                  <td className="py-2 pr-4 font-medium">{o.query}</td>
-                  <td className="max-w-xs break-all py-2 pr-4">
-                    <a href={o.page} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline dark:text-blue-400">
-                      {o.page}
-                    </a>
-                  </td>
-                  <td className="py-2 pr-4 text-right">{o.impressions.toLocaleString('pt-BR')}</td>
-                  <td className="py-2 pr-4 text-right">
-                    {o.position.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
-                  </td>
-                  <td className="py-2 pr-4 text-right">
-                    {(o.ctr * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
-                  </td>
-                  <td className="py-2 pr-4 text-right">{Math.round(o.ganho).toLocaleString('pt-BR')}</td>
-                  <td className="py-2">
-                    {o.coberta ? (
-                      <span className="text-gray-600 dark:text-gray-400">Tema já criado</span>
-                    ) : (
-                      <form method="POST" action="/api/temas/criar-de-query">
-                        <input type="hidden" name="query" value={o.query} />
-                        <button type="submit" className="rounded border border-gray-400 px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800">
-                          Criar tema
-                        </button>
-                      </form>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </Tabela>
       )}
     </div>
   )

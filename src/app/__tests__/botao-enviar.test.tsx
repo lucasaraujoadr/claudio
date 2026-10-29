@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { BotaoEnviar } from '@/app/(dash)/botao-enviar'
+import { BotaoEnviar } from '@/components/ui/botao-enviar'
 
 afterEach(cleanup)
 

@@ -1,12 +1,21 @@
 import Link from 'next/link'
+import type { ReactNode } from 'react'
 import { connection } from 'next/server'
 import { count, desc, eq, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db'
-import { auditIssues, auditRuns, gscSnapshots, gscTotais, topics } from '@/lib/db/schema'
+import { auditIssues, auditRuns, briefings, gscSnapshots, gscTotais, topics } from '@/lib/db/schema'
 import { REGRA_INTERROMPIDO } from '@/lib/auditoria'
 import { diasDesde } from '@/lib/oportunidades'
 import { carregarOportunidadesDoSnapshot } from '@/lib/oportunidades-snapshot'
-import { calcularVariacao, escolherComparacao, type Totais, type Variacao } from '@/lib/visao-geral'
+import { calcularVariacao, escolherComparacao, type Totais } from '@/lib/visao-geral'
+import { Aviso, CabecalhoPagina, Cartao, EstadoVazio, Indicador, Selo } from '@/components/ui'
+import { AvisoSearchConsole } from './_compartilhado/aviso-search-console'
+import { GraficoSessoes, IndicadoresTrafego, legendaPeriodo } from './_compartilhado/bloco-trafego'
+import { carregarDiarioGa4, carregarSincronizacoesSeguro, carregarTotaisGsc } from './_compartilhado/carregar'
+import { GraficosSearchConsole } from './_compartilhado/graficos-search-console'
+import { seriesSearchConsole } from './_compartilhado/search-console'
+import { emailContaServico, explicarSearchConsole, ultimaSincronizacaoOk } from './_compartilhado/sincronizacao'
+import { resumirTrafego } from './_compartilhado/trafego'
 
 export const metadata = { title: 'Visão geral' }
 
@@ -138,6 +147,15 @@ async function carregarTemas(): Promise<Record<(typeof STATUS)[number], number>>
   return porStatus
 }
 
+async function carregarUltimosBriefings() {
+  return getDb()
+    .select({ id: briefings.id, criadoEm: briefings.criadoEm, tema: topics.titulo })
+    .from(briefings)
+    .innerJoin(topics, eq(briefings.topicId, topics.id))
+    .orderBy(desc(briefings.criadoEm), desc(briefings.id))
+    .limit(3)
+}
+
 const formatoDataHora = new Intl.DateTimeFormat('pt-BR', {
   dateStyle: 'short',
   timeStyle: 'short',
@@ -155,88 +173,107 @@ function dataIsoSaoPaulo(d: Date): string {
 
 const fmt = (n: number) => n.toLocaleString('pt-BR')
 
-function formatarVariacao(v: Variacao): string {
-  const sinal = v.delta > 0 ? '+' : ''
-  const pct =
-    v.percentual === null
-      ? 'sem base de comparação'
-      : `${v.percentual > 0 ? '+' : ''}${v.percentual.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`
-  return `${sinal}${fmt(v.delta)} (${pct})`
+const CLASSE_LINK = 'text-sm font-medium text-acento-texto underline-offset-4 hover:underline'
+
+function Abrir({ href, rotulo = 'Abrir' }: { href: string; rotulo?: string }) {
+  return (
+    <Link href={href} className={CLASSE_LINK}>
+      {rotulo} <span aria-hidden="true">→</span>
+    </Link>
+  )
 }
 
-const CARTAO = 'rounded-lg border border-gray-300 p-4'
-const VAZIO = 'rounded-lg border border-dashed border-gray-300 p-4'
-const TEXTO_SUAVE = 'text-sm text-gray-600 dark:text-gray-400'
-
+/** Cartão de um módulo: título, link para a tela e o conteúdo (ou o estado vazio). */
 function Bloco({
   titulo,
+  descricao,
   href,
-  vazio,
+  rotuloLink,
+  className,
   children,
 }: {
   titulo: string
+  descricao?: ReactNode
   href: string
-  vazio?: boolean
-  children: React.ReactNode
+  rotuloLink?: string
+  className?: string
+  children: ReactNode
 }) {
   return (
-    <section className={vazio ? VAZIO : CARTAO}>
-      <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h2 className="text-lg font-semibold">{titulo}</h2>
-        <Link href={href} className="text-sm text-blue-700 underline dark:text-blue-400">
-          Abrir
-        </Link>
-      </div>
+    <Cartao titulo={titulo} descricao={descricao} acoes={<Abrir href={href} rotulo={rotuloLink} />} className={className}>
       {children}
-    </section>
+    </Cartao>
   )
 }
 
-function Metrica({ rotulo, valor, detalhe }: { rotulo: string; valor: string; detalhe?: string }) {
-  return (
-    <div>
-      <p className={TEXTO_SUAVE}>{rotulo}</p>
-      <p className="text-2xl font-semibold">{valor}</p>
-      {detalhe && <p className={TEXTO_SUAVE}>{detalhe}</p>}
-    </div>
-  )
+function Indisponivel({ children }: { children: ReactNode }) {
+  return <Aviso tipo="erro">{children}</Aviso>
 }
 
-function Indisponivel({ children }: { children: React.ReactNode }) {
-  return <p role="alert" className="text-sm text-red-900 dark:text-red-300">{children}</p>
+function SemDado({ titulo, children }: { titulo: string; children: ReactNode }) {
+  return <EstadoVazio titulo={titulo} explicacao={children} nivelTitulo={3} className="py-6" />
 }
 
 export default async function VisaoGeralPage() {
   await connection()
-  const [gsc, auditoria, temas] = await Promise.all([
+  const [gsc, auditoria, temas, trafego, totaisGsc, ultimosBriefings, sinc] = await Promise.all([
     carregar('gsc', carregarGsc),
     carregar('auditoria', carregarAuditoria),
     carregar('temas', carregarTemas),
+    carregar('tráfego', () => carregarDiarioGa4()),
+    carregar('totais gsc', () => carregarTotaisGsc()),
+    carregar('briefings', carregarUltimosBriefings),
+    carregarSincronizacoesSeguro(),
   ])
 
   const diasGsc = gsc.ok && gsc.dados ? diasDesde(gsc.dados.data) : 0
   const diasAuditoria = auditoria.ok && auditoria.dados ? diasDesde(dataIsoSaoPaulo(auditoria.dados.data)) : 0
   const totalTemas = temas.ok ? STATUS.reduce((s, k) => s + temas.dados[k], 0) : 0
+  const resumoTrafego = trafego.ok ? resumirTrafego(trafego.dados, ultimaSincronizacaoOk(sinc?.ga4)) : null
+  const explicacaoGsc = sinc ? explicarSearchConsole(sinc.gsc, gsc.ok && gsc.dados !== null, emailContaServico()) : null
 
   return (
-    <div className="max-w-5xl space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Visão geral</h1>
-        <p className={`mt-1 ${TEXTO_SUAVE}`}>Resumo dos módulos do painel de SEO.</p>
-      </header>
+    <div className="mx-auto max-w-6xl space-y-6">
+      <CabecalhoPagina
+        secao="Painel"
+        titulo="Visão geral"
+        subtitulo="Tráfego, Search Console, auditoria e conteúdo num só lugar. Cada bloco leva ao seu módulo."
+      />
 
+      {explicacaoGsc && <AvisoSearchConsole explicacao={explicacaoGsc} />}
       {gsc.ok && gsc.dados && diasGsc > DIAS_GSC_DESATUALIZADO && (
-        <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+        <Aviso tipo="alerta" role="alert">
           Atenção: os dados do Search Console são de {formatarData(gsc.dados.data)}, há {diasGsc} dias. Não representam a situação atual.
-        </p>
+        </Aviso>
       )}
       {auditoria.ok && auditoria.dados && diasAuditoria > DIAS_AUDITORIA_DESATUALIZADA && (
-        <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+        <Aviso tipo="alerta" role="alert">
           Atenção: a última auditoria foi há {diasAuditoria} dias. Rode um novo rastreamento.
-        </p>
+        </Aviso>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
+      {/* Tráfego: o único bloco com dado real todos os dias. */}
+      <Bloco
+        titulo="Tráfego do site"
+        descricao={resumoTrafego ? legendaPeriodo(resumoTrafego) : 'Google Analytics, últimos 28 dias.'}
+        href="/trafego"
+        rotuloLink="Abrir tráfego"
+      >
+        {!trafego.ok ? (
+          <Indisponivel>Não foi possível carregar os dados do Google Analytics agora.</Indisponivel>
+        ) : !resumoTrafego ? (
+          <SemDado titulo="Google Analytics ainda não sincronizado">
+            Não há sessões gravadas até a primeira sincronização. Não é zero visita: só não sabemos ainda.
+          </SemDado>
+        ) : (
+          <div className="space-y-6">
+            <IndicadoresTrafego resumo={resumoTrafego} />
+            <GraficoSessoes dias={trafego.dados} resumo={resumoTrafego} altura={200} comEngajadas={false} />
+          </div>
+        )}
+      </Bloco>
+
+      <div className="grid gap-6 lg:grid-cols-2">
         {!gsc.ok ? (
           <>
             <Bloco titulo="Cliques e impressões" href="/oportunidades"><Indisponivel>Não foi possível carregar os dados do Search Console agora.</Indisponivel></Bloco>
@@ -244,64 +281,91 @@ export default async function VisaoGeralPage() {
           </>
         ) : !gsc.dados ? (
           <>
-            <Bloco titulo="Cliques e impressões" href="/oportunidades" vazio>
-              <p className="font-medium">Search Console ainda não sincronizado</p>
-              <p className={TEXTO_SUAVE}>Não há dados de cliques nem de impressões até a primeira sincronização.</p>
+            <Bloco titulo="Cliques e impressões" href="/oportunidades" descricao="Search Console, janela de 28 dias.">
+              {/* O gráfico por dia ocupa este lugar no estado "sem dado", com o motivo. */}
+              <GraficosSearchConsole
+                series={totaisGsc.ok ? seriesSearchConsole(totaisGsc.dados) : undefined}
+                explicacao={explicacaoGsc}
+              />
             </Bloco>
-            <Bloco titulo="Oportunidades abertas" href="/oportunidades" vazio>
-              <p className="font-medium">Search Console ainda não sincronizado</p>
-              <p className={TEXTO_SUAVE}>Não sabemos quais termos são oportunidades até a primeira sincronização.</p>
+            <Bloco titulo="Oportunidades abertas" href="/oportunidades" descricao="Termos nas posições 5 a 20 sem tema.">
+              <SemDado titulo="Search Console ainda não sincronizado">
+                Não sabemos quais termos são oportunidades até a primeira sincronização.
+              </SemDado>
             </Bloco>
           </>
         ) : (
           <>
-            <Bloco titulo="Cliques e impressões" href="/oportunidades">
-              <p className={TEXTO_SUAVE}>Search Console, janela de 28 dias, sincronizado em {formatarData(gsc.dados.data)}.</p>
-              <div className="mt-3 grid grid-cols-2 gap-4">
-                <Metrica
+            <Bloco
+              titulo="Cliques e impressões"
+              href="/oportunidades"
+              descricao={`Search Console, janela de 28 dias, sincronizado em ${formatarData(gsc.dados.data)}.`}
+            >
+              <div className="grid grid-cols-2 gap-6">
+                <Indicador
                   rotulo="Cliques nos termos sincronizados"
-                  valor={fmt(gsc.dados.atual.clicks)}
-                  detalhe={gsc.dados.anterior ? formatarVariacao(calcularVariacao(gsc.dados.atual.clicks, gsc.dados.anterior.totais.clicks)) : undefined}
+                  valor={gsc.dados.atual.clicks}
+                  variacao={gsc.dados.anterior ? calcularVariacao(gsc.dados.atual.clicks, gsc.dados.anterior.totais.clicks) : null}
                 />
-                <Metrica
+                <Indicador
                   rotulo="Impressões nos termos sincronizados"
-                  valor={fmt(gsc.dados.atual.impressions)}
-                  detalhe={gsc.dados.anterior ? formatarVariacao(calcularVariacao(gsc.dados.atual.impressions, gsc.dados.anterior.totais.impressions)) : undefined}
+                  valor={gsc.dados.atual.impressions}
+                  variacao={gsc.dados.anterior ? calcularVariacao(gsc.dados.atual.impressions, gsc.dados.anterior.totais.impressions) : null}
                 />
               </div>
-              <p className={`mt-3 ${TEXTO_SUAVE}`}>
+              <p className="mt-4 text-xs text-tinta-suave">
                 {gsc.dados.anterior ? gsc.dados.anterior.descricao : 'Comparação disponível após 28 dias de histórico.'}
               </p>
             </Bloco>
             <Bloco titulo="Oportunidades abertas" href="/oportunidades">
-              <Metrica
+              <Indicador
                 rotulo="Termos nas posições 5 a 20 sem tema"
-                valor={fmt(gsc.dados.oportunidadesAbertas)}
+                valor={gsc.dados.oportunidadesAbertas}
                 detalhe={gsc.dados.oportunidadesAbertas === 0 ? 'Nenhuma oportunidade aberta no último snapshot.' : undefined}
               />
             </Bloco>
           </>
         )}
+      </div>
 
+      {gsc.ok && gsc.dados && (
+      <Bloco
+        titulo="Search Console por dia"
+        descricao="Cliques e impressões da janela de 28 dias, a cada sincronização."
+        href="/oportunidades"
+        rotuloLink="Abrir oportunidades"
+      >
+        <GraficosSearchConsole
+          series={totaisGsc.ok ? seriesSearchConsole(totaisGsc.dados) : undefined}
+          explicacao={null}
+        />
+      </Bloco>
+      )}
+
+      <div className="grid gap-6 lg:grid-cols-3">
         {!auditoria.ok ? (
           <Bloco titulo="Problemas críticos" href="/auditoria"><Indisponivel>Não foi possível carregar a auditoria agora.</Indisponivel></Bloco>
         ) : !auditoria.dados ? (
-          <Bloco titulo="Problemas críticos" href="/auditoria" vazio>
-            <p className="font-medium">O site ainda não foi rastreado</p>
-            <p className={TEXTO_SUAVE}>Não sabemos se há problemas críticos até a primeira auditoria.</p>
+          <Bloco titulo="Problemas críticos" href="/auditoria">
+            <SemDado titulo="O site ainda não foi rastreado">Não sabemos se há problemas críticos até a primeira auditoria.</SemDado>
           </Bloco>
         ) : (
           <Bloco titulo="Problemas críticos" href="/auditoria">
-            <Metrica
+            <Indicador
               rotulo="Na última auditoria concluída"
-              valor={fmt(auditoria.dados.criticos)}
+              valor={auditoria.dados.criticos}
               detalhe={`Rastreamento de ${formatoDataHora.format(auditoria.dados.data)} · ${auditoria.dados.paginas} páginas`}
             />
+            {auditoria.dados.criticos > 0 && (
+              <p className="mt-3">
+                <Selo variante="critico">{fmt(auditoria.dados.criticos)} {auditoria.dados.criticos === 1 ? 'crítico' : 'críticos'} para corrigir</Selo>
+              </p>
+            )}
             {auditoria.dados.incompleta && (
-              <p role="alert" className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+              <Aviso tipo="alerta" role="alert" className="mt-3">
                 Auditoria incompleta: o rastreamento foi interrompido por tempo depois de {auditoria.dados.paginas} páginas.
                 Pode haver problemas críticos nas páginas não visitadas.
-              </p>
+              </Aviso>
             )}
           </Bloco>
         )}
@@ -309,20 +373,42 @@ export default async function VisaoGeralPage() {
         {!temas.ok ? (
           <Bloco titulo="Temas por status" href="/temas"><Indisponivel>Não foi possível carregar os temas agora.</Indisponivel></Bloco>
         ) : totalTemas === 0 ? (
-          <Bloco titulo="Temas por status" href="/temas" vazio>
-            <p className="font-medium">Nenhum tema cadastrado</p>
-            <p className={TEXTO_SUAVE}>Pesquise temas ou crie um a partir de uma oportunidade.</p>
+          <Bloco titulo="Temas por status" href="/temas">
+            <SemDado titulo="Nenhum tema cadastrado">Pesquise temas ou crie um a partir de uma oportunidade.</SemDado>
           </Bloco>
         ) : (
-          <Bloco titulo="Temas por status" href="/temas">
-            <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <Bloco titulo="Temas por status" href="/temas" descricao={`${fmt(totalTemas)} temas no total.`}>
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-4">
               {STATUS.map((s) => (
                 <div key={s}>
-                  <dt className={TEXTO_SUAVE}>{ROTULO_STATUS[s]}</dt>
-                  <dd className="text-2xl font-semibold">{fmt(temas.dados[s])}</dd>
+                  <dt className="text-sm text-tinta-suave">
+                    <Link href={`/temas?filtro=${s}`} className="hover:text-tinta hover:underline">{ROTULO_STATUS[s]}</Link>
+                  </dt>
+                  <dd className="mt-0.5 text-2xl font-semibold text-tinta">{fmt(temas.dados[s])}</dd>
                 </div>
               ))}
             </dl>
+          </Bloco>
+        )}
+
+        {!ultimosBriefings.ok ? (
+          <Bloco titulo="Últimos briefings" href="/briefings"><Indisponivel>Não foi possível carregar os briefings agora.</Indisponivel></Bloco>
+        ) : ultimosBriefings.dados.length === 0 ? (
+          <Bloco titulo="Últimos briefings" href="/briefings">
+            <SemDado titulo="Nenhum briefing gerado ainda">Escolha um tema em Temas e use &ldquo;Gerar briefing&rdquo;.</SemDado>
+          </Bloco>
+        ) : (
+          <Bloco titulo="Últimos briefings" href="/briefings">
+            <ul className="-my-2 divide-y divide-borda">
+              {ultimosBriefings.dados.map((b) => (
+                <li key={b.id} className="py-2.5">
+                  <Link href={`/briefings?id=${b.id}`} className="block text-sm font-medium text-tinta hover:text-acento-texto hover:underline">
+                    {b.tema}
+                  </Link>
+                  <p className="mt-0.5 text-xs text-tinta-suave">{formatoDataHora.format(b.criadoEm)}</p>
+                </li>
+              ))}
+            </ul>
           </Bloco>
         )}
       </div>
