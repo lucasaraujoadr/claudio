@@ -162,3 +162,25 @@ describe('gerarJsonPorPrompt: falha na conversão do schema', () => {
     expect(gerarTexto).not.toHaveBeenCalled()
   })
 })
+
+describe('fontes: só http(s), sem repetição', () => {
+  it('descarta javascript:, texto não-URL e variantes repetidas da mesma URL', async () => {
+    const f = (url: string) => ({ type: 'source', sourceType: 'url', id: url, url })
+    const gerar = vi.fn(async () => ({
+      text: '{"t":"x"}',
+      sources: [
+        f('javascript:alert(1)'),
+        f('isto não é url'),
+        f('https://STJ.jus.br/a/#topo'),
+        f('https://stj.jus.br/a'),
+        f('https://stj.jus.br/a/'),
+        f('ftp://stj.jus.br/x'),
+      ],
+    }))
+    const r = await gerarObjetoComBuscaEFontes(
+      { schema: z.object({ t: z.string() }), prompt: 'P' },
+      { env: { OPENROUTER_API_KEY: 'k' }, gerar: gerar as never },
+    )
+    expect(r.fontes).toEqual(['https://STJ.jus.br/a/#topo'])
+  })
+})

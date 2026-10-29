@@ -279,3 +279,16 @@ describe('reparo determinístico de title e meta', () => {
     expect((await gerarBriefing({ topico, urlsDoSite }, gerar)).ajustes).toEqual([])
   })
 })
+
+describe('repararTitle: palavras e sinais pendentes', () => {
+  it('apara "sobre", "pela" e "(" deixados no fim do corte', () => {
+    const kw = 'perito contábil'
+    const a = repararTitle('Perito contábil judicial: guia prático completo sobre honorários e prazos', kw)!
+    expect(a).not.toMatch(/\bsobre$/)
+    const b = repararTitle('Perito contábil judicial: o que fazer na nomeação feita pela parte autora', kw)!
+    expect(b).not.toMatch(/\bpela$/)
+    const c = repararTitle('Perito contábil judicial: como atua no processo de execução (guia rápido)', kw)!
+    expect(c).not.toMatch(/[(\s]$/)
+    for (const t of [a, b, c]) expect(t.length).toBeLessThanOrEqual(60)
+  })
+})

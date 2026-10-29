@@ -178,6 +178,17 @@ export type ResultadoBusca<T> = {
   fontes: string[]
 }
 
+// Só http(s) vale como fonte; a chave ignora caixa do host, fragmento e barra final.
+function chaveDeFonte(url: string): string | null {
+  try {
+    const u = new URL(url)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
+    return `${u.protocol}//${u.host.toLowerCase()}${u.pathname.replace(/\/+$/, '')}${u.search}`
+  } catch {
+    return null
+  }
+}
+
 type DepsBusca = {
   env?: Env
   fabrica?: Fabrica
@@ -196,7 +207,7 @@ export async function gerarObjetoComBuscaEFontes<T>(
   if (!config) throw new ChaveOpenAIAusenteError()
   if (config.provedor !== 'openrouter') throw new ChaveOpenRouterAusenteError()
   const gerar = deps.gerar ?? generateText
-  const fontes = new Set<string>()
+  const fontes = new Map<string, string>()
   const valor = await gerarJsonPorPrompt({
     schema: opts.schema,
     prompt: opts.prompt,
@@ -206,11 +217,15 @@ export async function gerarObjetoComBuscaEFontes<T>(
         prompt: p,
         abortSignal: AbortSignal.timeout(TIMEOUT_MS),
       })
-      for (const fonte of r.sources ?? []) if (fonte.sourceType === 'url') fontes.add(fonte.url)
+      for (const fonte of r.sources ?? []) {
+        if (fonte.sourceType !== 'url') continue
+        const chave = chaveDeFonte(fonte.url)
+        if (chave && !fontes.has(chave)) fontes.set(chave, fonte.url)
+      }
       return r.text
     },
   })
-  return { valor, fontes: [...fontes] }
+  return { valor, fontes: [...fontes.values()] }
 }
 
 /** Só o valor, que é uma pista não verificada (veja ResultadoBusca). Prefira gerarObjetoComBuscaEFontes. */

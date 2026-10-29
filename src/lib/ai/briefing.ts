@@ -80,16 +80,22 @@ function descreverFalhas(bruto: BriefingModelo, erros: { path: PropertyKey[]; me
   return linhas.join('\n')
 }
 
-const PALAVRAS_PENDENTES = new Set(['de', 'da', 'do', 'das', 'dos', 'em', 'na', 'no', 'para', 'por', 'e', 'o', 'a', 'os', 'as', 'com', 'ou', 'que', 'um', 'uma'])
+const PALAVRAS_PENDENTES = new Set(
+  [
+    'de', 'da', 'do', 'das', 'dos', 'em', 'na', 'no', 'nos', 'nas', 'para', 'por', 'e', 'o', 'a', 'os', 'as', 'com', 'ou', 'que',
+    'um', 'uma', 'sobre', 'entre', 'até', 'sem', 'sob', 'ao', 'aos', 'à', 'às', 'pelo', 'pela', 'pelos', 'pelas', 'num', 'numa',
+    'como', 'quando', 'se', 'seu', 'sua', 'dum', 'duma',
+  ].map(normalizarKeyword),
+)
 
-// Tira pontuação e palavras de ligação soltas no fim ("... em", "...:").
+// Tira pontuação e palavras de ligação soltas no fim ("... em", "...:", "... (").
 function semPendentes(texto: string): string {
   let t = texto.trim()
   for (;;) {
     const antes = t
-    t = t.replace(/[\s,:;\-–—]+$/u, '')
+    t = t.replace(/[\s,:;\-–—/&(]+$/u, '')
     const m = t.match(/(?:^|\s)([^\s]+)$/u)
-    if (m && PALAVRAS_PENDENTES.has(m[1].toLowerCase()) && t.length > m[1].length) t = t.slice(0, t.length - m[1].length).trimEnd()
+    if (m && PALAVRAS_PENDENTES.has(normalizarKeyword(m[1])) && t.length > m[1].length) t = t.slice(0, t.length - m[1].length).trimEnd()
     if (t === antes) return t
   }
 }
