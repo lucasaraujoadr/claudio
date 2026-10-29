@@ -12,4 +12,3 @@ coverage/
 # next
 next-env.d.ts
 *.tsbuildinfo
-AGENTS.md
