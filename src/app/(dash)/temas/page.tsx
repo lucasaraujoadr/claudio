@@ -1,10 +1,12 @@
 import { connection } from 'next/server'
 import { asc, desc } from 'drizzle-orm'
 import { getDb } from '@/lib/db'
-import { clusters, topics, type Topic } from '@/lib/db/schema'
+import { iaConfigurada } from '@/lib/ai/cliente'
+import { artigos, clusters, topics, type Topic } from '@/lib/db/schema'
 import { padraoUrlPublicada, siteUrl } from '@/lib/site'
 import { Aviso as CaixaAviso, BotaoEnviar, CabecalhoPagina, Cartao, EstadoVazio, Selo, classesBotao, cx, type TipoAviso, type VarianteSelo } from '@/components/ui'
 import { classesCampo } from '@/components/ui/campo'
+import { AtalhoArtigo } from '../artigos/atalho-artigo'
 
 export const metadata = { title: 'Temas' }
 
@@ -114,7 +116,9 @@ function Acao({ t }: { t: Topic }) {
   return null
 }
 
-function ListaTemas({ itens }: { itens: Topic[] }) {
+type Atalhos = { artigoPorTema: Map<number, number>; ia: boolean }
+
+function ListaTemas({ itens, atalhos }: { itens: Topic[]; atalhos: Atalhos }) {
   return (
     <ul className="divide-y divide-borda">
       {itens.map((t) => (
@@ -128,7 +132,10 @@ function ListaTemas({ itens }: { itens: Topic[] }) {
               {t.keyword} · {ROTULO_INTENCAO[t.intencao]} · Prioridade {ROTULO_PRIORIDADE[t.prioridade].toLowerCase()}
             </p>
           </div>
-          <Acao t={t} />
+          <div className="flex flex-col items-end gap-2">
+            <Acao t={t} />
+            <AtalhoArtigo artigoId={atalhos.artigoPorTema.get(t.id)} campo="topicId" valor={t.id} iaConfigurada={atalhos.ia} />
+          </div>
         </li>
       ))}
     </ul>
@@ -164,6 +171,14 @@ export default async function TemasPage({
   const db = getDb()
   const todosClusters = await db.select().from(clusters).orderBy(desc(clusters.criadoEm), asc(clusters.id))
   const todosTemas = await db.select().from(topics).orderBy(asc(topics.id))
+  const artigosExistentes = await db
+    .select({ id: artigos.id, topicId: artigos.topicId })
+    .from(artigos)
+    .catch((e) => {
+      console.error('temas: artigos falharam:', e instanceof Error ? e.name : 'erro')
+      return []
+    })
+  const atalhos: Atalhos = { artigoPorTema: new Map(artigosExistentes.map((a) => [a.topicId, a.id])), ia: iaConfigurada() }
   const visiveis = filtro ? todosTemas.filter((t) => t.status === filtro) : todosTemas
 
   const grupos = todosClusters
@@ -226,12 +241,12 @@ export default async function TemasPage({
                   descricao={`Pilar: ${cluster.keywordPilar} · ${ROTULO_INTENCAO[cluster.intencao]} · Prioridade ${ROTULO_PRIORIDADE[cluster.prioridade].toLowerCase()}`}
                   semPreenchimento
                 >
-                  <ListaTemas itens={itens} />
+                  <ListaTemas itens={itens} atalhos={atalhos} />
                 </Cartao>
               ))}
               {semCluster.length > 0 && (
                 <Cartao titulo="Sem cluster" descricao="Temas criados a partir de oportunidades do Search Console." semPreenchimento>
-                  <ListaTemas itens={semCluster} />
+                  <ListaTemas itens={semCluster} atalhos={atalhos} />
                 </Cartao>
               )}
             </div>

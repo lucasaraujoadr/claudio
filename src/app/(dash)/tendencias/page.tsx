@@ -1,12 +1,14 @@
 import { connection } from 'next/server'
-import { desc, gte } from 'drizzle-orm'
+import { desc, eq, gte } from 'drizzle-orm'
 import { getDb } from '@/lib/db'
-import { tendencias, tesesSugeridas, type Tendencia, type TeseSugerida } from '@/lib/db/schema'
+import { iaConfigurada } from '@/lib/ai/cliente'
+import { artigos, tendencias, tesesSugeridas, topics, type Tendencia, type TeseSugerida } from '@/lib/db/schema'
 import { jaRodouHoje } from '@/lib/radar/executar'
 import { carregarTermosEmAlta, repositorioRadar } from '@/lib/radar/repositorio'
 import { MENSAGEM_SEM_GSC, MENSAGEM_SEM_JANELA, type TermosEmAlta } from '@/lib/radar/termos-em-alta'
 import { Aviso as CaixaAviso, BotaoEnviar, CabecalhoPagina, Cartao, EstadoVazio, Selo, classesBotao, type TipoAviso, type VarianteSelo } from '@/components/ui'
 import { formatarDataHora } from '../_compartilhado/sincronizacao'
+import { AtalhoArtigo } from '../artigos/atalho-artigo'
 
 export const metadata = { title: 'Tendências' }
 
@@ -88,7 +90,7 @@ function CartaoTendencia({ t }: { t: Tendencia }) {
   )
 }
 
-function CartaoTese({ t }: { t: TeseSugerida }) {
+function CartaoTese({ t, artigoId, ia }: { t: TeseSugerida; artigoId: number | undefined; ia: boolean }) {
   const potencial = SELO_POTENCIAL[t.potencial]
   return (
     <li className="flex flex-wrap items-start justify-between gap-3 px-5 py-3">
@@ -101,7 +103,8 @@ function CartaoTese({ t }: { t: TeseSugerida }) {
         <p className="text-sm text-tinta">{t.justificativa}</p>
         {t.sinais.length > 0 && <p className="text-xs text-tinta-suave">{t.sinais.join(' · ')}</p>}
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-start gap-2">
+        <AtalhoArtigo artigoId={artigoId} campo="teseId" valor={t.id} iaConfigurada={ia} />
         <form method="POST" action="/api/teses/virar-tema">
           <input type="hidden" name="id" value={t.id} />
           <BotaoEnviar rotuloEnviando="Criando…" variante="primario" tamanho="sm">Virar tema</BotaoEnviar>
@@ -152,7 +155,7 @@ export default async function TendenciasPage({
   const db = getDb()
   const agora = new Date()
   const desde = new Date(agora.getTime() - DIAS_TENDENCIAS * 86_400_000)
-  const [recentes, teses, ultima, termos] = await Promise.all([
+  const [recentes, teses, ultima, termos, artigosExistentes] = await Promise.all([
     db.select().from(tendencias).where(gte(tendencias.coletadoEm, desde)).orderBy(desc(tendencias.coletadoEm), desc(tendencias.id)).limit(50),
     db.select().from(tesesSugeridas).orderBy(desc(tesesSugeridas.criadoEm), desc(tesesSugeridas.id)).limit(200),
     repositorioRadar.ultimaExecucao().catch((e) => {
@@ -163,7 +166,23 @@ export default async function TendenciasPage({
       console.error('tendencias: termos em alta falharam:', e instanceof Error ? e.name : 'erro')
       return null
     }),
+    // Artigo de cada assunto: pela tese de origem ou pela keyword do tema (um artigo por tema).
+    db
+      .select({ id: artigos.id, teseId: artigos.teseId, keyword: topics.keywordNormalizada })
+      .from(artigos)
+      .innerJoin(topics, eq(topics.id, artigos.topicId))
+      .catch((e) => {
+        console.error('tendencias: artigos falharam:', e instanceof Error ? e.name : 'erro')
+        return []
+      }),
   ])
+  const artigoPorTese = new Map<number, number>()
+  const artigoPorKeyword = new Map<string, number>()
+  for (const a of artigosExistentes) {
+    if (a.teseId !== null) artigoPorTese.set(a.teseId, a.id)
+    artigoPorKeyword.set(a.keyword, a.id)
+  }
+  const ia = iaConfigurada()
   const rodouHoje = jaRodouHoje(ultima ?? null, agora)
   const novas = teses.filter((t) => t.status === 'nova')
   const tratadas = teses.filter((t) => t.status !== 'nova').length
@@ -222,7 +241,7 @@ export default async function TendenciasPage({
             />
           </div>
         ) : (
-          <ul className="divide-y divide-borda">{novas.map((t) => <CartaoTese key={t.id} t={t} />)}</ul>
+          <ul className="divide-y divide-borda">{novas.map((t) => <CartaoTese key={t.id} t={t} artigoId={artigoPorTese.get(t.id) ?? artigoPorKeyword.get(t.keywordNormalizada)} ia={ia} />)}</ul>
         )}
       </Cartao>
 

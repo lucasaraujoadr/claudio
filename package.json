@@ -13,6 +13,9 @@
   "dependencies": {
     "@ai-sdk/openai": "^4.0.104",
     "@neondatabase/serverless": "^1.2.0",
+    "@tiptap/pm": "^3.32.1",
+    "@tiptap/react": "^3.32.1",
+    "@tiptap/starter-kit": "^3.32.1",
     "@vercel/config": "^0.14.0",
     "ai": "^7.0.156",
     "cheerio": "^1.2.0",
