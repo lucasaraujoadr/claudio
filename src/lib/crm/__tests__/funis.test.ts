@@ -278,6 +278,27 @@ describe('resumoFunis', () => {
 })
 
 describe('sequências concluídas e reentrada', () => {
+  it('inscrição ativa dentro da duração (contada de entrou_em) continua ativa', async () => {
+    const c = await criar()
+    await inscrever('boas-vindas', [c.id], { db, caminho: 'site', agora: new Date(AGORA.getTime() - 5 * DIA) })
+    expect(await concluirSequencias({ db, agora: AGORA })).toBe(0)
+    expect((await inscricao(c.id, 'boas-vindas')).status).toBe('ativo')
+  })
+
+  it('reentrada reinicia a contagem: não conclui cedo', async () => {
+    const c = await criar()
+    const f = await obterFunil('boas-vindas', { db })
+    await inscrever('boas-vindas', [c.id], { db, caminho: 'site', agora: new Date(AGORA.getTime() - 20 * DIA) })
+    await sair(f.id, [c.id], { db, motivo: 'manual', agora: new Date(AGORA.getTime() - 19 * DIA) })
+    const reentrada = new Date(AGORA.getTime() - 2 * DIA)
+    await inscrever('boas-vindas', [c.id], { db, caminho: 'manual', agora: reentrada })
+    const i = await inscricao(c.id, 'boas-vindas')
+    expect(i).toMatchObject({ status: 'ativo', saiuEm: null })
+    expect(i.entrouEm).toEqual(reentrada)
+    expect(await concluirSequencias({ db, agora: AGORA })).toBe(0)
+    expect((await inscricao(c.id, 'boas-vindas')).status).toBe('ativo')
+  })
+
   it('ativo além da duração vira concluido (contado da entrada) e conta no resumo; nutrição não conclui', async () => {
     const c = await criar()
     await inscrever('boas-vindas', [c.id], { db, caminho: 'site', agora: new Date(AGORA.getTime() - 14 * DIA) })
