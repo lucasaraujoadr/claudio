@@ -1,6 +1,5 @@
 import { and, eq } from 'drizzle-orm'
-import type { ClustersGerados } from '@/lib/ai/schemas'
-import type { BriefingGerado } from '@/lib/ai/schemas'
+import type { BriefingGerado, ClustersGerados } from '@/lib/ai/schemas'
 import { modeloEmUso } from '@/lib/ai/cliente'
 import { getDb } from '@/lib/db'
 import { briefings, clusters, topics, type Topic } from '@/lib/db/schema'
@@ -47,7 +46,7 @@ export async function gravarTemasPesquisados(gerados: ClustersGerados): Promise<
 export class JaBriefadoError extends Error {}
 
 /** Grava o briefing e move o tema de escolhido para briefado, na mesma transação. */
-export async function gravarBriefing(topico: Topic, briefing: BriefingGerado): Promise<{ id: number }> {
+export async function gravarBriefing(topico: Topic, briefing: BriefingGerado & { ajustes?: string[] }): Promise<{ id: number }> {
   return getDb().transaction(async (tx) => {
     const [novo] = await tx
       .insert(briefings)
@@ -60,6 +59,7 @@ export async function gravarBriefing(topico: Topic, briefing: BriefingGerado): P
         linksInternos: briefing.linksInternos,
         keywordsSecundarias: briefing.keywordsSecundarias,
         modelo: modeloEmUso(),
+        ajustes: briefing.ajustes && briefing.ajustes.length > 0 ? briefing.ajustes : null,
       })
       .returning({ id: briefings.id })
     const movidos = await tx

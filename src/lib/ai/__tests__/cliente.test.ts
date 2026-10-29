@@ -5,6 +5,8 @@ import {
   criarModelo,
   extrairJson,
   gerarJsonPorPrompt,
+  gerarObjetoComBuscaEFontes,
+  ChaveOpenRouterAusenteError,
   iaConfigurada,
   resolverConfigIA,
 } from '../cliente'
@@ -110,5 +112,53 @@ describe('gerarJsonPorPrompt', () => {
     const gerarTexto = vi.fn(async () => 'nada')
     await expect(gerarJsonPorPrompt({ schema, prompt: 'P', gerarTexto })).rejects.toThrow()
     expect(gerarTexto).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('normalização do nome do modelo no OpenRouter', () => {
+  it('gpt-4.1 e o1 viram openai/..., e nomes com fornecedor ficam como estão', () => {
+    expect(resolverConfigIA({ OPENROUTER_API_KEY: 'k', OPENAI_MODEL: 'gpt-4.1' })?.modelo).toBe('openai/gpt-4.1')
+    expect(resolverConfigIA({ OPENROUTER_API_KEY: 'k', OPENAI_MODEL: 'o3-mini' })?.modelo).toBe('openai/o3-mini')
+    expect(resolverConfigIA({ OPENROUTER_API_KEY: 'k', OPENAI_MODEL: 'anthropic/claude-sonnet-4' })?.modelo).toBe('anthropic/claude-sonnet-4')
+  })
+  it('na OpenAI direta o nome não muda', () => {
+    expect(resolverConfigIA({ OPENAI_API_KEY: 'k', OPENAI_MODEL: 'gpt-4.1' })?.modelo).toBe('gpt-4.1')
+  })
+})
+
+describe('gerarObjetoComBuscaEFontes', () => {
+  const schema = z.object({ titulo: z.string() })
+  it('usa o modelo de busca e repassa as fontes (url) sem repetição', async () => {
+    const gerar = vi.fn(async (_o: { model: { modelId: string } }) => ({
+      text: '{"titulo":"x"}',
+      sources: [
+        { type: 'source', sourceType: 'url', id: '1', url: 'https://stj.jus.br/a' },
+        { type: 'source', sourceType: 'url', id: '2', url: 'https://stj.jus.br/a' },
+        { type: 'source', sourceType: 'document', id: '3', mediaType: 'x', title: 't' },
+        { type: 'source', sourceType: 'url', id: '4', url: 'https://conjur.com.br/b' },
+      ],
+    }))
+    const r = await gerarObjetoComBuscaEFontes(
+      { schema, prompt: 'P' },
+      { env: { OPENROUTER_API_KEY: 'k', OPENAI_MODEL_BUSCA: 'perplexity/sonar' }, gerar: gerar as never },
+    )
+    expect(r).toEqual({ valor: { titulo: 'x' }, fontes: ['https://stj.jus.br/a', 'https://conjur.com.br/b'] })
+    expect(gerar.mock.calls[0][0].model.modelId).toBe('perplexity/sonar')
+  })
+  it('só com OPENAI_API_KEY lança erro claro citando OPENROUTER_API_KEY', async () => {
+    const gerar = vi.fn()
+    const p = gerarObjetoComBuscaEFontes({ schema, prompt: 'P' }, { env: { OPENAI_API_KEY: 'k' }, gerar: gerar as never })
+    await expect(p).rejects.toThrow(/OPENROUTER_API_KEY/)
+    await expect(p).rejects.toBeInstanceOf(ChaveOpenRouterAusenteError)
+    expect(gerar).not.toHaveBeenCalled()
+  })
+})
+
+describe('gerarJsonPorPrompt: falha na conversão do schema', () => {
+  it('cai no caminho de nova tentativa e termina com erro, sem lançar cru', async () => {
+    const quebrado = z.object({ a: z.string() }).transform((v) => v)
+    const gerarTexto = vi.fn(async () => '{"a":"x"}')
+    await expect(gerarJsonPorPrompt({ schema: quebrado, prompt: 'P', gerarTexto })).rejects.toThrow(/nova tentativa/)
+    expect(gerarTexto).not.toHaveBeenCalled()
   })
 })

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import type { Topic } from '@/lib/db/schema'
-import { briefingParaMarkdown, gerarBriefing, montarPromptBriefing } from '../briefing'
+import { briefingParaMarkdown, gerarBriefing, montarPromptBriefing, repararMeta, repararTitle } from '../briefing'
 import { briefingSchema, briefingSchemaModelo, type BriefingGerado, type BriefingModelo } from '../schemas'
 import type { GerarObjeto } from '../cliente'
 
@@ -227,5 +227,55 @@ describe('POST /api/briefings/gerar sem chave', () => {
     const { POST } = await import('@/app/api/briefings/gerar/route')
     const r = await POST(req('abc'))
     expect(new URL(r.headers.get('location') ?? '').search).toBe('?briefing=erro')
+  })
+})
+
+describe('reparo determinístico de title e meta', () => {
+  const T68 = 'Perito contábil: quando contratar e como escolher o profissional certo' // >60
+  const T80 = 'Perito contábil em processos judiciais complexos: guia completo para advogados exigentes'
+  it('repara title de 68 e de 80 caracteres no limite de palavra, mantendo a keyword', () => {
+    for (const t of [T68, T80]) {
+      expect(t.length).toBeGreaterThan(60)
+      const r = repararTitle(t, 'perito contábil')!
+      expect(r.length).toBeGreaterThanOrEqual(30)
+      expect(r.length).toBeLessThanOrEqual(60)
+      expect(t.startsWith(r)).toBe(true)
+      expect(r).not.toMatch(/(?:\s(?:de|da|do|em|para|e|o|a|com)|[:\-–,])$/i)
+    }
+  })
+  it('title cuja poda perde a keyword não é reparado', () => {
+    expect(repararTitle('Guia completo e detalhado para advogados exigentes sobre perito contábil', 'perito contábil')).toBeNull()
+  })
+  it('meta longa é cortada numa frase inteira; sem a keyword que tinha, não é reparada', () => {
+    const frase = 'Entenda quando contratar um perito contábil e como isso ajuda a sua tese no processo.'
+    const longa = `${frase} ${'Mais detalhes sobre prazos, custos e entregáveis do trabalho pericial para o advogado.'}`
+    const r = repararMeta(longa, 'perito contábil')!
+    expect(r).toBe(frase)
+    const semKw = `${'Texto introdutório sem o assunto principal, apenas contexto genérico para ocupar espaço aqui.'} ${'x '.repeat(40)}perito contábil`
+    expect(semKw.length).toBeGreaterThan(160)
+    expect(repararMeta(semKw, 'perito contábil')).toBeNull()
+  })
+  it('gerarBriefing: após duas falhas de tamanho, repara sem terceira chamada e informa o ajuste', async () => {
+    const { fn, gerar } = fake(modelo({ title: T68 }), modelo({ title: T80 }))
+    const r = await gerarBriefing({ topico, urlsDoSite }, gerar)
+    expect(fn).toHaveBeenCalledTimes(2)
+    expect(r.title.length).toBeLessThanOrEqual(60)
+    expect(r.title).toContain('Perito contábil')
+    expect(r.ajustes).toEqual(['title'])
+  })
+  it('gerarBriefing: meta longa também é reparada', async () => {
+    const longa = `${META_OK} ${'Mais um trecho sobre perito contábil e prazos do processo para o advogado decidir bem.'}`
+    const { gerar } = fake(modelo({ metaDescription: longa }), modelo({ metaDescription: longa }))
+    const r = await gerarBriefing({ topico, urlsDoSite }, gerar)
+    expect(r.metaDescription).toBe(META_OK)
+    expect(r.ajustes).toEqual(['metaDescription'])
+  })
+  it('sem reparo possível mantém o erro', async () => {
+    const { gerar } = fake(modelo({ title: 'x'.repeat(75) }), modelo({ title: 'y'.repeat(80) }))
+    await expect(gerarBriefing({ topico, urlsDoSite }, gerar)).rejects.toThrow()
+  })
+  it('válido: ajustes vazio', async () => {
+    const { gerar } = fake(modelo())
+    expect((await gerarBriefing({ topico, urlsDoSite }, gerar)).ajustes).toEqual([])
   })
 })

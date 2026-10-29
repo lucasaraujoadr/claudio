@@ -31,6 +31,11 @@ export type ConfigIA = {
 
 type Env = Record<string, string | undefined>
 
+// OpenRouter exige "fornecedor/modelo"; um OPENAI_MODEL antigo (ex.: "gpt-4.1") vira "openai/gpt-4.1".
+function nomeNoOpenRouter(modelo: string): string {
+  return !modelo.includes('/') && /^(gpt|o\d)/i.test(modelo) ? `openai/${modelo}` : modelo
+}
+
 /** OPENROUTER_API_KEY tem preferência; OPENAI_API_KEY usa o endpoint direto da OpenAI. */
 export function resolverConfigIA(env: Env = process.env): ConfigIA | null {
   const modeloBusca = env.OPENAI_MODEL_BUSCA || MODELO_BUSCA_PADRAO
@@ -40,7 +45,7 @@ export function resolverConfigIA(env: Env = process.env): ConfigIA | null {
       apiKey: env.OPENROUTER_API_KEY,
       baseURL: URL_OPENROUTER,
       headers: { 'HTTP-Referer': 'https://ogpericiacontabil.com.br', 'X-Title': 'Painel SEO OG' },
-      modelo: env.OPENAI_MODEL || MODELO_PADRAO_OPENROUTER,
+      modelo: nomeNoOpenRouter(env.OPENAI_MODEL || MODELO_PADRAO_OPENROUTER),
       modeloBusca,
     }
   }
@@ -82,6 +87,13 @@ export function criarModelo(config: ConfigIA, modelId: string, fabrica: Fabrica 
     headers: config.headers,
   })
   return provider.chat(modelId)
+}
+
+export class ChaveOpenRouterAusenteError extends Error {
+  constructor() {
+    super('A busca na web exige OPENROUTER_API_KEY: o modelo de busca não existe na OpenAI direta.')
+    this.name = 'ChaveOpenRouterAusenteError'
+  }
 }
 
 function exigirConfig(): ConfigIA {
@@ -135,42 +147,71 @@ export async function gerarJsonPorPrompt<T>(opts: {
   prompt: string
   gerarTexto: (prompt: string) => Promise<string>
 }): Promise<T> {
-  const molde = JSON.stringify(z.toJSONSchema(opts.schema))
-  const base = [
-    opts.prompt,
-    `Responda SOMENTE com um objeto JSON válido, sem texto fora dele, que siga este JSON Schema: ${molde}`,
-  ].join('\n\n')
-
-  const tentar = async (prompt: string): Promise<{ ok: true; valor: T } | { ok: false; motivo: string }> => {
+  const tentar = async (montar: () => string): Promise<{ ok: true; valor: T } | { ok: false; motivo: string }> => {
     try {
-      const r = opts.schema.safeParse(extrairJson(await opts.gerarTexto(prompt)))
+      const r = opts.schema.safeParse(extrairJson(await opts.gerarTexto(montar())))
       return r.success ? { ok: true, valor: r.data } : { ok: false, motivo: z.prettifyError(r.error) }
     } catch (erro) {
       return { ok: false, motivo: erro instanceof Error ? erro.message : String(erro) }
     }
   }
 
-  const primeira = await tentar(base)
+  const montarBase = () =>
+    [
+      opts.prompt,
+      `Responda SOMENTE com um objeto JSON válido, sem texto fora dele, que siga este JSON Schema: ${JSON.stringify(z.toJSONSchema(opts.schema))}`,
+    ].join('\n\n')
+
+  const primeira = await tentar(montarBase)
   if (primeira.ok) return primeira.valor
   const segunda = await tentar(
-    `${base}\n\nATENÇÃO: a resposta anterior não atendeu ao formato exigido (${primeira.motivo}). Corrija e responda de novo apenas com o JSON.`,
+    () => `${montarBase()}\n\nATENÇÃO: a resposta anterior não atendeu ao formato exigido (${primeira.motivo}). Corrija e responda de novo apenas com o JSON.`,
   )
   if (segunda.ok) return segunda.valor
   throw new Error(`A resposta do modelo de busca não atendeu ao formato após uma nova tentativa: ${segunda.motivo}`)
 }
 
-export const gerarObjetoComBusca: GerarObjeto = async ({ schema, prompt }) => {
-  const config = exigirConfig()
-  return gerarJsonPorPrompt({
-    schema,
-    prompt,
+export type ResultadoBusca<T> = {
+  /** Resposta do modelo de busca: PISTA NÃO VERIFICADA. O JSON pode trazer URLs inventadas ou de formulário. */
+  valor: T
+  /** URLs que o provedor realmente citou (annotations url_citation do OpenRouter), sem repetição. */
+  fontes: string[]
+}
+
+type DepsBusca = {
+  env?: Env
+  fabrica?: Fabrica
+  gerar?: typeof generateText
+}
+
+/**
+ * Como gerarObjetoComBusca, mas devolve também as fontes reais citadas pelo provedor.
+ * Quem grava dados a partir de `valor` deve validar as URLs: só `fontes` são citações de verdade.
+ */
+export async function gerarObjetoComBuscaEFontes<T>(
+  opts: { schema: z.ZodType<T>; prompt: string },
+  deps: DepsBusca = {},
+): Promise<ResultadoBusca<T>> {
+  const config = resolverConfigIA(deps.env ?? process.env)
+  if (!config) throw new ChaveOpenAIAusenteError()
+  if (config.provedor !== 'openrouter') throw new ChaveOpenRouterAusenteError()
+  const gerar = deps.gerar ?? generateText
+  const fontes = new Set<string>()
+  const valor = await gerarJsonPorPrompt({
+    schema: opts.schema,
+    prompt: opts.prompt,
     gerarTexto: async (p) => {
-      const { text } = await generateText({
-        model: criarModelo(config, config.modeloBusca),
+      const r = await gerar({
+        model: criarModelo(config, config.modeloBusca, deps.fabrica),
         prompt: p,
         abortSignal: AbortSignal.timeout(TIMEOUT_MS),
       })
-      return text
+      for (const fonte of r.sources ?? []) if (fonte.sourceType === 'url') fontes.add(fonte.url)
+      return r.text
     },
   })
+  return { valor, fontes: [...fontes] }
 }
+
+/** Só o valor, que é uma pista não verificada (veja ResultadoBusca). Prefira gerarObjetoComBuscaEFontes. */
+export const gerarObjetoComBusca: GerarObjeto = async (opts) => (await gerarObjetoComBuscaEFontes(opts)).valor

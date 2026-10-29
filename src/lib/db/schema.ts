@@ -100,6 +100,8 @@ export const briefings = pgTable('briefings', {
   linksInternos: jsonb('links_internos').notNull(),
   keywordsSecundarias: jsonb('keywords_secundarias').notNull(),
   modelo: text('modelo').notNull(),
+  // Campos que foram encurtados automaticamente (['title', 'metaDescription']); null = nenhum.
+  ajustes: jsonb('ajustes'),
   criadoEm: timestamp('criado_em').notNull().defaultNow(),
 })
 

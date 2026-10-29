@@ -1,4 +1,5 @@
 import type { Topic } from '@/lib/db/schema'
+import { normalizarKeyword } from '@/lib/keyword'
 import { gerarObjetoPadrao, type GerarObjeto } from './cliente'
 import {
   META_MAX,
@@ -79,10 +80,55 @@ function descreverFalhas(bruto: BriefingModelo, erros: { path: PropertyKey[]; me
   return linhas.join('\n')
 }
 
+const PALAVRAS_PENDENTES = new Set(['de', 'da', 'do', 'das', 'dos', 'em', 'na', 'no', 'para', 'por', 'e', 'o', 'a', 'os', 'as', 'com', 'ou', 'que', 'um', 'uma'])
+
+// Tira pontuação e palavras de ligação soltas no fim ("... em", "...:").
+function semPendentes(texto: string): string {
+  let t = texto.trim()
+  for (;;) {
+    const antes = t
+    t = t.replace(/[\s,:;\-–—]+$/u, '')
+    const m = t.match(/(?:^|\s)([^\s]+)$/u)
+    if (m && PALAVRAS_PENDENTES.has(m[1].toLowerCase()) && t.length > m[1].length) t = t.slice(0, t.length - m[1].length).trimEnd()
+    if (t === antes) return t
+  }
+}
+
+function cortarNaPalavra(texto: string, max: number): string {
+  const t = texto.trim()
+  if (t.length <= max) return t
+  const cabeca = t.slice(0, max + 1)
+  const i = cabeca.lastIndexOf(' ')
+  return semPendentes(i > 0 ? cabeca.slice(0, i) : cabeca.slice(0, max))
+}
+
+/** Encurta o title no limite de palavra; null se ficar curto demais ou perder a keyword. */
+export function repararTitle(title: string, keyword: string): string | null {
+  const t = cortarNaPalavra(title, TITLE_MAX)
+  if (t.length < TITLE_MIN || t.length > TITLE_MAX) return null
+  return normalizarKeyword(t).includes(normalizarKeyword(keyword)) ? t : null
+}
+
+/** Encurta a meta (de preferência numa frase inteira); null se ficar curta ou perder a keyword que tinha. */
+export function repararMeta(meta: string, keyword: string): string | null {
+  const m = meta.trim()
+  let t = cortarNaPalavra(m, META_MAX)
+  if (m.length > META_MAX) {
+    const fim = Math.max(t.lastIndexOf('. '), t.endsWith('.') ? t.length - 1 : -1)
+    if (fim + 1 >= META_MIN) t = t.slice(0, fim + 1)
+  }
+  if (t.length < META_MIN || t.length > META_MAX) return null
+  const k = normalizarKeyword(keyword)
+  return normalizarKeyword(m).includes(k) && !normalizarKeyword(t).includes(k) ? null : t
+}
+
+export type AjusteBriefing = 'title' | 'metaDescription'
+export type BriefingComAjustes = BriefingGerado & { ajustes: AjusteBriefing[] }
+
 export async function gerarBriefing(
   ctx: ContextoBriefing,
   gerar: GerarObjeto = gerarObjetoPadrao,
-): Promise<BriefingGerado> {
+): Promise<BriefingComAjustes> {
   const urls = urlsPermitidas(ctx.urlsDoSite)
   const permitidas = new Map(urls.map((u) => [semBarraFinal(u), u]))
   const prompt = montarPromptBriefing({ ...ctx, urlsDoSite: urls })
@@ -98,18 +144,38 @@ export async function gerarBriefing(
       return [{ ancora: l.ancora, url: canonica }]
     })
     const filtrado = { ...bruto, linksInternos }
-    return { bruto, resultado: briefingSchema.safeParse(filtrado) }
+    return { bruto, filtrado, resultado: briefingSchema.safeParse(filtrado) }
   }
 
   const primeira = await tentar(prompt)
-  if (primeira.resultado.success) return primeira.resultado.data
+  if (primeira.resultado.success) return { ...primeira.resultado.data, ajustes: [] }
 
   const addendum = [
     'ATENÇÃO: a resposta anterior não atendeu aos limites exigidos. Corrija e responda de novo:',
     descreverFalhas(primeira.bruto, primeira.resultado.error.issues),
   ].join('\n')
   const segunda = await tentar(`${prompt}\n\n${addendum}`)
-  if (segunda.resultado.success) return segunda.resultado.data
+  if (segunda.resultado.success) return { ...segunda.resultado.data, ajustes: [] }
+
+  // Modelos não contam caracteres: em vez de falhar, encurta title/meta sem nova chamada ao modelo.
+  const ajustes: AjusteBriefing[] = []
+  const reparado = { ...segunda.filtrado }
+  if (!briefingSchema.shape.title.safeParse(reparado.title).success) {
+    const t = repararTitle(reparado.title, ctx.topico.keyword)
+    if (t) {
+      reparado.title = t
+      ajustes.push('title')
+    }
+  }
+  if (!briefingSchema.shape.metaDescription.safeParse(reparado.metaDescription).success) {
+    const m = repararMeta(reparado.metaDescription, ctx.topico.keyword)
+    if (m) {
+      reparado.metaDescription = m
+      ajustes.push('metaDescription')
+    }
+  }
+  const final = ajustes.length > 0 ? briefingSchema.safeParse(reparado) : null
+  if (final?.success) return { ...final.data, ajustes }
   throw new Error(
     `O briefing gerado não atendeu aos limites após uma nova tentativa: ${descreverFalhas(segunda.bruto, segunda.resultado.error.issues)}`,
   )

@@ -53,6 +53,7 @@ export default async function BriefingsPage({
     keywordsSecundarias: linha.keywordsSecundarias,
   })
   const b = parsed.success ? parsed.data : null
+  const ajustes = Array.isArray(linha.ajustes) ? (linha.ajustes as unknown[]) : []
 
   return (
     <div className="max-w-6xl space-y-6">
@@ -86,6 +87,12 @@ export default async function BriefingsPage({
             <header>
               <h2 className="text-xl font-semibold">{b.title}</h2>
               <p className="mt-1 text-sm text-gray-700 dark:text-gray-300">{b.metaDescription}</p>
+              {ajustes.includes('title') && (
+                <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">Title encurtado automaticamente</p>
+              )}
+              {ajustes.includes('metaDescription') && (
+                <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">Meta description encurtada automaticamente</p>
+              )}
             </header>
             <section>
               <h3 className="font-medium">Estrutura</h3>
