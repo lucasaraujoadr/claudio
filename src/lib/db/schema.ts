@@ -51,7 +51,7 @@ export const clusters = pgTable('clusters', {
   keywordPilar: text('keyword_pilar').notNull(),
   intencao: intencao('intencao').notNull(),
   prioridade: prioridade('prioridade').notNull(),
-  status: clusterStatus('status').notNull(),
+  status: clusterStatus('status').notNull().default('ativo'),
   criadoEm: timestamp('criado_em').notNull().defaultNow(),
 })
 
@@ -62,7 +62,7 @@ export const topics = pgTable('topics', {
   keyword: text('keyword').notNull(),
   intencao: intencao('intencao').notNull(),
   prioridade: prioridade('prioridade').notNull(),
-  status: topicStatus('status').notNull(),
+  status: topicStatus('status').notNull().default('ideia'),
   origem: topicOrigem('origem').notNull(),
   urlPublicada: text('url_publicada'),
   notas: text('notas'),
@@ -89,7 +89,7 @@ export const auditRuns = pgTable('audit_runs', {
   iniciadoEm: timestamp('iniciado_em').notNull().defaultNow(),
   finalizadoEm: timestamp('finalizado_em'),
   paginasRastreadas: integer('paginas_rastreadas').notNull().default(0),
-  status: runStatus('status').notNull(),
+  status: runStatus('status').notNull().default('rodando'),
 })
 
 export const auditPages = pgTable('audit_pages', {
@@ -108,7 +108,7 @@ export const auditPages = pgTable('audit_pages', {
   noindex: boolean('noindex').notNull().default(false),
   linksEntrando: integer('links_entrando').notNull().default(0),
   linksSaindo: integer('links_saindo').notNull().default(0),
-  schemaTypes: jsonb('schema_types').notNull(),
+  schemaTypes: jsonb('schema_types').notNull().default([]),
   imagensSemAlt: integer('imagens_sem_alt').notNull().default(0),
 })
 
