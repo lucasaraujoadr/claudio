@@ -151,6 +151,7 @@ const MOTIVO_UPSERT: Record<Extract<ResultadoUpsert, { acao: 'ignorado' }>['moti
   email_invalido: 'E-mail inválido',
   sem_base_legal: 'Sem base legal',
   descadastrado: 'Contato descadastrado: mantido sem alteração',
+  dados_apagados: 'Dados apagados a pedido do titular: não é cadastrado de novo',
 }
 
 export function montarRelatorio(

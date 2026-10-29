@@ -216,6 +216,8 @@ export async function tratarWebhookSite(request: Request, opts: OpcoesWebhookSit
     { db, agora },
   )
   if (r.acao === 'ignorado' && r.contatoId === undefined) return json(200, { ok: false, ignorado: r.motivo })
+  // O titular pediu para apagar os dados: nem a mensagem nem o funil gravam nada dele.
+  if (r.acao === 'ignorado' && r.motivo === 'dados_apagados') return json(200, { ok: false, ignorado: r.motivo })
   const contatoId = r.contatoId!
   const mensagem = form.mensagem?.slice(0, 5000)
   await registrarEvento(contatoId, 'formulario', { origem: 'site', ...(mensagem ? { mensagem } : {}) }, { db, em: agora })

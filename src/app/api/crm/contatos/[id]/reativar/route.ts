@@ -14,7 +14,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/crm/con
     if (form.get('ciente') !== '1') return voltar('sem-ciente')
     const motivo = form.get('motivo')
     const r = await reativarContato(id, typeof motivo === 'string' ? motivo : '')
-    if (!r.ok) return voltar(r.motivo === 'sem_motivo' ? 'sem-motivo' : 'erro')
+    if (!r.ok) return voltar(r.motivo === 'sem_motivo' ? 'sem-motivo' : r.motivo === 'dados_apagados' ? 'dados-apagados-bloqueio' : 'erro')
     return voltar('reativado')
   } catch (e) {
     console.error('crm: reativação falhou:', e instanceof Error ? e.name : 'erro')

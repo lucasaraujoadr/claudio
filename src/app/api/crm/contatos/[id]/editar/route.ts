@@ -13,7 +13,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/crm/con
     const lido = lerEdicao(await request.formData())
     if (!lido.ok) return voltar(lido.erro, lido.campo)
     const r = await editarContato(id, lido.edicao)
-    if (!r.ok) return voltar(r.motivo === 'uf_invalida' ? 'uf' : r.motivo === 'longo' ? 'longo' : 'erro')
+    if (!r.ok) return voltar(r.motivo === 'uf_invalida' ? 'uf' : r.motivo === 'longo' ? 'longo' : r.motivo === 'dados_apagados' ? 'dados-apagados-bloqueio' : 'erro')
     return voltar(r.alterados.length > 0 ? 'salvo' : 'sem-mudanca')
   } catch (e) {
     console.error('crm: edição falhou:', e instanceof Error ? e.name : 'erro')

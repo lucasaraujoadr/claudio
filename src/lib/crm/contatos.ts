@@ -36,7 +36,8 @@ export type OpcoesUpsert = {
   importacao?: { lote: string; arquivo: string }
 }
 
-export type MotivoIgnorado = 'email_invalido' | 'sem_base_legal' | 'descadastrado'
+/** `dados_apagados`: o titular pediu para apagar os dados; o email só serve de supressão. */
+export type MotivoIgnorado = 'email_invalido' | 'sem_base_legal' | 'descadastrado' | 'dados_apagados'
 
 export type ResultadoUpsert =
   | { acao: 'criado'; contatoId: number }
@@ -187,6 +188,11 @@ async function processarBloco(
     const linha = existentes.get(email)
     if (!linha) continue
     const indices = porEmail.get(email)!
+    if (linha.dadosApagadosEm) {
+      // Dados apagados a pedido (LGPD art. 18): nenhuma origem repreenche o contato.
+      for (const i of indices) resultados[i] = { acao: 'ignorado', motivo: 'dados_apagados', contatoId: linha.id }
+      continue
+    }
     if (linha.status === 'descadastrado' && opts.seDescadastrado === 'ignorar') {
       for (const i of indices) resultados[i] = { acao: 'ignorado', motivo: 'descadastrado', contatoId: linha.id }
       continue
@@ -282,7 +288,7 @@ export async function reativarContato(
   id: number,
   motivo: string,
   opts: { db?: BancoCrm } = {},
-): Promise<{ ok: true } | { ok: false; motivo: 'sem_motivo' | 'nao_encontrado' | 'nao_descadastrado' }> {
+): Promise<{ ok: true } | { ok: false; motivo: 'sem_motivo' | 'nao_encontrado' | 'nao_descadastrado' | 'dados_apagados' }> {
   const texto = textoOuNulo(motivo)
   if (!texto) return { ok: false, motivo: 'sem_motivo' }
   const db = opts.db ?? bancoPadrao()
@@ -290,6 +296,8 @@ export async function reativarContato(
     const [c] = await tx.select().from(contatos).where(eq(contatos.id, id)).for('update')
     if (!c) return { ok: false, motivo: 'nao_encontrado' } as const
     if (c.status !== 'descadastrado') return { ok: false, motivo: 'nao_descadastrado' } as const
+    // Quem pediu para apagar os dados nunca volta: sobrou só o email, como supressão.
+    if (c.dadosApagadosEm) return { ok: false, motivo: 'dados_apagados' } as const
     await tx.update(contatos).set({ status: 'lead', syncStatus: 'pendente', atualizadoEm: new Date() }).where(eq(contatos.id, id))
     await tx.insert(eventosContato).values({
       contatoId: id,
@@ -320,7 +328,7 @@ export async function editarContato(
   id: number,
   edicao: EdicaoContato,
   opts: { db?: BancoCrm; agora?: Date } = {},
-): Promise<{ ok: true; alterados: CampoContato[] } | { ok: false; motivo: 'nao_encontrado' | 'uf_invalida' | 'longo' }> {
+): Promise<{ ok: true; alterados: CampoContato[] } | { ok: false; motivo: 'nao_encontrado' | 'uf_invalida' | 'longo' | 'dados_apagados' }> {
   if (edicao.uf != null && edicao.uf.trim() !== '' && !normalizarUf(edicao.uf)) return { ok: false, motivo: 'uf_invalida' }
   // A edição explícita recusa o que passa do limite em vez de cortar calado.
   if ((edicao.notas ?? '').trim().length > LIMITE_NOTAS) return { ok: false, motivo: 'longo' }
@@ -330,6 +338,7 @@ export async function editarContato(
   return db.transaction(async (tx) => {
     const [c] = await tx.select().from(contatos).where(eq(contatos.id, id)).for('update')
     if (!c) return { ok: false, motivo: 'nao_encontrado' } as const
+    if (c.dadosApagadosEm) return { ok: false, motivo: 'dados_apagados' } as const
     const atual = estadoDe(c)
     const novo: EstadoContato = { ...atual, tags: [...atual.tags] }
     if (edicao.nome !== undefined) novo.nome = textoOuNulo(edicao.nome) ?? ''

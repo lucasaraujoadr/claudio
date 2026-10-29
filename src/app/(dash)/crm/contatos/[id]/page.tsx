@@ -33,6 +33,10 @@ const AVISOS: Record<string, { texto: string; tipo: TipoAviso }> = {
   'sem-ciente': { texto: 'Para reativar, confirme que a pessoa pediu para voltar a receber.', tipo: 'erro' },
   'base-legal': { texto: 'A base legal é obrigatória.', tipo: 'erro' },
   uf: { texto: 'UF inválida. Use a sigla do estado (ex.: SP) ou deixe em branco.', tipo: 'erro' },
+  'dados-apagados': { texto: 'Dados apagados. Ficou só o e-mail, para que a pessoa não seja cadastrada nem receba emails de novo.', tipo: 'sucesso' },
+  'apagar-sem-motivo': { texto: 'Para apagar os dados, informe como e quando a pessoa pediu.', tipo: 'erro' },
+  'apagar-sem-ciente': { texto: 'Para apagar os dados, confirme que entendeu que não há como desfazer.', tipo: 'erro' },
+  'dados-apagados-bloqueio': { texto: 'Os dados deste contato foram apagados a pedido: ele não pode ser editado nem reativado.', tipo: 'erro' },
   erro: { texto: 'Não foi possível concluir a ação. Nada foi alterado; tente novamente.', tipo: 'erro' },
 }
 
@@ -84,6 +88,7 @@ function detalheEvento(e: EventoContato): string | null {
     return `${arquivo}${d.acao === 'criado' ? ' · contato novo' : ' · contato já existia (só campos vazios foram preenchidos)'}`
   }
   if (e.tipo === 'criado') return origem ? `Origem: ${origem}` : null
+  if (e.tipo === 'dados_apagados') return typeof d.motivo === 'string' ? `Motivo: ${d.motivo}` : null
   if (e.tipo === 'formulario') return typeof d.mensagem === 'string' ? d.mensagem : null
   if (['enviado', 'aberto', 'clicado', 'descadastrou', 'bounce', 'spam'].includes(e.tipo)) {
     const partes = [
@@ -149,6 +154,10 @@ function Reativar({ c }: { c: Contato }) {
         Pela LGPD, o descadastro é a revogação do consentimento. Reativar sem um novo pedido da própria pessoa é tratamento
         irregular de dados pessoais. A reativação fica registrada na linha do tempo com o motivo informado.
       </Aviso>
+      <p className="mt-3 text-sm text-tinta">
+        O Brevo mantém o contato bloqueado mesmo depois da reativação aqui: desbloqueie o contato no Brevo também
+        (Contatos → abra o contato → desbloquear), senão os emails continuam sem sair.
+      </p>
       <details className="mt-4">
         <summary className="cursor-pointer text-sm font-medium text-acento-texto">A pessoa pediu para voltar — reativar</summary>
         <form method="POST" action={`/api/crm/contatos/${c.id}/reativar`} className="mt-3 space-y-3">
@@ -161,6 +170,33 @@ function Reativar({ c }: { c: Contato }) {
             Confirmo que a própria pessoa pediu para voltar a receber comunicações.
           </label>
           <BotaoEnviar rotuloEnviando="Reativando…" variante="perigo">Reativar como lead</BotaoEnviar>
+        </form>
+      </details>
+    </Cartao>
+  )
+}
+
+function ApagarDados({ c }: { c: Contato }) {
+  return (
+    <Cartao titulo="Apagar dados a pedido" descricao="Para quando a própria pessoa pede para apagar os dados dela (LGPD, art. 18).">
+      <Aviso tipo="erro" titulo="Não tem como desfazer" role={null}>
+        Apaga nome, telefone, escritório, cidade, UF, notas, tags e os detalhes da linha do tempo, e marca o contato como
+        descadastrado. Fica só o e-mail, para que nenhuma planilha, formulário ou importação cadastre a pessoa de novo. Depois
+        disso, o contato não pode ser editado nem reativado. No Brevo, o contato fica bloqueado; para apagar também o que
+        está guardado lá, apague o contato no próprio Brevo.
+      </Aviso>
+      <details className="mt-4">
+        <summary className="cursor-pointer text-sm font-medium text-acento-texto">A pessoa pediu para apagar os dados — apagar</summary>
+        <form method="POST" action={`/api/crm/contatos/${c.id}/apagar`} className="mt-3 space-y-3">
+          <div className="space-y-1">
+            <label htmlFor="a-motivo" className={CLASSES_ROTULO}>Como e quando a pessoa pediu</label>
+            <textarea id="a-motivo" name="motivo" required rows={3} maxLength={1000} className={classesCampo()} placeholder="Ex.: pediu por email em 28/10. Não escreva aqui dados pessoais (nome, CPF, telefone)." />
+          </div>
+          <label className="flex items-start gap-2 text-sm text-tinta">
+            <input type="checkbox" name="ciente" value="1" required className="mt-1 accent-acento" />
+            Entendo que os dados serão apagados agora e que não há como desfazer.
+          </label>
+          <BotaoEnviar rotuloEnviando="Apagando…" variante="perigo">Apagar dados</BotaoEnviar>
         </form>
       </details>
     </Cartao>
@@ -204,7 +240,7 @@ export default async function ContatoPage({
     <div className="mx-auto max-w-5xl space-y-6">
       <CabecalhoPagina
         secao="CRM"
-        titulo={c.nome || '(sem nome)'}
+        titulo={c.dadosApagadosEm ? '(dados apagados)' : c.nome || '(sem nome)'}
         subtitulo={[c.escritorio, c.cidade && `${c.cidade}${c.uf ? `/${c.uf}` : ''}`].filter(Boolean).join(' · ') || undefined}
         acoes={
           <>
@@ -214,7 +250,13 @@ export default async function ContatoPage({
         }
       />
       {aviso && <Aviso tipo={aviso.tipo}>{aviso.texto}</Aviso>}
-      {c.status === 'descadastrado' && aviso?.texto !== AVISOS.bloqueado.texto && (
+      {c.dadosApagadosEm && (
+        <Aviso tipo="info" titulo={`Dados apagados a pedido em ${formatarQuando(c.dadosApagadosEm)}`}>
+          Ficou só o e-mail, como bloqueio: o contato não recebe emails, não é cadastrado de novo por planilha, formulário ou
+          importação, e não pode ser editado nem reativado.
+        </Aviso>
+      )}
+      {!c.dadosApagadosEm && c.status === 'descadastrado' && aviso?.texto !== AVISOS.bloqueado.texto && (
         <Aviso tipo="alerta" titulo="Contato descadastrado">
           Não recebe nenhum email e não entra em nenhuma lista do Brevo. Importações e formulários não mudam isso.
         </Aviso>
@@ -228,16 +270,22 @@ export default async function ContatoPage({
       </Cartao>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <Cartao titulo="Editar dados" descricao="Campo deixado em branco é apagado. O e-mail identifica o contato e não muda aqui.">
-          <form method="POST" action={`/api/crm/contatos/${c.id}/editar`} className="space-y-5">
-            <CamposContato v={c} />
-            <CampoBaseLegal atual={c.baseLegal} />
-            <p className="text-xs text-tinta-suave">Trocar a base legal fica registrado na linha do tempo, com a anterior e a nova.</p>
-            <div className="flex justify-end border-t border-borda pt-4">
-              <BotaoEnviar rotuloEnviando="Salvando…">Salvar alterações</BotaoEnviar>
-            </div>
-          </form>
-        </Cartao>
+        {c.dadosApagadosEm ? (
+          <Cartao titulo="Editar dados">
+            <p className="text-sm text-tinta-suave">Os dados foram apagados a pedido da pessoa e não podem ser preenchidos de novo.</p>
+          </Cartao>
+        ) : (
+          <Cartao titulo="Editar dados" descricao="Campo deixado em branco é apagado. O e-mail identifica o contato e não muda aqui.">
+            <form method="POST" action={`/api/crm/contatos/${c.id}/editar`} className="space-y-5">
+              <CamposContato v={c} />
+              <CampoBaseLegal atual={c.baseLegal} />
+              <p className="text-xs text-tinta-suave">Trocar a base legal fica registrado na linha do tempo, com a anterior e a nova.</p>
+              <div className="flex justify-end border-t border-borda pt-4">
+                <BotaoEnviar rotuloEnviando="Salvando…">Salvar alterações</BotaoEnviar>
+              </div>
+            </form>
+          </Cartao>
+        )}
 
         <Cartao titulo="Linha do tempo" descricao="Do mais recente ao mais antigo." semPreenchimento>
           {eventos.length === 0 ? (
@@ -259,7 +307,8 @@ export default async function ContatoPage({
         </Cartao>
       </div>
 
-      {c.status === 'descadastrado' && <Reativar c={c} />}
+      {c.status === 'descadastrado' && !c.dadosApagadosEm && <Reativar c={c} />}
+      {!c.dadosApagadosEm && <ApagarDados c={c} />}
     </div>
   )
 }

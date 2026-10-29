@@ -121,7 +121,7 @@ export async function aplicarEventoBrevo(ev: EventoBrevo, opts: { db?: BancoCrm 
   return db.transaction(async (tx) => {
     const banco = tx as unknown as BancoCrm
     const [c] = await banco
-      .select({ id: contatos.id, status: contatos.status })
+      .select({ id: contatos.id, status: contatos.status, dadosApagadosEm: contatos.dadosApagadosEm })
       .from(contatos)
       .where(eq(contatos.emailNormalizado, ev.email))
       .for('update')
@@ -132,7 +132,8 @@ export async function aplicarEventoBrevo(ev: EventoBrevo, opts: { db?: BancoCrm 
       .onConflictDoNothing({ target: brevoEventosRecebidos.chave })
       .returning({ chave: brevoEventosRecebidos.chave })
     if (novo.length === 0) return 'repetido' as const
-    await registrarEvento(c.id, ev.tipo, ev.dados, { db: banco, ...(ev.em ? { em: ev.em } : {}) })
+    // Dados apagados a pedido: o evento entra (é a prova de que o envio foi barrado), sem dados.
+    await registrarEvento(c.id, ev.tipo, c.dadosApagadosEm ? null : ev.dados, { db: banco, ...(ev.em ? { em: ev.em } : {}) })
     if (ev.descadastra) {
       const motivo = MOTIVO_DESCADASTRO[ev.tipo] ?? 'Brevo'
       if (c.status !== 'descadastrado') await mudarStatus(c.id, 'descadastrado', { db: banco, origem: 'brevo', motivo })

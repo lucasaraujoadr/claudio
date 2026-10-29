@@ -199,7 +199,8 @@ export async function sincronizarPendentes(opts: OpcoesSincronizacao = {}): Prom
           const c = grupo[j]
           const r = resultados[j]
           if (r.ok) {
-            await marcar(db, c, { syncStatus: 'sincronizado', syncErro: null, brevoId: r.brevoId })
+            // Dados apagados a pedido: o id do Brevo também não volta a ser guardado.
+            await marcar(db, c, { syncStatus: 'sincronizado', syncErro: null, brevoId: c.dadosApagadosEm ? null : r.brevoId })
             enviados++
           } else if (erroGeral(r.erro)) {
             interrompido ??= r.erro.mensagem // o contato continua como estava, para a próxima rodada
