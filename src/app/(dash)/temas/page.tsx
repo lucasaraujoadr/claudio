@@ -16,11 +16,11 @@ const AVISOS: Record<string, Record<string, Aviso>> = {
   pesquisa: {
     ok: { texto: 'Pesquisa concluída. Novos clusters e temas foram adicionados.', classe: VERDE, role: 'status' },
     vazio: { texto: 'A pesquisa não trouxe temas novos: todos já existiam.', classe: AZUL, role: 'status' },
-    'sem-chave': { texto: 'OPENAI_API_KEY não configurada. Defina a chave nas variáveis de ambiente para pesquisar temas.', classe: VERMELHO, role: 'alert' },
+    'sem-chave': { texto: 'Chave de IA não configurada (OPENROUTER_API_KEY). Defina a chave nas variáveis de ambiente para pesquisar temas.', classe: VERMELHO, role: 'alert' },
     erro: { texto: 'Não foi possível pesquisar temas. Nada foi gravado; tente novamente.', classe: VERMELHO, role: 'alert' },
   },
   briefing: {
-    'sem-chave': { texto: 'OPENAI_API_KEY não configurada. Defina a chave nas variáveis de ambiente para gerar briefings.', classe: VERMELHO, role: 'alert' },
+    'sem-chave': { texto: 'Chave de IA não configurada (OPENROUTER_API_KEY). Defina a chave nas variáveis de ambiente para gerar briefings.', classe: VERMELHO, role: 'alert' },
     'ja-briefado': { texto: 'Este tema já tinha briefing. Nada novo foi gravado.', classe: AZUL, role: 'status' },
     'nao-escolhido': { texto: 'Só temas escolhidos podem receber briefing.', classe: VERMELHO, role: 'alert' },
     erro: { texto: 'Não foi possível gerar o briefing. Nada foi gravado; tente novamente.', classe: VERMELHO, role: 'alert' },

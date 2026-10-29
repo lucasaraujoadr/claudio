@@ -51,7 +51,7 @@ export function montarPromptBriefing(ctx: ContextoBriefing): string {
     'Público: advogados em todo o Brasil (B2B), com atendimento 100% remoto.',
     `Tema: ${limpar(topico.titulo)}\nKeyword principal: ${limpar(topico.keyword)}\nIntenção de busca: ${topico.intencao}`,
     'Elabore o briefing de um artigo para um redator. O conteúdo deve ajudar um advogado a decidir se deve contratar um perito contábil forense.',
-    `Title: de ${TITLE_MIN} a ${TITLE_MAX} caracteres, com a keyword principal. Meta description: de ${META_MIN} a ${META_MAX} caracteres.`,
+    `Title: de ${TITLE_MIN} a ${TITLE_MAX} caracteres, com a keyword principal. Mire em cerca de ${TITLE_MAX - 10} caracteres (uns ${Math.round((TITLE_MAX - 10) / 6)} palavras): o title é uma versão enxuta do tema, nunca o tema inteiro, e jamais passa de ${TITLE_MAX}. Meta description: de ${META_MIN} a ${META_MAX} caracteres.`,
     'Outline: seções H2, cada uma com subtópicos H3 quando fizer sentido.',
     'FAQ: de 4 a 6 perguntas reais que um advogado faria, com respostas objetivas.',
     'Keywords secundárias: termos relacionados à keyword principal.',

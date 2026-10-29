@@ -1,10 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { and, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { gerarBriefing } from '@/lib/ai/briefing'
-import { ChaveOpenAIAusenteError, MODELO_PADRAO, openaiConfigurada } from '@/lib/ai/cliente'
+import { ChaveOpenAIAusenteError, openaiConfigurada } from '@/lib/ai/cliente'
 import { carregarUrlsDoSite } from '@/lib/ai/contexto'
+import { gravarBriefing, JaBriefadoError } from '@/lib/ai/persistir'
 import { getDb } from '@/lib/db'
-import { briefings, topics } from '@/lib/db/schema'
+import { topics } from '@/lib/db/schema'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300 // 2 chamadas x 100 s (timeout de gerarObjetoPadrao) = 200 s + margem
@@ -15,8 +16,6 @@ type Flag = 'sem-chave' | 'erro' | 'ja-briefado' | 'nao-escolhido'
 function voltar(request: NextRequest, flag: Flag) {
   return NextResponse.redirect(new URL(`/temas?briefing=${flag}`, request.url), 303)
 }
-
-class JaBriefadoError extends Error {}
 
 export async function POST(request: NextRequest) {
   let id = NaN
@@ -38,29 +37,7 @@ export async function POST(request: NextRequest) {
     const urlsDoSite = await carregarUrlsDoSite()
     const briefing = await gerarBriefing({ topico, urlsDoSite })
 
-    const criado = await db.transaction(async (tx) => {
-      const [novo] = await tx
-        .insert(briefings)
-        .values({
-          topicId: topico.id,
-          title: briefing.title,
-          metaDescription: briefing.metaDescription,
-          outline: briefing.outline,
-          faq: briefing.faq,
-          linksInternos: briefing.linksInternos,
-          keywordsSecundarias: briefing.keywordsSecundarias,
-          modelo: process.env.OPENAI_MODEL || MODELO_PADRAO,
-        })
-        .returning({ id: briefings.id })
-      const movidos = await tx
-        .update(topics)
-        .set({ status: 'briefado' })
-        .where(and(eq(topics.id, topico.id), eq(topics.status, 'escolhido')))
-        .returning({ id: topics.id })
-      // Outro clique já briefou o tema: desfaz o insert.
-      if (movidos.length === 0) throw new JaBriefadoError()
-      return novo
-    })
+    const criado = await gravarBriefing(topico, briefing)
     return NextResponse.redirect(new URL(`/briefings?id=${criado.id}&gerado=ok`, request.url), 303)
   } catch (erro) {
     if (erro instanceof JaBriefadoError) return voltar(request, 'ja-briefado')

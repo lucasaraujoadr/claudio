@@ -43,8 +43,10 @@ Ficam na Vercel (Settings > Environment Variables). Nunca coloque os valores no 
 | Variável | De onde vem |
 | --- | --- |
 | `DATABASE_URL` | Banco Postgres (Neon), criado pela integração da Vercel. |
-| `OPENAI_API_KEY` | Chave da OpenAI (veja "Chave da OpenAI" abaixo). |
-| `OPENAI_MODEL` | Nome do modelo usado nas pesquisas; opcional, o padrão é `gpt-4.1`. |
+| `OPENROUTER_API_KEY` | Chave do OpenRouter, que dá acesso aos modelos de IA (veja "Chave de IA" abaixo). É a forma preferida. |
+| `OPENAI_API_KEY` | Alternativa: chave da OpenAI direta. Só é usada se `OPENROUTER_API_KEY` não estiver definida. |
+| `OPENAI_MODEL` | Modelo usado nas pesquisas de temas e nos briefings; opcional. O padrão é `openai/gpt-4.1` (com `OPENAI_API_KEY`, `gpt-4.1`). |
+| `OPENAI_MODEL_BUSCA` | Modelo que pesquisa na internet, para as tendências do dia; opcional, o padrão é `perplexity/sonar-pro`. |
 | `DASHBOARD_PASSWORD` | Senha do painel; você escolhe. |
 | `AUTH_SECRET` | Texto aleatório longo que assina o login; gere com `openssl rand -base64 32`. |
 | `GOOGLE_SA_EMAIL` | Campo `client_email` do arquivo JSON da conta de serviço do Google. |
@@ -64,9 +66,13 @@ Ficam na Vercel (Settings > Environment Variables). Nunca coloque os valores no 
 7. Cole o e-mail da conta de serviço e escolha a permissão **Restrito** (somente leitura). Salve.
 8. Defina `GSC_PROPERTY` como `sc-domain:ogpericiacontabil.com.br`. A primeira sincronização ocorre na próxima execução diária.
 
-## Chave da OpenAI
+## Chave de IA
 
-1. Entre em https://platform.openai.com e faça login (ou crie a conta).
-2. Em **Billing**, adicione um método de pagamento ou crédito; sem isso a chave não funciona.
-3. Em **API keys > Create new secret key**, copie a chave (ela aparece só uma vez).
-4. Cadastre-a na Vercel como `OPENAI_API_KEY`.
+Com o OpenRouter (recomendado), uma só chave dá acesso aos modelos de IA do painel:
+
+1. Entre em https://openrouter.ai e faça login (ou crie a conta).
+2. Em **Credits**, adicione saldo; sem isso a chave não funciona.
+3. Em **Keys > Create Key**, copie a chave (ela aparece só uma vez).
+4. Cadastre-a na Vercel como `OPENROUTER_API_KEY`.
+
+Se preferir a OpenAI direta, crie a chave em https://platform.openai.com (**API keys**, com crédito em **Billing**) e cadastre-a como `OPENAI_API_KEY`. Ela só vale quando `OPENROUTER_API_KEY` não existe. Os nomes de modelo mudam entre os dois: no OpenRouter é `openai/gpt-4.1`, na OpenAI direta é `gpt-4.1`.
