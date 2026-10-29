@@ -258,7 +258,7 @@ export type ResultadoStatus =
 export async function mudarStatus(
   id: number,
   para: StatusContato,
-  opts: { db?: BancoCrm; origem?: Origem; motivo?: string } = {},
+  opts: { db?: BancoCrm; origem?: Origem | 'descadastro'; motivo?: string } = {},
 ): Promise<ResultadoStatus> {
   const db = opts.db ?? bancoPadrao()
   return db.transaction(async (tx) => {

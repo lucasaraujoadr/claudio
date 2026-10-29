@@ -32,6 +32,7 @@ describe('proxy: lista de rotas liberadas', () => {
   it.each([
     '/login', '/api/login', '/api/cron/gsc', '/api/cron', '/_next/static/x.js', '/favicon.ico',
     '/api/webhooks/brevo', '/api/webhooks/site', '/api/webhooks',
+    '/descadastro', '/api/publico/x', '/api/publico/descadastro', '/api/publico/saude',
   ])(
     'libera %s sem cookie',
     (path) => {
@@ -39,7 +40,7 @@ describe('proxy: lista de rotas liberadas', () => {
     },
   )
 
-  it.each(['/login/', '/loginx', '/api/loginfoo', '/api/cronfoo', '/api/webhooksfoo', '/api/webhooks-site', '/api/logout', '/api/crm/brevo/sincronizar', '/favicon.icoX', '/_nextx/a', '/_next'])(
+  it.each(['/login/', '/loginx', '/api/loginfoo', '/api/cronfoo', '/api/webhooksfoo', '/api/webhooks-site', '/api/logout', '/api/crm/brevo/sincronizar', '/favicon.icoX', '/_nextx/a', '/_next', '/api/crm', '/api/crm/contatos', '/descadastrox', '/descadastro/x', '/api/publico', '/api/publicox'])(
     'não libera %s sem cookie',
     (path) => {
       expect(redirecionaParaLogin(path)).toBe(true)

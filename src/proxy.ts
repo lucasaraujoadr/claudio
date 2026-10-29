@@ -11,6 +11,9 @@ function estaLiberada(pathname: string): boolean {
     // Webhooks (Brevo, formulário do site): quem chama não tem cookie; cada rota exige token.
     pathname === '/api/webhooks' ||
     pathname.startsWith('/api/webhooks/') ||
+    // Descadastro público e checagem de acesso: quem chama não tem cookie; o token vai na URL.
+    pathname === '/descadastro' ||
+    pathname.startsWith('/api/publico/') ||
     pathname.startsWith('/_next/') ||
     pathname === '/favicon.ico'
   )

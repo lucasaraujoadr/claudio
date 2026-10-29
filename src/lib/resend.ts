@@ -218,3 +218,5 @@ export function criarClienteResend(cfg: ConfigResend, f: typeof fetch = fetch) {
     },
   }
 }
+
+export type ClienteResend = ReturnType<typeof criarClienteResend>
