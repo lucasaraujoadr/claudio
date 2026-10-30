@@ -57,6 +57,13 @@ describe('integração', () => {
     expect(screen.getByText('Bloqueado')).toBeTruthy()
   })
 
+  it('sem chave do Resend e sem acesso público, mostra o alerta da proteção da Vercel', async () => {
+    estado.integracao = { ...estado.integracao, conectado: false, acessoPublico: false }
+    await montar(IntegracaoPage({ searchParams: sp() }))
+    expect(screen.getByText('Resend não conectado')).toBeTruthy()
+    expect(screen.getByText(/Standard Protection/)).toBeTruthy()
+  })
+
   it('traz o webhook do Resend, os eventos a assinar, o DNS e nenhuma menção ao Brevo', async () => {
     const { container } = render(await IntegracaoPage({ searchParams: sp() }))
     const texto = container.textContent ?? ''

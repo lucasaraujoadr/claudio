@@ -255,7 +255,7 @@ describe('estadoIntegracao', () => {
     await criar('b@example.com', { syncStatus: 'erro' })
     await criar('c@example.com', { syncStatus: 'sincronizado' })
     const vazio = await estadoIntegracao({ db, conectado: false, acessoPublico: async () => true })
-    expect(vazio).toEqual({ conectado: false, acessoPublico: null, pendentes: 1, erros: 1, ultimoSync: null })
+    expect(vazio).toEqual({ conectado: false, acessoPublico: true, pendentes: 1, erros: 1, ultimoSync: null })
 
     await sincronizarPendentes({ db, cliente: resendContatosFalso().cliente })
     const e = await estadoIntegracao({ db, conectado: true, acessoPublico: async () => false })

@@ -260,7 +260,8 @@ export async function estadoIntegracao(
   const [linhas, execucoes, acesso] = await Promise.all([
     db.select({ s: contatos.syncStatus, n: sql<number>`count(*)::int` }).from(contatos).groupBy(contatos.syncStatus),
     db.select().from(sincronizacoes).where(eq(sincronizacoes.fonte, FONTE_SINCRONIZACAO)),
-    conectado ? (opts.acessoPublico ?? (() => acessoPublicoOk()))().catch(() => null) : Promise.resolve(null),
+    // Não depende da chave do Resend: o alerta de proteção da Vercel vale antes de conectar.
+    (opts.acessoPublico ?? (() => acessoPublicoOk()))().catch(() => null),
   ])
   const n = (s: Contato['syncStatus']) => Number(linhas.find((l) => l.s === s)?.n ?? 0)
   return { conectado, acessoPublico: acesso, pendentes: n('pendente'), erros: n('erro'), ultimoSync: execucoes[0] ?? null }
