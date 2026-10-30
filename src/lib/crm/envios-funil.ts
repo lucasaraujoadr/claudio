@@ -14,8 +14,10 @@ import { ehSlugFunil, inicioDoDiaBrasilia, type SlugFunil } from './funis-regras
  * - Uma etapa é devida quando a referência + `esperarDias` já passou. A referência é a entrada
  *   no funil (etapa 0) ou o envio da etapa anterior, sempre na rodada atual (`rodada` = o
  *   `entrou_em` da inscrição; a reentrada abre rodada nova e mantém o histórico).
- * - `envios_funil` é único por (inscrição, rodada, etapa): a linha é reservada **antes** do envio
- *   e um conflito vira `pulado`.
+ * - `envios_funil` é único por (inscrição, rodada, etapa): a linha é reservada **antes** do envio,
+ *   como `incerto`, e um conflito vira `pulado`. Só vira `enviado` (com o id do Resend) depois da
+ *   resposta: um processo morto no meio deixa `incerto`, que conta no limite do dia, segura a etapa
+ *   seguinte e aparece na lista de incertos para alguém conferir no Resend.
  * - Resultado de cada tentativa:
  *   - recusa sobre o contato (`invalido`, `nao_encontrado`; fica `erro`): tentada de novo na rodada
  *     seguinte, até 3 tentativas; na 3ª a inscrição sai do funil;
@@ -48,6 +50,8 @@ const DIA_MS = 86_400_000
 const ERRO_MARCADOR = 'texto com marcador pendente'
 const ERRO_TOKEN = 'link de descadastro indisponível (DESCADASTRO_SEGREDO)'
 const ERRO_DESCONHECIDO = 'falha no envio; confira no Resend se o email saiu'
+const ERRO_INTERROMPIDO = 'o envio não terminou; confira no Resend se o email saiu'
+const ERRO_CANCELADO = 'não enviado: o contato, a inscrição ou o funil mudou antes do envio'
 const TIPOS_INCERTOS: ReadonlySet<ErroResend['tipo']> = new Set(['rede', 'servidor'])
 /** Recusas sobre o contato: só elas contam para a falha permanente. `limite` e `credencial` são da conta. */
 const TIPOS_DO_CONTATO: ReadonlySet<ErroResend['tipo']> = new Set(['invalido', 'nao_encontrado'])
@@ -184,15 +188,24 @@ async function tentarEtapa(
   const email = etapas[item.etapa]
   if (!email) return nada('pulado')
 
-  // Reserva na rodada atual: insere, ou retoma uma recusa com tentativas sobrando. `enviado` e
-  // `incerto` existentes = conflito sem atualização = pulado.
+  // Reserva na rodada atual, como `incerto` (pode sair a partir daqui): insere, ou retoma uma
+  // recusa (`erro`) com tentativas sobrando. `enviado` e `incerto` existentes = conflito sem
+  // atualização = pulado.
   const rodadaAtual = sql`(select ${funilInscricoes.entrouEm} from ${funilInscricoes} where ${funilInscricoes.id} = ${item.inscricaoId})`
   const [reserva] = await db
     .insert(enviosFunil)
-    .values({ inscricaoId: item.inscricaoId, rodada: rodadaAtual, etapa: item.etapa, status: 'enviado', primeiraTentativaEm: agora, enviadoEm: agora })
+    .values({
+      inscricaoId: item.inscricaoId,
+      rodada: rodadaAtual,
+      etapa: item.etapa,
+      status: 'incerto',
+      erro: ERRO_INTERROMPIDO,
+      primeiraTentativaEm: agora,
+      enviadoEm: agora,
+    })
     .onConflictDoUpdate({
       target: [enviosFunil.inscricaoId, enviosFunil.rodada, enviosFunil.etapa],
-      set: { status: 'enviado', enviadoEm: agora },
+      set: { status: 'incerto', erro: ERRO_INTERROMPIDO, enviadoEm: agora },
       setWhere: sql`${enviosFunil.status} = 'erro' and ${enviosFunil.tentativas} < ${MAX_TENTATIVAS}`,
     })
     .returning({
@@ -236,7 +249,7 @@ async function tentarEtapa(
   ) {
     // Desfaz a reserva sem apagar histórico de tentativas anteriores.
     if (reserva.nova) await db.delete(enviosFunil).where(eq(enviosFunil.id, envioId))
-    else await db.update(enviosFunil).set({ status: 'erro' }).where(eq(enviosFunil.id, envioId))
+    else await db.update(enviosFunil).set({ status: 'erro', erro: ERRO_CANCELADO }).where(eq(enviosFunil.id, envioId))
     return nada('pulado')
   }
 
@@ -295,7 +308,7 @@ async function tentarEtapa(
     return { resultado: 'erro', chamouApi: true }
   }
 
-  await db.update(enviosFunil).set({ resendEmailId, tentativas, erro: null }).where(eq(enviosFunil.id, envioId))
+  await db.update(enviosFunil).set({ status: 'enviado', resendEmailId, tentativas, erro: null }).where(eq(enviosFunil.id, envioId))
   await db.insert(eventosContato).values({
     contatoId: item.contatoId,
     tipo: 'enviado',

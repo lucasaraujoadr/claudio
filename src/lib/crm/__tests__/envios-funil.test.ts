@@ -5,6 +5,7 @@ import { ErroResend, type ClienteResend } from '@/lib/resend'
 import type { BancoCrm } from '../banco'
 import { mudarStatus } from '../contatos'
 import { enviarBoasVindasAgora, enviarEtapa, etapasDevidas, executarEnviosFunil } from '../envios-funil'
+import { resumoEnviosFunil } from '../envios-painel'
 import { EMAILS_FUNIS } from '../funis-conteudo'
 import { definirAtivo, garantirFunis, inscrever, ligarProspeccaoFria, obterFunil, sair } from '../funis'
 import { criarBancoTesteFunis } from './banco-teste-funis'
@@ -250,6 +251,58 @@ describe('enviarEtapa', () => {
     falhar = false
     expect(await enviarEtapa(item, base(r.cliente, depois(1)))).toBe('enviado')
     expect(await db.select().from(enviosFunil)).toMatchObject([{ status: 'enviado', erro: null, tentativas: 2 }])
+  })
+
+  it('processo morto depois da reserva deixa incerto: na lista de incertos, conta no limite e não é repetido', async () => {
+    process.env.RESEND_LIMITE_DIARIO = '1'
+    const c = await lead()
+    const [item] = await etapasDevidas(AGORA, { db })
+    // O estado do banco no instante da chamada ao Resend é o que um processo morto ali deixaria.
+    let noMeio: { linhas: (typeof enviosFunil.$inferSelect)[]; incertos: number; devidasAmanha: number; boasVindas: string } | null = null
+    const r = resendFalso({
+      antes: async () => {
+        const linhas = await db.select().from(enviosFunil)
+        const resumo = await resumoEnviosFunil('boas-vindas', { db, agora: AGORA })
+        const devidasAmanha = (await etapasDevidas(depois(30), { db, somenteLeitura: true })).length
+        // Outro contato tentando a boas-vindas imediata no mesmo dia: a vaga do limite já está ocupada.
+        const outro = await lead()
+        const boasVindas = await enviarBoasVindasAgora(outro.id, base(resendFalso().cliente))
+        noMeio = { linhas, incertos: resumo.incertos.length, devidasAmanha, boasVindas }
+      },
+    })
+    expect(await enviarEtapa(item, base(r.cliente))).toBe('enviado')
+    expect(noMeio).not.toBeNull()
+    const m = noMeio!
+    expect(m.linhas).toHaveLength(1)
+    expect(m.linhas[0]).toMatchObject({ status: 'incerto', resendEmailId: null, etapa: 0 })
+    expect(m.linhas[0].erro).toEqual(expect.any(String))
+    expect(m.incertos).toBe(1)
+    // Incerto não é repetido sozinho e segura a etapa seguinte.
+    expect(m.devidasAmanha).toBe(0)
+    expect(m.boasVindas).toBe('pulado')
+    // Terminado o envio, vira enviado com o id do Resend.
+    const [fim] = await db.select().from(enviosFunil).where(eq(enviosFunil.inscricaoId, item.inscricaoId))
+    expect(fim).toMatchObject({ status: 'enviado', resendEmailId: 're_1', erro: null, tentativas: 1 })
+    expect(c.id).toBe(item.contatoId)
+  })
+
+  it('recusa retomada e cancelada antes do envio volta a erro (nunca fica incerto); só erro com tentativas sobrando é retomado', async () => {
+    const c = await lead()
+    const [item] = await etapasDevidas(AGORA, { db })
+    const r = resendFalso({ falhar: () => new ErroResend('invalido') })
+    expect(await enviarEtapa(item, base(r.cliente))).toBe('erro')
+    await db.update(contatos).set({ status: 'descadastrado' }).where(eq(contatos.id, c.id))
+    expect(await enviarEtapa(item, base(r.cliente, depois(1)))).toBe('pulado')
+    const [linha] = await db.select().from(enviosFunil)
+    expect(linha).toMatchObject({ status: 'erro', tentativas: 1 })
+    expect(linha.erro).not.toMatch(/não terminou/)
+    // Incerto e erro sem tentativas sobrando não são retomados pela reserva.
+    await db.update(enviosFunil).set({ status: 'incerto' })
+    await db.update(contatos).set({ status: 'lead' })
+    expect(await enviarEtapa(item, base(r.cliente, depois(2)))).toBe('pulado')
+    await db.update(enviosFunil).set({ status: 'erro', tentativas: 3 })
+    expect(await enviarEtapa(item, base(r.cliente, depois(3)))).toBe('pulado')
+    expect(r.tentativas).toHaveLength(1)
   })
 
   it('erro de rede vira incerto e não é tentado de novo no dia seguinte', async () => {
