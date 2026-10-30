@@ -10,6 +10,7 @@ import { ROTULO_WP, linkSeguro } from '../situacao'
 import { Contador } from './contador'
 import { formatarBrasilia, isoParaLocal, localParaIso } from './datas'
 import { MarcaVerificar } from './marca-verificar'
+import { TrechosVerificar } from './trechos-verificar'
 import { paraTela, semBloqueio, type ArtigoTela } from './tipos'
 
 export type EditorArtigoProps = {
@@ -349,6 +350,8 @@ export function EditorArtigo({
 
       {/* Coluna lateral */}
       <aside className="min-w-0 space-y-4" aria-label="Dados do post e envio">
+        <TrechosVerificar editor={editor} />
+
         <Cartao titulo="SEO" nivelTitulo={2}>
           <div className="space-y-4">
             <div>
