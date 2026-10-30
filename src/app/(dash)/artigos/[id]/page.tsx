@@ -7,6 +7,7 @@ import { obterArtigo } from '@/lib/artigos/repositorio'
 import { idDaRota, keywordDoTema, montarVisao } from '@/lib/artigos/visao'
 import { configWp, criarClienteWp } from '@/lib/wordpress'
 import { SELO_SITUACAO } from '../situacao'
+import { AbasArtigo } from './abas-artigo'
 import { EditorArtigo } from './editor-artigo'
 import { paraTela } from './tipos'
 
@@ -114,6 +115,7 @@ export default async function ArtigoPage({ params }: { params: Promise<{ id: str
   return (
     <div className="mx-auto max-w-7xl space-y-6">
       {cabecalho}
+      <AbasArtigo artigoId={artigo.id} situacao={artigo.situacao} atual="artigo" />
       <EditorArtigo
         inicial={paraTela(montarVisao(artigo, keyword))}
         wpConfigurado={cfg !== null}

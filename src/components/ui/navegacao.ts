@@ -23,6 +23,7 @@ export const NAVEGACAO: GrupoNavegacao[] = [
       { rotulo: 'Temas', href: '/temas' },
       { rotulo: 'Briefings', href: '/briefings' },
       { rotulo: 'Artigos', href: '/artigos' },
+      { rotulo: 'Distribuição', href: '/distribuicao' },
       { rotulo: 'Tendências', href: '/tendencias' },
       { rotulo: 'Auditoria', href: '/auditoria' },
     ],

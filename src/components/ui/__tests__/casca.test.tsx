@@ -29,7 +29,7 @@ describe('navegação', () => {
   it('tem os grupos e itens pedidos, na ordem', () => {
     expect(NAVEGACAO.map((g) => g.titulo ?? '')).toEqual(['', 'SEO', 'Dados', 'CRM'])
     expect(NAVEGACAO.flatMap((g) => g.itens.map((i) => i.rotulo))).toEqual([
-      'Visão geral', 'Oportunidades', 'Temas', 'Briefings', 'Artigos', 'Tendências', 'Auditoria', 'Tráfego', 'Contatos', 'Funis', 'Importar', 'Integração',
+      'Visão geral', 'Oportunidades', 'Temas', 'Briefings', 'Artigos', 'Distribuição', 'Tendências', 'Auditoria', 'Tráfego', 'Contatos', 'Funis', 'Importar', 'Integração',
     ])
   })
 
@@ -39,7 +39,7 @@ describe('navegação', () => {
     expect(within(lateral).queryByText('em breve')).toBeNull()
     expect(lateral.querySelector('[data-indisponivel]')).toBeNull()
     const hrefs = within(lateral).getAllByRole('link').map((a) => a.getAttribute('href'))
-    expect(hrefs).toEqual(['/', '/oportunidades', '/temas', '/briefings', '/artigos', '/tendencias', '/auditoria', '/trafego', '/crm/contatos', '/crm/funis', '/crm/importar', '/crm/integracao'])
+    expect(hrefs).toEqual(['/', '/oportunidades', '/temas', '/briefings', '/artigos', '/distribuicao', '/tendencias', '/auditoria', '/trafego', '/crm/contatos', '/crm/funis', '/crm/importar', '/crm/integracao'])
   })
 
   it('Funis é um link ativo em /crm/funis e nas subtelas', () => {
