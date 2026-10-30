@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 import { contatos, eventosContato, funilInscricoes, funis, type Contato } from '@/lib/db/schema'
 import { LimitadorPorIp } from '@/lib/webhooks'
 import type { BancoCrm } from '../banco'
 import {
-  concluirSequencias,
   contatosComTag,
   definirAtivo,
   encerrarInscricoesDeDescadastrados,
@@ -278,40 +277,17 @@ describe('resumoFunis', () => {
 })
 
 describe('sequências concluídas e reentrada', () => {
-  it('inscrição ativa dentro da duração (contada de entrou_em) continua ativa', async () => {
-    const c = await criar()
-    await inscrever('boas-vindas', [c.id], { db, caminho: 'site', agora: new Date(AGORA.getTime() - 5 * DIA) })
-    expect(await concluirSequencias({ db, agora: AGORA })).toBe(0)
-    expect((await inscricao(c.id, 'boas-vindas')).status).toBe('ativo')
-  })
-
-  it('reentrada reinicia a contagem: não conclui cedo', async () => {
+  it('reentrada reabre a mesma linha, com a data nova e sem saída', async () => {
     const c = await criar()
     const f = await obterFunil('boas-vindas', { db })
     await inscrever('boas-vindas', [c.id], { db, caminho: 'site', agora: new Date(AGORA.getTime() - 20 * DIA) })
+    const primeira = await inscricao(c.id, 'boas-vindas')
     await sair(f.id, [c.id], { db, motivo: 'manual', agora: new Date(AGORA.getTime() - 19 * DIA) })
     const reentrada = new Date(AGORA.getTime() - 2 * DIA)
     await inscrever('boas-vindas', [c.id], { db, caminho: 'manual', agora: reentrada })
     const i = await inscricao(c.id, 'boas-vindas')
-    expect(i).toMatchObject({ status: 'ativo', saiuEm: null })
+    expect(i).toMatchObject({ id: primeira.id, status: 'ativo', saiuEm: null, motivoSaida: null })
     expect(i.entrouEm).toEqual(reentrada)
-    expect(await concluirSequencias({ db, agora: AGORA })).toBe(0)
-    expect((await inscricao(c.id, 'boas-vindas')).status).toBe('ativo')
-  })
-
-  it('ativo além da duração vira concluido (contado da entrada) e conta no resumo; nutrição não conclui', async () => {
-    const c = await criar()
-    await inscrever('boas-vindas', [c.id], { db, caminho: 'site', agora: new Date(AGORA.getTime() - 14 * DIA) })
-    const n = await criar({ status: 'cliente', baseLegal: 'contrato' })
-    await inscrever('nutricao-blog', [n.id], { db, caminho: 'manual', agora: new Date(AGORA.getTime() - 400 * DIA) })
-    const novo = await criar()
-    await inscrever('boas-vindas', [novo.id], { db, caminho: 'site', agora: new Date(AGORA.getTime() - 12 * DIA) })
-    expect(await concluirSequencias({ db, agora: AGORA })).toBe(1)
-    expect(await inscricao(c.id, 'boas-vindas')).toMatchObject({ status: 'concluido', motivoSaida: 'sequência concluída' })
-    expect((await inscricao(novo.id, 'boas-vindas')).status).toBe('ativo')
-    expect((await inscricao(n.id, 'nutricao-blog')).status).toBe('ativo')
-    expect((await eventosDe(c.id)).at(-1)).toMatchObject({ tipo: 'saiu_funil', dados: { concluido: true } })
-    expect((await resumoFunis({ db })).find((f) => f.slug === 'boas-vindas')).toMatchObject({ concluidos: 1, ativos: 1 })
   })
 
   it('reativação: a rotina reinscreve quem concluiu há mais de 180 dias, nunca quem saiu', async () => {
@@ -319,11 +295,14 @@ describe('sequências concluídas e reentrada', () => {
     const concluiu = await criar({ status: 'cliente', baseLegal: 'contrato', criadoEm: antes(800) })
     const removido = await criar({ status: 'cliente', baseLegal: 'contrato', criadoEm: antes(800) })
     const recemConcluido = await criar({ status: 'cliente', baseLegal: 'contrato', criadoEm: antes(800) })
-    await inscrever('reativacao', [concluiu.id, removido.id], { db, caminho: 'cron', agora: antes(400) })
-    await concluirSequencias({ db, agora: antes(370) })
-    await inscrever('reativacao', [recemConcluido.id], { db, caminho: 'cron', agora: antes(60) })
-    await concluirSequencias({ db, agora: antes(30) })
     const f = await obterFunil('reativacao', { db })
+    // A conclusão vem do motor de envios (depois da última etapa); aqui, direto no banco.
+    const concluir = (ids: number[], quando: Date) =>
+      db.update(funilInscricoes).set({ status: 'concluido', saiuEm: quando, motivoSaida: 'sequência concluída' }).where(and(eq(funilInscricoes.funilId, f.id), inArray(funilInscricoes.contatoId, ids)))
+    await inscrever('reativacao', [concluiu.id, removido.id], { db, caminho: 'cron', agora: antes(400) })
+    await concluir([concluiu.id, removido.id], antes(370))
+    await inscrever('reativacao', [recemConcluido.id], { db, caminho: 'cron', agora: antes(60) })
+    await concluir([recemConcluido.id], antes(30))
     // `removido` voltou pela tela e o usuário o tirou à mão: a linha fica `saiu`.
     await inscrever('reativacao', [removido.id], { db, caminho: 'manual', agora: antes(300) })
     await sair(f.id, [removido.id], { db, motivo: 'removido na tela', agora: antes(299) })

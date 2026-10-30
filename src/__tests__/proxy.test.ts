@@ -33,6 +33,8 @@ describe('proxy: lista de rotas liberadas', () => {
     '/login', '/api/login', '/api/cron/gsc', '/api/cron', '/_next/static/x.js', '/favicon.ico',
     '/api/webhooks/brevo', '/api/webhooks/site', '/api/webhooks',
     '/descadastro', '/api/publico/x', '/api/publico/descadastro', '/api/publico/saude',
+    // Logo dos emails de funil: o cliente de email busca a imagem sem cookie.
+    '/logo-og.png',
   ])(
     'libera %s sem cookie',
     (path) => {
@@ -40,7 +42,7 @@ describe('proxy: lista de rotas liberadas', () => {
     },
   )
 
-  it.each(['/login/', '/loginx', '/api/loginfoo', '/api/cronfoo', '/api/webhooksfoo', '/api/webhooks-site', '/api/logout', '/api/crm/brevo/sincronizar', '/favicon.icoX', '/_nextx/a', '/_next', '/api/crm', '/api/crm/contatos', '/descadastrox', '/descadastro/x', '/api/publico', '/api/publicox'])(
+  it.each(['/login/', '/loginx', '/api/loginfoo', '/api/cronfoo', '/api/webhooksfoo', '/api/webhooks-site', '/api/logout', '/api/crm/brevo/sincronizar', '/favicon.icoX', '/_nextx/a', '/_next', '/api/crm', '/api/crm/contatos', '/descadastrox', '/descadastro/x', '/api/publico', '/api/publicox', '/logo-og.pngx', '/logo-og.png/x', '/logo-og-claro.png', '/x/logo-og.png', '/logo.png'])(
     'não libera %s sem cookie',
     (path) => {
       expect(redirecionaParaLogin(path)).toBe(true)

@@ -1,9 +1,8 @@
 import { and, asc, desc, eq, gte, inArray, ne, notExists, sql } from 'drizzle-orm'
-import { MENSAGEM_NAO_CONECTADO, type ClienteBrevo } from '@/lib/brevo'
-import { contatos, eventosContato, funilInscricoes, funis, type Funil, type FunilInscricao } from '@/lib/db/schema'
+import { contatos, enviosFunil, eventosContato, funilInscricoes, funis, type Funil, type FunilInscricao } from '@/lib/db/schema'
 import { bancoPadrao, type BancoCrm } from './banco'
 import type { StatusContato } from './campos'
-import { DEFINICOES_FUNIS, duracaoSequenciaDias } from './funis-conteudo'
+import { DEFINICOES_FUNIS } from './funis-conteudo'
 import {
   EVENTOS_INTERACAO,
   ORIGEM_ATUALIZADO_INTERACAO,
@@ -24,15 +23,14 @@ import {
 } from './funis-regras'
 
 /**
- * Funis do CRM (E9). O CRM decide quem está em qual funil; cada funil corresponde a uma
- * lista do Brevo, e a automação do Brevo ("contato adicionado à lista") envia os emails.
+ * Funis do CRM (E9). O CRM decide quem está em qual funil; o painel envia as etapas pelo
+ * Resend (`envios-funil.ts`).
  *
- * - Entrar num funil grava a inscrição (`lista_sync = pendente`) e o evento `entrou_funil`;
- *   sair grava `saiu_funil` e marca a remoção da lista como pendente.
- * - A lista do Brevo é atualizada por `sincronizarInscricoes`: adicionar passa sempre por
- *   `adicionarContatosALista` (que recusa descadastrados no próprio SELECT); remover usa o
- *   cliente do Brevo. Sem chave ou sem lista conectada, a inscrição fica guardada como
- *   pendente — nunca é erro.
+ * - Entrar num funil grava a inscrição e o evento `entrou_funil`; sair grava `saiu_funil`.
+ *   Quem não está `ativo` não recebe a etapa seguinte.
+ * - A reentrada reabre a mesma linha e apaga os envios da passagem anterior: a sequência
+ *   recomeça do primeiro email.
+ * - A sequência é concluída pelo motor de envios, depois da última etapa.
  * - Nada aqui registra dado de contato em log.
  */
 
@@ -159,9 +157,11 @@ export async function inscrever(
         somar(r, d.motivo)
         continue
       }
+      // Reentrada: os envios da passagem anterior saem, para a sequência recomeçar do email 1.
+      if (atual) await tx.delete(enviosFunil).where(eq(enviosFunil.inscricaoId, atual.id))
       await tx
         .insert(funilInscricoes)
-        .values({ contatoId: c.id, funilId: funil.id, status: 'ativo', origem: opts.caminho, entrouEm: agora, })
+        .values({ contatoId: c.id, funilId: funil.id, status: 'ativo', origem: opts.caminho, entrouEm: agora })
         .onConflictDoUpdate({
           target: [funilInscricoes.contatoId, funilInscricoes.funilId],
           set: { status: 'ativo', origem: opts.caminho, entrouEm: agora, saiuEm: null, motivoSaida: null },
@@ -310,45 +310,6 @@ export async function contatosComTag(tag: string, opts: { db?: BancoCrm; limite?
   return { ids: linhas.slice(0, limite).map((l) => l.id), excedeu: linhas.length > limite }
 }
 
-/**
- * Etapa diária: inscrições que estão **na lista do Brevo** há mais que a duração da sequência
- * (soma das esperas + 3 dias de folga) viram `concluido` e saem da lista. Conta de
- * `na_lista_em` — o momento em que a automação do Brevo começou a enviar —, não da
- * inscrição: sem conta no Brevo, ou com o contato ainda fora da lista, ninguém conclui sem
- * ter recebido os emails. A nutrição com o blog não conclui: a lista dela recebe as campanhas
- * dos artigos novos enquanto a pessoa estiver nela.
- */
-export async function concluirSequencias(opts: { db?: BancoCrm; agora?: Date } = {}): Promise<number> {
-  const db = opts.db ?? bancoPadrao()
-  const agora = opts.agora ?? new Date()
-  const lista = await garantirFunis({ db })
-  let total = 0
-  for (const f of lista) {
-    if (!ehSlugFunil(f.slug)) continue
-    const dias = duracaoSequenciaDias(f.slug)
-    if (dias === null) continue
-    const limite = new Date(agora.getTime() - dias * 86_400_000)
-    const concluidas = await db
-      .update(funilInscricoes)
-      .set({ status: 'concluido', saiuEm: agora, motivoSaida: 'sequência concluída' })
-      .where(
-        and(
-          eq(funilInscricoes.funilId, f.id),
-          eq(funilInscricoes.status, 'ativo'),
-          sql`${funilInscricoes.entrouEm} <= ${limite.toISOString()}::timestamptz`,
-        ),
-      )
-      .returning({ contatoId: funilInscricoes.contatoId })
-    if (concluidas.length > 0) {
-      await db.insert(eventosContato).values(
-        concluidas.map((c) => ({ contatoId: c.contatoId, tipo: 'saiu_funil' as const, dados: { funil: f.slug, nome: f.nome, motivo: 'sequência concluída', concluido: true }, em: agora })),
-      )
-    }
-    total += concluidas.length
-  }
-  return total
-}
-
 /** Ids dos contatos por email (normalizado), para a inscrição manual por lista de emails. */
 export async function contatosPorEmail(emails: readonly string[], opts: { db?: BancoCrm } = {}): Promise<{ ids: number[]; naoEncontrados: number }> {
   const db = opts.db ?? bancoPadrao()
@@ -356,41 +317,6 @@ export async function contatosPorEmail(emails: readonly string[], opts: { db?: B
   if (unicos.length === 0) return { ids: [], naoEncontrados: 0 }
   const linhas = await db.select({ id: contatos.id }).from(contatos).where(inArray(contatos.emailNormalizado, unicos))
   return { ids: linhas.map((l) => l.id), naoEncontrados: unicos.length - linhas.length }
-}
-
-// ---------------------------------------------------------------------------
-// Listas do Brevo (fora do schema; os stubs somem com a lógica de funis do Task 4 e o Brevo do Task 7)
-// ---------------------------------------------------------------------------
-
-export type ResultadoSyncInscricoes =
-  | { conectado: false; mensagem: typeof MENSAGEM_NAO_CONECTADO }
-  | { conectado: true; adicionados: number; removidos: number; erros: number; semLista: number; aguardandoContato: number; interrompido: string | null }
-
-/** Stub: as inscrições já não têm lista do Brevo para sincronizar. */
-export async function sincronizarInscricoes(
-  _opts: {
-    db?: BancoCrm
-    cliente?: ClienteBrevo
-    limite?: number
-    tamanhoLote?: number
-    contatoIds?: readonly number[]
-    agora?: Date
-    deveParar?: () => boolean
-  } = {},
-): Promise<ResultadoSyncInscricoes> {
-  return { conectado: false, mensagem: MENSAGEM_NAO_CONECTADO }
-}
-
-export type ResultadoConexao =
-  | { ok: true; listaId: number; verificada: boolean; criada: boolean }
-  | { ok: false; motivo: 'nao_conectado' | 'lista_nao_encontrada' | 'lista_invalida' | 'brevo' | 'lista_em_uso'; mensagem?: string; funil?: string }
-
-/** Stub: o funil não guarda mais lista do Brevo. */
-export async function conectarListaBrevo(
-  _slug: SlugFunil,
-  _opts: { db?: BancoCrm; cliente?: ClienteBrevo; listaIdExistente?: number | null },
-): Promise<ResultadoConexao> {
-  return { ok: false, motivo: 'nao_conectado' }
 }
 
 /** Liga ou desliga um funil. A prospecção fria só liga por `ligarProspeccaoFria`. */
@@ -473,19 +399,3 @@ export async function membrosDoFunil(
   return { itens, total: Number(n) }
 }
 
-
-// ---------------------------------------------------------------------------
-// Boas-vindas na hora (depois da resposta do webhook do site)
-// ---------------------------------------------------------------------------
-
-export type ResultadoBoasVindasAgora = 'nao_conectado' | 'sem_lista' | 'sem_inscricao' | 'pendente' | 'adicionado'
-
-/**
- * Leva um lead do site à lista de boas-vindas logo depois do formulário (via `after()` na
- * rota), em vez de esperar a rotina diária: envia o contato ao Brevo e depois a inscrição.
- * Use um cliente com timeout curto. Qualquer falha deixa tudo pendente para a rotina.
- */
-export async function enviarBoasVindasAgora(_contatoId: number, _opts: { db?: BancoCrm; cliente: ClienteBrevo }): Promise<ResultadoBoasVindasAgora> {
-  // Stub: o envio imediato pelo Resend é do Task 4.
-  return 'nao_conectado'
-}

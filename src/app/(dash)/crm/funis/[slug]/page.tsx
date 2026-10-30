@@ -3,17 +3,14 @@ import { notFound } from 'next/navigation'
 import { connection } from 'next/server'
 import { Aviso, BotaoEnviar, CabecalhoPagina, Cartao, EstadoVazio, Selo, Tabela, classesBotao, type TipoAviso } from '@/components/ui'
 import { CLASSES_ROTULO, classesCampo } from '@/components/ui/campo'
-import { brevoConfigurado } from '@/lib/brevo'
 import { bancoPadrao } from '@/lib/crm/banco'
 import {
   aplicarMarcadores,
   definicaoFunil,
-  duracaoSequenciaDias,
   EMAILS_FUNIS,
+  etapasDaSequencia,
   linkWhatsapp,
   marcadoresPendentes,
-  nomeListaBrevo,
-  passosAutomacao,
 } from '@/lib/crm/funis-conteudo'
 import { MAX_CONTATOS_POR_TAG, membrosDoFunil, MEMBROS_POR_PAGINA, obterFunil, type MembroFunil } from '@/lib/crm/funis'
 import { MAX_EMAILS_INSCRICAO } from '@/lib/crm/funis-formulario'
@@ -30,13 +27,6 @@ const AVISOS: Record<string, { texto: string; tipo: TipoAviso }> = {
   desligado: { texto: 'Funil desligado: ninguém novo entra; quem já está continua até sair.', tipo: 'info' },
   checklist: { texto: 'Para ligar a prospecção fria, confirme os quatro itens do checklist de LGPD.', tipo: 'erro' },
   teto: { texto: `Defina um teto diário entre 1 e ${TETO_MAXIMO_PROSPECCAO}.`, tipo: 'erro' },
-  'lista-criada': { texto: 'Lista criada no Brevo e ligada a este funil.', tipo: 'sucesso' },
-  'lista-ok': { texto: 'Lista do Brevo ligada a este funil.', tipo: 'sucesso' },
-  'lista-nao-verificada': { texto: 'Lista guardada. Como o Brevo não está conectado, o número não foi conferido.', tipo: 'alerta' },
-  'lista-nao-encontrada': { texto: 'Essa lista não existe no Brevo. Confira o número em Contatos → Listas.', tipo: 'erro' },
-  'lista-invalida': { texto: 'Informe o número da lista (só dígitos).', tipo: 'erro' },
-  'nao-conectado': { texto: 'Brevo não conectado: para criar a lista pelo painel, configure BREVO_API_KEY. Você pode informar o número de uma lista existente.', tipo: 'alerta' },
-  brevo: { texto: 'O Brevo recusou o pedido. Tente de novo mais tarde.', tipo: 'erro' },
   removido: { texto: 'Contato removido do funil.', tipo: 'sucesso' },
   'nada-para-inscrever': { texto: 'Informe emails (um por linha) ou uma tag.', tipo: 'erro' },
   erro: { texto: 'Não foi possível concluir a ação. Tente de novo.', tipo: 'erro' },
@@ -65,16 +55,6 @@ function avisoInscricao(sp: Record<string, string | string[] | undefined>): { te
   if (sp.excedeu_tag === '1') partes.push(`a tag tem mais de ${MAX_CONTATOS_POR_TAG.toLocaleString('pt-BR')} contatos; só os primeiros foram tratados — repita para os demais`)
   const excedeu = sp.excedeu_emails === '1' || sp.excedeu_tag === '1'
   return { texto: `${partes.join('; ')}.`, tipo: inscritos > 0 && !excedeu ? 'sucesso' : 'alerta' }
-}
-
-/** A lista escolhida já é de outro funil (`outro` = slug dele). */
-function avisoListaEmUso(sp: Record<string, string | string[] | undefined>): { texto: string; tipo: TipoAviso } | null {
-  if (sp.aviso !== 'lista-em-uso') return null
-  const outro = typeof sp.outro === 'string' && ehSlugFunil(sp.outro) ? definicaoFunil(sp.outro).nome : null
-  return {
-    texto: `Essa lista do Brevo já está ligada ${outro ? `ao funil "${outro}"` : 'a outro funil'}. Cada funil precisa de uma lista própria: concluir ou sair de um funil tira o contato da lista, o que o cortaria também do outro. Crie uma lista nova ou informe outra.`,
-    tipo: 'erro',
-  }
 }
 
 async function carregar(slug: SlugFunil, status: FunilInscricao['status'] | undefined, pagina: number) {
@@ -142,37 +122,6 @@ function Situacao({ f }: { f: Funil }) {
       </div>
       <BotaoEnviar rotuloEnviando="Ligando…">Ligar prospecção fria</BotaoEnviar>
     </form>
-  )
-}
-
-function Brevo({ f, conectado }: { f: Funil; conectado: boolean }) {
-  return (
-    <div className="space-y-4">
-      <p className="flex flex-wrap items-center gap-2 text-sm text-tinta">
-        As listas do Brevo deixaram de ser usadas: os funis passam a sair pelo Resend.
-      </p>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <form method="POST" action={`/api/crm/funis/${f.slug}/brevo`} className="space-y-2 rounded-lg border border-borda p-4">
-          <input type="hidden" name="modo" value="criar" />
-          <p className="text-sm font-medium text-tinta">Criar lista no Brevo</p>
-          <p className="text-xs text-tinta-suave">
-            Cria &quot;{nomeListaBrevo(f.nome)}&quot; na pasta do painel (a API do Brevo exige uma pasta). {!conectado && 'Exige BREVO_API_KEY.'}
-          </p>
-          <BotaoEnviar rotuloEnviando="Criando…" variante="secundario" tamanho="sm">
-            Conectar ao Brevo
-          </BotaoEnviar>
-        </form>
-        <form method="POST" action={`/api/crm/funis/${f.slug}/brevo`} className="space-y-2 rounded-lg border border-borda p-4">
-          <input type="hidden" name="modo" value="existente" />
-          <label htmlFor="lista-id" className="block text-sm font-medium text-tinta">Usar uma lista que já existe</label>
-          <input id="lista-id" name="lista_id" inputMode="numeric" pattern="[0-9]+" required placeholder="Número da lista" className={classesCampo('h-9')} />
-          <p className="text-xs text-tinta-suave">O número aparece em Brevo → Contatos → Listas.</p>
-          <BotaoEnviar rotuloEnviando="Salvando…" variante="secundario" tamanho="sm">
-            Usar esta lista
-          </BotaoEnviar>
-        </form>
-      </div>
-    </div>
   )
 }
 
@@ -262,15 +211,13 @@ export default async function FunilPage({
   const sp = await searchParams
   const status = sp.status === 'todos' ? undefined : sp.status === 'saiu' || sp.status === 'concluido' ? sp.status : 'ativo'
   const pagina = Math.max(1, numero(sp.pagina) || 1)
-  const aviso = avisoInscricao(sp) ?? avisoListaEmUso(sp) ?? (typeof sp.aviso === 'string' ? AVISOS[sp.aviso] : undefined)
-  const conectado = brevoConfigurado()
+  const aviso = avisoInscricao(sp) ?? (typeof sp.aviso === 'string' ? AVISOS[sp.aviso] : undefined)
   const def = definicaoFunil(slug)
   const dados = await carregar(slug, status, pagina)
-  const nomeLista = nomeListaBrevo(def.nome)
   const whatsapp = linkWhatsapp()
   const emails = EMAILS_FUNIS[slug].map((e) => ({ ...e, corpo: aplicarMarcadores(e.corpo, { whatsapp }) }))
-  const pendentes = marcadoresPendentes(emails.flatMap((e) => [e.assunto, e.preCabecalho, e.corpo]))
-  const duracao = duracaoSequenciaDias(slug)
+  const temSequencia = etapasDaSequencia(slug).length > 0
+  const pendentes = !temSequencia ? [] : marcadoresPendentes(emails.flatMap((e) => [e.assunto, e.preCabecalho, e.corpo]))
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -287,10 +234,6 @@ export default async function FunilPage({
         <>
           <Cartao titulo="Situação" descricao={slug === 'reativacao' ? `${def.quemEntra} ${DEFINICAO_SEM_INTERACAO}` : def.quemEntra}>
             <Situacao f={dados.funil} />
-          </Cartao>
-
-          <Cartao titulo="Lista no Brevo" descricao="Entrar no funil adiciona o contato à lista; sair remove. Descadastrados nunca entram.">
-            <Brevo f={dados.funil} conectado={conectado} />
           </Cartao>
 
           <Cartao titulo="Inscrever contatos" descricao={slug === 'boas-vindas' ? 'Só contatos que vieram pelo formulário do site.' : 'As regras do funil valem também aqui; quem não se encaixa é recusado e contado.'}>
@@ -317,36 +260,40 @@ export default async function FunilPage({
       )}
 
       {pendentes.length > 0 && (
-        <Aviso tipo="alerta" titulo="Antes de ativar a automação" role={null}>
+        <Aviso tipo="alerta" titulo="Marcadores a resolver" role={null}>
           Os emails ainda têm {pendentes.length === 1 ? 'um marcador' : 'marcadores'} a resolver: {pendentes.join(', ')}.
-          {pendentes.includes('[link do WhatsApp]') && ' Defina WHATSAPP_LINK na Vercel para o link entrar sozinho, ou troque à mão no Brevo.'}
-          {pendentes.includes('[fonte do contato]') && ' Troque [fonte do contato] pela origem real dos contatos (a mesma registrada na avaliação de legítimo interesse).'}
+          {pendentes.includes('[link do WhatsApp]') && ' Defina WHATSAPP_LINK na Vercel para o link entrar sozinho; sem ele, a frase do WhatsApp sai do email.'}
+          {pendentes.includes('[fonte do contato]') && ' Troque [fonte do contato] pela origem real dos contatos (a mesma registrada na avaliação de legítimo interesse): email com esse marcador não é enviado.'}
         </Aviso>
       )}
 
       <Cartao
-        titulo="Automação no Brevo"
-        descricao={`Automações não podem ser criadas pela API do Brevo: crie esta uma vez, à mão.${duracao !== null ? ` ${duracao} dias depois de o contato entrar na lista do Brevo (não da inscrição: sem lista conectada, nada conta), o CRM marca a sequência como concluída e tira o contato da lista.` : ' Este funil não conclui: a lista continua recebendo as campanhas dos artigos novos.'}`}
+        titulo="Envio pelo painel"
+        descricao={
+          temSequencia
+            ? 'A rotina diária envia pelo Resend cada email quando chega a hora (o primeiro na entrada; os outros, os dias indicados depois do anterior), até o limite diário do plano, com a boas-vindas na frente. Quem se descadastra, sai do funil ou tem o funil desligado não recebe. Depois do último email, a sequência fica concluída.'
+            : 'Este funil não tem sequência: a inscrição define quem recebe a newsletter dos artigos novos.'
+        }
       >
-        <ol className="list-decimal space-y-1.5 pl-5 text-sm text-tinta">
-          {passosAutomacao(slug, nomeLista).map((p, i) => <li key={i}>{p}</li>)}
-        </ol>
+        <p className="text-sm text-tinta-suave">Todo email leva o link de descadastro próprio do contato.</p>
       </Cartao>
 
-      <Cartao titulo="Emails prontos" descricao="Três emails, no tom de perito falando com advogado. Marcadores entre colchetes aparecem destacados.">
-        <div className="space-y-6">
-          {emails.map((e, i) => (
-            <article key={i} className="space-y-3 rounded-lg border border-borda p-4">
-              <h3 className="font-titulo text-base font-semibold text-tinta">
-                Email {i + 1} <span className="text-sm font-normal text-tinta-suave">· {i === 0 ? 'logo ao entrar na lista' : `${e.esperarDias} dias depois do anterior`}</span>
-              </h3>
-              <TextoCopiavel rotulo="Assunto" texto={e.assunto} />
-              <TextoCopiavel rotulo="Pré-cabeçalho" texto={e.preCabecalho} />
-              <TextoCopiavel rotulo="Corpo" texto={e.corpo} multilinha />
-            </article>
-          ))}
-        </div>
-      </Cartao>
+      {temSequencia && (
+        <Cartao titulo="Emails prontos" descricao="Três emails, no tom de perito falando com advogado. Marcadores entre colchetes aparecem destacados.">
+          <div className="space-y-6">
+            {emails.map((e, i) => (
+              <article key={i} className="space-y-3 rounded-lg border border-borda p-4">
+                <h3 className="font-titulo text-base font-semibold text-tinta">
+                  Email {i + 1} <span className="text-sm font-normal text-tinta-suave">· {i === 0 ? 'logo ao entrar no funil' : `${e.esperarDias} dias depois do anterior`}</span>
+                </h3>
+                <TextoCopiavel rotulo="Assunto" texto={e.assunto} />
+                <TextoCopiavel rotulo="Pré-cabeçalho" texto={e.preCabecalho} />
+                <TextoCopiavel rotulo="Corpo" texto={e.corpo} multilinha />
+              </article>
+            ))}
+          </div>
+        </Cartao>
+      )}
     </div>
   )
 }

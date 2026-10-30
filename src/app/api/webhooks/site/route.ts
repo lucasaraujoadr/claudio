@@ -1,17 +1,16 @@
 import { after } from 'next/server'
-import { criarClienteBrevo } from '@/lib/brevo'
-import { enviarBoasVindasAgora } from '@/lib/crm/funis'
+import { acessoPublicoOk } from '@/lib/acesso-publico'
+import { enviarBoasVindasAgora } from '@/lib/crm/envios-funil'
 import { tratarWebhookSite } from '@/lib/crm/webhook-site'
+import { configResend, criarClienteResend } from '@/lib/resend'
 
 export const runtime = 'nodejs'
 
-/** Timeout de cada chamada ao Brevo no envio imediato; o que falhar fica para a rotina diária. */
-const TIMEOUT_BREVO_IMEDIATO_MS = 5_000
-
 /**
  * Formulário do site (Elementor Forms → Webhook). Público no proxy: o token é a única barreira.
- * O Elementor recebe o 200 na hora; depois da resposta (`after`), o lead vai ao Brevo e à
- * lista de boas-vindas, se a chave e a lista existirem.
+ * O Elementor recebe o 200 na hora; depois da resposta (`after`), o painel envia pelo Resend o
+ * primeiro email da boas-vindas, se a chave existir e o painel tiver acesso público. O que não
+ * sair aqui (falha, limite do dia) fica para a rotina diária.
  */
 export async function POST(request: Request) {
   try {
@@ -19,9 +18,15 @@ export async function POST(request: Request) {
       depoisDeGravar: (contatoId) =>
         after(async () => {
           try {
-            await enviarBoasVindasAgora(contatoId, { cliente: criarClienteBrevo({ timeoutMs: TIMEOUT_BREVO_IMEDIATO_MS }) })
+            const cfg = configResend()
+            if (!cfg) return
+            await enviarBoasVindasAgora(contatoId, {
+              cliente: criarClienteResend(cfg),
+              agora: new Date(),
+              acessoPublico: await acessoPublicoOk(),
+            })
           } catch (e) {
-            console.error('webhook site: envio imediato às boas-vindas falhou:', e instanceof Error ? e.name : 'erro')
+            console.error('webhook site: envio imediato da boas-vindas falhou:', e instanceof Error ? e.name : 'erro')
           }
         }),
     })

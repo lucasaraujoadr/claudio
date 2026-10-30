@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { eq } from 'drizzle-orm'
 import { criarClienteBrevo } from '@/lib/brevo'
 import { executarCronDiario, type RegistroSincronizacao } from '@/lib/cron-diario'
-import { contatos, funilInscricoes, funis, importacoesContatos } from '@/lib/db/schema'
+import { contatos, enviosFunil, funilInscricoes, funis, importacoesContatos } from '@/lib/db/schema'
+import type { ClienteResend } from '@/lib/resend'
 import type { BancoCrm } from '../banco'
 import { executarEtapaFunis, FalhaEtapaFunis } from '../funis-cron'
 import { INTERROMPIDO_POR_TEMPO } from '../funis'
@@ -14,18 +14,31 @@ let fechar: () => Promise<void>
 beforeEach(async () => {
   ;({ db, fechar } = await criarBancoTesteFunis())
 })
+const ORIGINAL = { ...process.env }
 afterEach(async () => {
   await fechar()
   vi.restoreAllMocks()
+  process.env = { ...ORIGINAL }
 })
 
 const AGORA = new Date('2026-10-29T09:00:00Z')
+
+function resendFalso() {
+  const enviados: Parameters<ClienteResend['enviarEmail']>[0][] = []
+  const cliente = {
+    enviarEmail: async (e: Parameters<ClienteResend['enviarEmail']>[0]) => {
+      enviados.push(e)
+      return { id: `re_${enviados.length}` }
+    },
+  } as unknown as ClienteResend
+  return { cliente, enviados }
+}
 const ANTIGO = new Date(AGORA.getTime() - 300 * 86_400_000)
 
 describe('executarEtapaFunis', () => {
   it('sem chave: garante os funis, inscreve a reativação e guarda pendente', async () => {
     await db.insert(contatos).values({ nome: 'C', email: 'c@example.com', emailNormalizado: 'c@example.com', origem: 'planilha', baseLegal: 'contrato', status: 'cliente', criadoEm: ANTIGO })
-    const r = await executarEtapaFunis({ db, cliente: criarClienteBrevo({ apiKey: null }), agora: AGORA })
+    const r = await executarEtapaFunis({ db, cliente: criarClienteBrevo({ apiKey: null }), resend: null, agora: AGORA })
     expect(await db.select().from(funis)).toHaveLength(4)
     expect(r.detalhes).toMatchObject({ reativacao: 1, prospeccao: 0, brevo: 'não conectado' })
     expect(r.mensagem).toContain('Brevo não conectado')
@@ -33,15 +46,39 @@ describe('executarEtapaFunis', () => {
     expect(i).toMatchObject({ status: 'ativo', origem: 'cron' })
   })
 
+  it('com Resend: envia as etapas devidas, inclusive as inscrições de hoje; sem acesso público, nada sai', async () => {
+    process.env.DESCADASTRO_SEGREDO = 'segredo-de-teste-descartavel'
+    await db.insert(contatos).values({ nome: 'C', email: 'c@example.com', emailNormalizado: 'c@example.com', origem: 'planilha', baseLegal: 'contrato', status: 'cliente', criadoEm: ANTIGO })
+    const fora = resendFalso()
+    let checagens = 0
+    const semAcesso = await executarEtapaFunis({ db, cliente: criarClienteBrevo({ apiKey: null }), resend: fora.cliente, acessoPublico: async () => (checagens++, false), agora: AGORA })
+    expect(checagens).toBe(1)
+    expect(fora.enviados).toHaveLength(0)
+    expect(semAcesso.detalhes).toMatchObject({ acessoPublico: 'não', enviados: 0, envioRestantes: 1 })
+    expect(semAcesso.mensagem).toContain('sem acesso público')
+    const r = resendFalso()
+    const ok = await executarEtapaFunis({ db, cliente: criarClienteBrevo({ apiKey: null }), resend: r.cliente, acessoPublico: async () => true, agora: AGORA })
+    expect(r.enviados).toHaveLength(1)
+    expect(ok.detalhes).toMatchObject({ reativacao: 0, enviados: 1, envioErros: 0, envioRestantes: 0 })
+    expect(ok.mensagem).toContain('emails enviados: 1')
+    expect(await db.select().from(enviosFunil)).toHaveLength(1)
+  })
+
+  it('sem chave do Resend: nada é enviado e a mensagem diz', async () => {
+    const r = await executarEtapaFunis({ db, cliente: criarClienteBrevo({ apiKey: null }), resend: null, agora: AGORA })
+    expect(r.detalhes.resend).toBe('não configurado')
+    expect(r.mensagem).toContain('Resend não configurado')
+  })
+
   it('uma subetapa que falha não impede as outras; o erro só traz nomes de etapas', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {})
     await db.insert(contatos).values({ nome: 'C', email: 'segredo@example.com', emailNormalizado: 'segredo@example.com', origem: 'planilha', baseLegal: 'contrato', status: 'cliente', criadoEm: ANTIGO })
-    await executarEtapaFunis({ db, cliente: criarClienteBrevo({ apiKey: null }), agora: AGORA })
+    await executarEtapaFunis({ db, cliente: criarClienteBrevo({ apiKey: null }), resend: null, agora: AGORA })
     const b = brevoFalso()
     b.cliente.upsertContato = async () => {
       throw new Error('segredo@example.com explodiu')
     }
-    const e = await executarEtapaFunis({ db, cliente: b.cliente, agora: AGORA }).catch((x: unknown) => x)
+    const e = await executarEtapaFunis({ db, cliente: b.cliente, resend: null, agora: AGORA }).catch((x: unknown) => x)
     expect(e).toBeInstanceOf(FalhaEtapaFunis)
     const f = e as FalhaEtapaFunis
     expect(f.falhas).toEqual(['contatos'])
@@ -103,7 +140,7 @@ describe('dados mínimos: lotes de planilha vencidos', () => {
       { id: 'velho', nomeArquivo: 'a.csv', conteudo: 'email\nfulano@example.com', totalLinhas: 1, criadoEm: new Date(AGORA.getTime() - 25 * 3_600_000) },
       { id: 'novo', nomeArquivo: 'b.csv', conteudo: 'email\nciclano@example.com', totalLinhas: 1, criadoEm: new Date(AGORA.getTime() - 3_600_000) },
     ])
-    const r = await executarEtapaFunis({ db, cliente: criarClienteBrevo({ apiKey: null }), agora: AGORA })
+    const r = await executarEtapaFunis({ db, cliente: criarClienteBrevo({ apiKey: null }), resend: null, agora: AGORA })
     expect((await db.select().from(importacoesContatos)).map((l) => l.id)).toEqual(['novo'])
     expect(r.detalhes.lotesApagados).toBe(1)
   })
@@ -122,14 +159,13 @@ describe('prazo interno da etapa de funis', () => {
       agoraMs += 20_000
       return upsert(c)
     }
-    const e = await executarEtapaFunis({ db, cliente: b.cliente, agora: AGORA, relogio: () => agoraMs, prazoMs: 90_000 }).catch((x: unknown) => x)
+    const e = await executarEtapaFunis({ db, cliente: b.cliente, resend: resendFalso().cliente, acessoPublico: async () => true, agora: AGORA, relogio: () => agoraMs, prazoMs: 90_000 }).catch((x: unknown) => x)
     expect(e).toBeInstanceOf(FalhaEtapaFunis)
     const f = e as FalhaEtapaFunis
     expect(f.mensagemSegura).toMatch(/^Interrompido por tempo/)
-    expect(f.mensagemSegura).toContain('listas')
-    // Parou dentro do envio de contatos: nem todos foram, e a etapa das listas não rodou.
+    expect(f.mensagemSegura).toContain('envios')
+    // Parou dentro do envio de contatos: nem todos foram, e a etapa dos envios não rodou.
     expect(b.chamadas.filter((c) => c.op === 'upsert').length).toBeLessThan(12)
-    expect(b.chamadas.filter((c) => c.op === 'adicionarALista')).toHaveLength(0)
 
     const regs: RegistroSincronizacao[] = []
     await executarCronDiario({
@@ -145,7 +181,7 @@ describe('prazo interno da etapa de funis', () => {
   })
 
   it('dentro do prazo: nada é interrompido', async () => {
-    const r = await executarEtapaFunis({ db, cliente: brevoFalso().cliente, agora: AGORA, relogio: () => 0 })
+    const r = await executarEtapaFunis({ db, cliente: brevoFalso().cliente, resend: null, agora: AGORA, relogio: () => 0 })
     expect(r.mensagem).not.toContain(INTERROMPIDO_POR_TEMPO)
   })
 })

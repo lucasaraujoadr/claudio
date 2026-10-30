@@ -3,11 +3,11 @@ import { inscrever, sairDeTodosOsFunis as sairDeTodos } from './funis'
 
 /**
  * Pontos de extensão chamados pelos webhooks (E8), preenchidos pela E9. Os dois só gravam
- * no banco (sem chamada ao Brevo): o descadastro roda dentro da transação do webhook, e a
- * lista do Brevo é atualizada por `sincronizarInscricoes` (rotina diária ou botão na tela).
+ * no banco (sem chamada externa): o descadastro roda dentro da transação do webhook, e os
+ * emails saem pelo motor de envios (`envios-funil.ts`), que relê o contato antes de cada envio.
  *
- * Regra mantida: contato `descadastrado` nunca é inscrito nem adicionado a lista do Brevo,
- * por nenhum caminho (ver `podeEntrar` e `adicionarContatosALista`).
+ * Regra mantida: contato `descadastrado` nunca é inscrito nem recebe email, por nenhum
+ * caminho (ver `podeEntrar` e `enviarEtapa`).
  */
 
 /**

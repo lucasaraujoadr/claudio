@@ -4,13 +4,12 @@ import {
   BLOCO_LGPD_PROSPECCAO,
   comporCampanhaBlog,
   DEFINICOES_FUNIS,
-  duracaoSequenciaDias,
   EMAILS_FUNIS,
+  etapasDaSequencia,
   linkComUtm,
   linkWhatsapp,
   LINHA_DESCADASTRO,
   marcadoresPendentes,
-  passosAutomacao,
 } from '../funis-conteudo'
 import { reentradaPermitida, SLUGS_FUNIS } from '../funis-regras'
 
@@ -35,7 +34,8 @@ describe('textos dos funis', () => {
       })
       it('todo email tem descadastro e chamada para documentos ou WhatsApp', () => {
         for (const e of emails) {
-          expect(e.corpo).toContain('{{ unsubscribe }}')
+          expect(e.corpo).toContain('{{descadastro}}')
+          expect(e.corpo).not.toContain('{{ unsubscribe }}')
           expect(e.corpo).toContain(slug === 'prospeccao-fria' ? BLOCO_LGPD_PROSPECCAO : LINHA_DESCADASTRO)
           expect(e.corpo).toMatch(/\[link do WhatsApp\]|documentos/)
         }
@@ -64,10 +64,11 @@ describe('textos dos funis', () => {
     expect(EMAILS_FUNIS['nutricao-blog'][0].corpo).not.toContain('só quando há artigo novo')
   })
 
-  it('duração da sequência: soma das esperas + 3; nutrição não conclui', () => {
-    expect(duracaoSequenciaDias('boas-vindas')).toBe(0 + 3 + 7 + 3)
-    expect(duracaoSequenciaDias('reativacao')).toBe(0 + 7 + 14 + 3)
-    expect(duracaoSequenciaDias('nutricao-blog')).toBeNull()
+  it('sequência enviada pelo painel: os três emails, menos na nutrição (newsletter)', () => {
+    expect(etapasDaSequencia('boas-vindas')).toBe(EMAILS_FUNIS['boas-vindas'])
+    expect(etapasDaSequencia('reativacao')).toHaveLength(3)
+    expect(etapasDaSequencia('prospeccao-fria')).toHaveLength(3)
+    expect(etapasDaSequencia('nutricao-blog')).toEqual([])
   })
 
   it('marcadores: WHATSAPP_LINK substitui; pendentes listados sem repetir', () => {
@@ -80,20 +81,6 @@ describe('textos dos funis', () => {
     expect(linkWhatsapp({ WHATSAPP_LINK: 'javascript:alert(1)' })).toBeNull()
     expect(linkWhatsapp({ WHATSAPP_LINK: ' https://wa.me/55 ' })).toBe('https://wa.me/55')
     expect(linkWhatsapp({})).toBeNull()
-  })
-
-  it('passo a passo da reativação não promete reentrada que o código não faz', () => {
-    const p = passosAutomacao('reativacao', 'L').join('\n')
-    expect(p).toContain('concluiu a sequência há mais de 180 dias')
-    expect(p).toContain('nunca quem foi removido à mão')
-    expect(passosAutomacao('boas-vindas', 'L').join('\n')).toContain('envie um email de teste')
-  })
-
-  it('passo a passo cita a lista e os atrasos', () => {
-    const p = passosAutomacao('boas-vindas', 'Painel OG — Boas-vindas')
-    expect(p.join('\n')).toContain('Contato adicionado a uma lista" → escolha a lista "Painel OG — Boas-vindas"')
-    expect(p.filter((x) => x.startsWith('Adicione um atraso'))).toHaveLength(2)
-    expect(p.filter((x) => x.startsWith('Enviar email'))).toHaveLength(3)
   })
 })
 
@@ -135,14 +122,11 @@ describe('comporCampanhaBlog', () => {
   })
 })
 
-describe('automação do Brevo × reentrada pela tela', () => {
-  it('todo funil aceita reentrada manual, e as instruções mandam permitir reentrada no Brevo (senão o email não sai)', () => {
+describe('reentrada pela tela', () => {
+  it('todo funil aceita reentrada manual', () => {
     for (const slug of SLUGS_FUNIS) {
       expect(reentradaPermitida(slug, 'manual', 'saiu')).toBe(true)
       expect(reentradaPermitida(slug, 'manual', 'concluido')).toBe(true)
-      const texto = passosAutomacao(slug, 'Lista').join('\n')
-      expect(texto).not.toMatch(/não permita/i)
-      expect(texto).toMatch(/permita que o contato entre de novo/i)
     }
   })
 })

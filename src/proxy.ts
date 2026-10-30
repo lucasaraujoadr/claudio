@@ -15,6 +15,8 @@ function estaLiberada(pathname: string): boolean {
     pathname === '/descadastro' ||
     pathname.startsWith('/api/publico/') ||
     pathname.startsWith('/_next/') ||
+    // Logo dos emails de funil (arquivo estático de public/): o cliente de email não tem cookie.
+    pathname === '/logo-og.png' ||
     pathname === '/favicon.ico'
   )
 }

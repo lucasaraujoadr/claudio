@@ -2,16 +2,17 @@ import type { BaseLegal } from './campos'
 import type { SlugFunil } from './funis-regras'
 
 /**
- * Conteúdo fixo dos funis: definição dos quatro funis, os textos prontos dos emails (pt-BR,
- * tom de perito contábil falando com advogado) e o passo a passo da automação no Brevo.
+ * Conteúdo fixo dos funis: definição dos quatro funis e os textos prontos dos emails (pt-BR,
+ * tom de perito contábil falando com advogado), enviados pelo painel via Resend
+ * (`envios-funil.ts`, montados em HTML por `email-html.ts`).
  *
  * Regras dos textos: nada de promessa de resultado do processo; nenhum número, lei ou
  * decisão inventados; uma chamada clara (mandar os documentos do processo ou marcar uma
  * conversa pelo WhatsApp); linha de descadastro em todo email.
  *
- * Marcadores que o usuário resolve antes de ativar: `[link do WhatsApp]` (trocado na hora de
- * mostrar quando `WHATSAPP_LINK` existe) e `[fonte do contato]` (prospecção fria). O
- * `{{ unsubscribe }}` é o marcador de descadastro do editor do Brevo.
+ * Marcadores: `[link do WhatsApp]` (trocado pelo `WHATSAPP_LINK`; sem ele, a frase sai do
+ * email), `[fonte do contato]` (prospecção fria; o usuário resolve antes de ativar: email com
+ * marcador pendente não sai) e `{{descadastro}}`, trocado pelo link próprio de descadastro.
  */
 
 export type DefinicaoFunil = {
@@ -67,18 +68,22 @@ export function definicaoFunil(slug: SlugFunil): DefinicaoFunil {
 }
 
 export type EmailFunil = {
-  /** Dias depois do email anterior (o primeiro: depois da entrada na lista). */
+  /** Dias depois do envio do email anterior (o primeiro: depois da entrada no funil). */
   esperarDias: number
   assunto: string
   preCabecalho: string
   corpo: string
 }
 
-export const LINHA_DESCADASTRO =
-  'Se não quiser mais receber estes emails, descadastre-se por este link: {{ unsubscribe }}'
+/** Trocado pelo link de descadastro do contato na hora do envio. */
+export const MARCADOR_DESCADASTRO = '{{descadastro}}'
 
-const ASSINATURA = `Atenciosamente,
-Oliveira Guimarães — cálculos e perícias`
+export const LINHA_DESCADASTRO = `Se não quiser mais receber estes emails, descadastre-se por este link: ${MARCADOR_DESCADASTRO}`
+
+export const NOME_EMPRESA = 'Oliveira Guimarães — cálculos e perícias'
+
+export const ASSINATURA = `Atenciosamente,
+${NOME_EMPRESA}`
 
 /**
  * Bloco fixo de LGPD no fim de todo email de prospecção fria: a base legal, a oferta de
@@ -87,7 +92,7 @@ Oliveira Guimarães — cálculos e perícias`
 export const BLOCO_LGPD_PROSPECCAO = [
   'Por que você recebeu este email: usamos o seu contato profissional, obtido em [fonte do contato], com base no legítimo interesse previsto na LGPD, para apresentar serviços ligados à advocacia.',
   'Se preferir, responda a este email e explicamos de onde veio o dado, apagamos o seu cadastro ou paramos de enviar.',
-  'Para não receber mais nenhum email: {{ unsubscribe }}',
+  `Para não receber mais nenhum email: ${MARCADOR_DESCADASTRO}`,
 ].join('\n')
 
 function email(esperarDias: number, assunto: string, preCabecalho: string, paragrafos: string[], rodape = LINHA_DESCADASTRO): EmailFunil {
@@ -180,16 +185,12 @@ export const EMAILS_FUNIS: Record<SlugFunil, readonly EmailFunil[]> = {
   ],
 }
 
-/** Folga, em dias, depois do último email antes de marcar a sequência como concluída. */
-export const FOLGA_CONCLUSAO_DIAS = 3
-
 /**
- * Dias até a inscrição ser marcada `concluido` (soma das esperas + folga). `null` = não
- * conclui (a nutrição com o blog continua recebendo as campanhas dos artigos novos).
+ * Emails que o painel envia em sequência. A nutrição com o blog não tem sequência: a
+ * inscrição só define quem entra no segmento da newsletter.
  */
-export function duracaoSequenciaDias(slug: SlugFunil): number | null {
-  if (slug === 'nutricao-blog') return null
-  return EMAILS_FUNIS[slug].reduce((s, e) => s + e.esperarDias, 0) + FOLGA_CONCLUSAO_DIAS
+export function etapasDaSequencia(slug: SlugFunil): readonly EmailFunil[] {
+  return slug === 'nutricao-blog' ? [] : EMAILS_FUNIS[slug]
 }
 
 export const MARCADOR_WHATSAPP = '[link do WhatsApp]'
@@ -220,36 +221,6 @@ export function linkWhatsapp(env: Record<string, string | undefined> = process.e
   }
 }
 
-/** Nome da lista no Brevo para um funil (criada por "Conectar ao Brevo"). */
-export function nomeListaBrevo(nomeFunil: string): string {
-  return `Painel OG — ${nomeFunil}`
-}
-
-/** Pasta do Brevo onde o painel cria as listas (a API exige uma pasta). */
-export const PASTA_BREVO = 'Painel OG — Funis'
-
-/** Passo a passo para criar a automação no Brevo (automações não são criáveis por API). */
-export function passosAutomacao(slug: SlugFunil, nomeLista: string): string[] {
-  const emails = EMAILS_FUNIS[slug]
-  const passos = [
-    'No Brevo, abra Automações → Criar automação → Fluxo personalizado.',
-    `Ponto de entrada: "Contato adicionado a uma lista" → escolha a lista "${nomeLista}".`,
-  ]
-  emails.forEach((e, i) => {
-    if (i > 0) passos.push(`Adicione um atraso: "Aguardar ${e.esperarDias} dia${e.esperarDias === 1 ? '' : 's'}".`)
-    passos.push(`Enviar email ${i + 1}: assunto "${e.assunto}", pré-cabeçalho e corpo copiados do email ${i + 1} abaixo.`)
-  })
-  passos.push(
-    'Em cada email, confira que não sobrou marcador entre colchetes (como [link do WhatsApp]) e que o link de descadastro {{ unsubscribe }} funciona no editor do Brevo; envie um email de teste para você antes de ativar.',
-    slug === 'reativacao'
-      ? 'Nas configurações da automação, permita que o contato entre de novo: o CRM só reinscreve sozinho um cliente que concluiu a sequência há mais de 180 dias e continua sem interação (nunca quem foi removido à mão), e você pode reinscrever alguém pela tela.'
-      : 'Nas configurações da automação, permita que o contato entre de novo: quem decide a reentrada é o CRM (só acontece quando você reinscreve alguém pela tela). Sem essa opção, o Brevo não envia nada a quem já passou pela automação.',
-    'Para que quem sai do funil não receba os emails seguintes, ponha antes de cada envio a condição "o contato está na lista" (o CRM remove da lista quem sai e, alguns dias depois do último email, quem concluiu a sequência).',
-    'Ative a automação.',
-  )
-  return passos
-}
-
 // ---------------------------------------------------------------------------
 // Rascunho de campanha da nutrição com o blog
 // ---------------------------------------------------------------------------
@@ -271,7 +242,7 @@ export type CampanhaComposta = {
   html: string
 }
 
-function escaparHtml(s: string): string {
+export function escaparHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 }
 
@@ -302,7 +273,8 @@ export function comporCampanhaBlog(t: DadosTemaCampanha): CampanhaComposta {
     `Leia o artigo completo: ${link}`,
     'Se tiver um caso em que este tema aparece, responda a este email com os documentos do processo.',
     ASSINATURA,
-    LINHA_DESCADASTRO,
+    // A campanha ainda é do Brevo (sai no Task 7): usa o marcador do editor do Brevo.
+    LINHA_DESCADASTRO.replace(MARCADOR_DESCADASTRO, '{{ unsubscribe }}'),
   ].join('\n\n')
   const p = (s: string) => `<p style="margin:0 0 16px">${s}</p>`
   const html = [
@@ -313,7 +285,7 @@ export function comporCampanhaBlog(t: DadosTemaCampanha): CampanhaComposta {
     p(escaparHtml(resumo)),
     p(`<a href="${escaparHtml(link)}">Leia o artigo completo</a>`),
     p('Se tiver um caso em que este tema aparece, responda a este email com os documentos do processo.'),
-    p('Atenciosamente,<br>Oliveira Guimarães — cálculos e perícias'),
+    p(`Atenciosamente,<br>${NOME_EMPRESA}`),
     `<p style="margin:24px 0 0;font-size:12px;color:#616e7c">Se não quiser mais receber estes emails, <a href="{{ unsubscribe }}">descadastre-se aqui</a>.</p>`,
     '</div>',
   ].join('\n')
