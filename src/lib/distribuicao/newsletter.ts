@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm'
 import { acessoPublicoOk } from '@/lib/acesso-publico'
 import { bancoPadrao, type BancoCrm } from '@/lib/crm/banco'
 import { DOURADO, montarLayoutMarca, TINTA } from '@/lib/crm/email-html'
@@ -23,6 +23,7 @@ export const MARCADOR_DESCADASTRO_RESEND = '{{{RESEND_UNSUBSCRIBE_URL}}}'
 export const MENSAGEM_DESCADASTROS_PENDENTES =
   'há descadastros ainda não sincronizados com o Resend; tente de novo em alguns minutos'
 const MOTIVO = 'Você recebeu este email porque autorizou o envio dos nossos conteúdos ou é nosso cliente.'
+const MINUTOS_LINHA_PRESA = 2
 const ERRO_GENERICO = 'falha ao falar com o Resend'
 
 export type ResultadoNewsletter<T = object> = ({ ok: true } & T) | { ok: false; mensagem: string }
@@ -180,24 +181,44 @@ export async function criarRascunhoNewsletter(
       .values({ artigoId: linha.peca.artigoId, situacao: 'rascunho', destinatarios, criadoEm: agora, atualizadoEm: agora })
       .onConflictDoNothing()
       .returning()
-    if (criada) {
+    // Cria o broadcast para uma linha que ainda não tem id; se falhar, a linha some (não fica órfã).
+    const criarParaLinha = async (linhaId: number): Promise<ResultadoNewsletter<{ envio: NewsletterEnvio }>> => {
       try {
         const { id } = await cliente.criarBroadcast({ segmentoId: segmento.id, ...dados })
         const [nova] = await db
           .update(newslettersEnvios)
           .set({ resendBroadcastId: id, atualizadoEm: agora })
-          .where(eq(newslettersEnvios.id, criada.id))
+          .where(eq(newslettersEnvios.id, linhaId))
           .returning()
         return { ok: true, envio: nova }
       } catch (e) {
-        await db.delete(newslettersEnvios).where(eq(newslettersEnvios.id, criada.id))
+        await db.delete(newslettersEnvios).where(eq(newslettersEnvios.id, linhaId)).catch(() => {})
         throw e
       }
     }
+    if (criada) return await criarParaLinha(criada.id)
 
     const existente = await rascunhoDaPeca(pecaId, db)
-    if (!existente) return { ok: false, mensagem: 'a newsletter deste artigo já foi enviada ou está sendo enviada' }
-    if (!existente.resendBroadcastId) return { ok: false, mensagem: 'o rascunho está sendo criado; tente de novo em instantes' }
+    const EM_CRIACAO = { ok: false, mensagem: 'o rascunho está sendo criado; tente de novo em instantes' } as const
+    if (!existente) return EM_CRIACAO
+    if (!existente.resendBroadcastId) {
+      // Linha sem broadcast há mais de 2 min: quem a criou morreu. Assume por atualização condicional.
+      const limite = new Date(agora.getTime() - MINUTOS_LINHA_PRESA * 60_000)
+      const [assumida] = await db
+        .update(newslettersEnvios)
+        .set({ atualizadoEm: agora })
+        .where(
+          and(
+            eq(newslettersEnvios.id, existente.id),
+            eq(newslettersEnvios.situacao, 'rascunho'),
+            isNull(newslettersEnvios.resendBroadcastId),
+            lt(newslettersEnvios.atualizadoEm, limite),
+          ),
+        )
+        .returning({ id: newslettersEnvios.id })
+      if (!assumida) return EM_CRIACAO
+      return await criarParaLinha(assumida.id)
+    }
     let broadcastId: string | null = existente.resendBroadcastId
     try {
       await cliente.atualizarBroadcast(broadcastId, dados)
