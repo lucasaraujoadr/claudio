@@ -4,6 +4,7 @@ import { artigoSchemaModelo } from '../formato'
 import { pesquisaSchemaModelo, reescritaSchemaModelo } from '../prompts'
 import { briefingSchemaModelo } from '@/lib/ai/schemas'
 import { tesesSchemaModelo } from '@/lib/radar/teses'
+import { SCHEMAS_MODELO } from '@/lib/distribuicao/schemas'
 
 // Saída estruturada estrita (OpenAI): todo objeto precisa listar TODAS as suas propriedades em `required`.
 function violacoes(no: unknown, caminho = '#'): string[] {
@@ -31,6 +32,14 @@ describe('schemas enviados ao modelo são compatíveis com saída estrita', () =
   it('reescritaSchemaModelo', () => verificar(reescritaSchemaModelo))
   it('briefingSchemaModelo (guarda)', () => verificar(briefingSchemaModelo))
   it('tesesSchemaModelo (guarda)', () => verificar(tesesSchemaModelo))
+  for (const [tipo, schema] of Object.entries(SCHEMAS_MODELO)) {
+    it(`peça ${tipo} (distribuição)`, () => verificar(schema))
+  }
+  it('schemas das peças não usam min/max nem opcionais', () => {
+    for (const s of Object.values(SCHEMAS_MODELO)) {
+      expect(JSON.stringify(z.toJSONSchema(s as z.ZodType))).not.toMatch(/minLength|maxLength|minItems|maxItems|minimum|maximum/)
+    }
+  })
   it('o helper detecta campo opcional', () => {
     expect(violacoes(z.toJSONSchema(z.object({ a: z.string().optional() })))).not.toEqual([])
   })

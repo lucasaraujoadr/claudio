@@ -297,3 +297,24 @@ export function textoPuro(bruto: string): string {
     .replace(/\s+/g, ' ')
     .trim()
 }
+
+/** HTML do artigo em texto, para prompts: sanitiza, tira as marcas "verificar" e mantém quebras entre blocos. */
+export function htmlParaTexto(html: string): string {
+  const $ = cheerio.load(removerVerificar(sanitizarHtml(html ?? '')), null, false)
+  $('br').replaceWith('\n')
+  $('h2, h3').each((_, el) => {
+    $(el).replaceWith(`\n\n## ${$(el).text().replace(/\s+/g, ' ').trim()}\n\n`)
+  })
+  $('li').each((_, el) => {
+    $(el).replaceWith(`\n- ${$(el).text().replace(/\s+/g, ' ').trim()}`)
+  })
+  $('p, blockquote, ul, ol').each((_, el) => {
+    $(el).append('\n\n')
+  })
+  return $.root()
+    .text()
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ ?\n ?/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}

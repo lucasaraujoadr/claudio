@@ -100,7 +100,7 @@ function semPendentes(texto: string): string {
   }
 }
 
-function cortarNaPalavra(texto: string, max: number): string {
+export function cortarNaPalavra(texto: string, max: number): string {
   const t = texto.trim()
   if (t.length <= max) return t
   const cabeca = t.slice(0, max + 1)
