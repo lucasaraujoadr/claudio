@@ -12,7 +12,7 @@ import { inscrever, sairDeTodosOsFunis as sairDeTodos } from './funis'
 
 /**
  * Chamado quando um contato vira `descadastrado` (descadastro, hard bounce ou spam no
- * Brevo, ou mudança manual de status), dentro da mesma transação. Marca como `saiu` toda
+ * Resend, ou mudança manual de status), dentro da mesma transação. Marca como `saiu` toda
  * inscrição ativa e registra `saiu_funil`. Devolve quantas inscrições encerrou.
  */
 export async function sairDeTodosOsFunis(contatoId: number, opts: { db: BancoCrm; motivo: string }): Promise<number> {

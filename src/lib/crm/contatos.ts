@@ -12,11 +12,11 @@ import {
   type StatusContato,
 } from './campos'
 import { normalizarEmail } from './email'
-import { LIMITE_NOTAS, LIMITE_TAGS, brevoMudou, criarEstado, diferencas, estadoDe, mesclarEstado, type EstadoContato } from './mesclar'
+import { LIMITE_NOTAS, LIMITE_TAGS, resendMudou, criarEstado, diferencas, estadoDe, mesclarEstado, type EstadoContato } from './mesclar'
 
 /**
  * Núcleo do CRM. Contrato usado pela importação (E7), pelos webhooks e pela
- * sincronização do Brevo (E8) e pelos funis (E9).
+ * sincronização com o Resend (E8) e pelos funis (E9).
  *
  * Nenhuma função daqui registra dado de contato em log, e nada daqui vai para prompt de IA.
  */
@@ -164,7 +164,7 @@ async function processarBloco(
       }
       if (m.status) eventos.push({ contatoId: linha.id, tipo: 'mudou_status', dados: { ...m.status, origem } })
       eventoImportado(linha.id, 'atualizado')
-      pendente ||= m.brevoMudou
+      pendente ||= m.resendMudou
       estado = m.estado
     }
     if (estado !== inicio) atualizacoes.push({ linha, estado, pendente })
@@ -236,7 +236,7 @@ async function processarBloco(
   if (eventos.length > 0) await db.insert(eventosContato).values(eventos)
 }
 
-/** Acrescenta um evento à linha do tempo (webhooks do Brevo, funis). */
+/** Acrescenta um evento à linha do tempo (webhooks do Resend, funis). */
 export async function registrarEvento(
   contatoId: number,
   tipo: TipoEvento,
@@ -368,7 +368,7 @@ export async function editarContato(
         tags: novo.tags,
         notas: novo.notas,
         atualizadoEm: agora,
-        ...(brevoMudou(alterados) ? { syncStatus: 'pendente' as const } : {}),
+        ...(resendMudou(alterados) ? { syncStatus: 'pendente' as const } : {}),
       })
       .where(eq(contatos.id, id))
     const campos = alterados.filter((k) => k !== 'consentimentoEm')

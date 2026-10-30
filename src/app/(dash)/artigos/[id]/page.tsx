@@ -5,7 +5,6 @@ import { Aviso, BotaoEnviar, CabecalhoPagina, Cartao, Selo } from '@/components/
 import { iaConfigurada } from '@/lib/ai/cliente'
 import { obterArtigo } from '@/lib/artigos/repositorio'
 import { idDaRota, keywordDoTema, montarVisao } from '@/lib/artigos/visao'
-import { brevoConfigurado } from '@/lib/brevo'
 import { configWp, criarClienteWp } from '@/lib/wordpress'
 import { SELO_SITUACAO } from '../situacao'
 import { EditorArtigo } from './editor-artigo'
@@ -119,7 +118,6 @@ export default async function ArtigoPage({ params }: { params: Promise<{ id: str
         inicial={paraTela(montarVisao(artigo, keyword))}
         wpConfigurado={cfg !== null}
         iaConfigurada={iaConfigurada()}
-        brevoConfigurado={brevoConfigurado()}
         categorias={categorias}
         avisoCategorias={avisoCategorias}
       />

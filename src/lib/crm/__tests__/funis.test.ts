@@ -115,10 +115,10 @@ describe('inscrição e saída', () => {
     const c = await criar({ status: 'cliente', baseLegal: 'contrato' })
     await inscrever('nutricao-blog', [c.id], { db, caminho: 'manual' })
     await inscrever('reativacao', [c.id], { db, caminho: 'manual' })
-    const n = await sairDeTodosOsFunis(c.id, { db, motivo: 'descadastro no Brevo' })
+    const n = await sairDeTodosOsFunis(c.id, { db, motivo: 'descadastro no Resend' })
     expect(n).toBe(2)
     const linhas = await db.select().from(funilInscricoes).where(eq(funilInscricoes.contatoId, c.id))
-    expect(linhas.every((l) => l.status === 'saiu' && l.motivoSaida === 'descadastro no Brevo')).toBe(true)
+    expect(linhas.every((l) => l.status === 'saiu' && l.motivoSaida === 'descadastro no Resend')).toBe(true)
     expect((await eventosDe(c.id)).filter((e) => e.tipo === 'saiu_funil')).toHaveLength(2)
     // Repetir não grava nada novo.
     expect(await sairDeTodosOsFunis(c.id, { db, motivo: 'de novo' })).toBe(0)

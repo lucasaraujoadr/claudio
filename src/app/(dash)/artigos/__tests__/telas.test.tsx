@@ -47,7 +47,7 @@ function artigo(extra: Partial<ArtigoTela> = {}): ArtigoTela {
 
 function montar(a: ArtigoTela = artigo()) {
   return render(
-    <EditorArtigo inicial={a} wpConfigurado iaConfigurada brevoConfigurado={false} categorias={[{ id: 12, nome: 'Perícia' }]} />,
+    <EditorArtigo inicial={a} wpConfigurado iaConfigurada categorias={[{ id: 12, nome: 'Perícia' }]} />,
   )
 }
 
@@ -110,8 +110,16 @@ describe('editor', () => {
     expect((screen.getByRole('button', { name: 'Publicar agora' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
+  it('editor do artigo não tem botão do Brevo', () => {
+    // Mesmo com o antigo sinal de "Brevo configurado", artigo publicado não ganha campanha do Brevo.
+    const extra = { brevoConfigurado: true } as object
+    render(<EditorArtigo inicial={artigo({ situacao: 'publicado', wpStatus: 'publish', wpLink: 'https://site/x/' })} wpConfigurado iaConfigurada categorias={[]} {...extra} />)
+    expect(screen.queryByText(/Brevo/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: /campanha/i })).toBeNull()
+  })
+
   it('sem WordPress configurado, envio desabilitado com aviso', () => {
-    render(<EditorArtigo inicial={artigo()} wpConfigurado={false} iaConfigurada brevoConfigurado={false} categorias={[]} />)
+    render(<EditorArtigo inicial={artigo()} wpConfigurado={false} iaConfigurada categorias={[]} />)
     expect(screen.getByText(/WordPress não configurado/)).toBeTruthy()
     expect((screen.getByRole('button', { name: 'Publicar agora' }) as HTMLButtonElement).disabled).toBe(true)
     expect((screen.getByRole('button', { name: 'Enviar como rascunho' }) as HTMLButtonElement).disabled).toBe(true)

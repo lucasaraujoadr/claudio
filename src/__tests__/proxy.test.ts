@@ -42,7 +42,7 @@ describe('proxy: lista de rotas liberadas', () => {
     },
   )
 
-  it.each(['/login/', '/loginx', '/api/loginfoo', '/api/cronfoo', '/api/webhooksfoo', '/api/webhooks-site', '/api/logout', '/api/crm/brevo/sincronizar', '/favicon.icoX', '/_nextx/a', '/_next', '/api/crm', '/api/crm/contatos', '/descadastrox', '/descadastro/x', '/api/publico', '/api/publicox', '/logo-og.pngx', '/logo-og.png/x', '/logo-og-claro.png', '/x/logo-og.png', '/logo.png'])(
+  it.each(['/login/', '/loginx', '/api/loginfoo', '/api/cronfoo', '/api/webhooksfoo', '/api/webhooks-site', '/api/logout', '/api/crm/resend/sincronizar', '/favicon.icoX', '/_nextx/a', '/_next', '/api/crm', '/api/crm/contatos', '/descadastrox', '/descadastro/x', '/api/publico', '/api/publicox', '/logo-og.pngx', '/logo-og.png/x', '/logo-og-claro.png', '/x/logo-og.png', '/logo.png'])(
     'não libera %s sem cookie',
     (path) => {
       expect(redirecionaParaLogin(path)).toBe(true)

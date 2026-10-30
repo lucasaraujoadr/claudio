@@ -3,7 +3,10 @@ import { notFound } from 'next/navigation'
 import { connection } from 'next/server'
 import { Aviso, BotaoEnviar, CabecalhoPagina, Cartao, EstadoVazio, Selo, Tabela, classesBotao, type TipoAviso } from '@/components/ui'
 import { CLASSES_ROTULO, classesCampo } from '@/components/ui/campo'
+import { urlPublicaPainel } from '@/lib/acesso-publico'
 import { bancoPadrao } from '@/lib/crm/banco'
+import { montarEmail } from '@/lib/crm/email-html'
+import { resumoEnviosFunil, type ResumoEnviosFunil } from '@/lib/crm/envios-painel'
 import {
   aplicarMarcadores,
   definicaoFunil,
@@ -18,7 +21,6 @@ import { DEFINICAO_SEM_INTERACAO, ehSlugFunil, ROTULO_RECUSA, TETO_MAXIMO_PROSPE
 import type { Funil, FunilInscricao } from '@/lib/db/schema'
 import { formatarQuando, SeloStatus } from '../../contatos/_compartilhado'
 import { ROTULO_CAMINHO, ROTULO_INSCRICAO, SeloFunil } from '../_compartilhado'
-import { TextoCopiavel } from '../copiar'
 
 export const metadata = { title: 'Funil' }
 
@@ -62,11 +64,48 @@ async function carregar(slug: SlugFunil, status: FunilInscricao['status'] | unde
     const db = bancoPadrao()
     const funil = await obterFunil(slug, { db })
     const membros = await membrosDoFunil(funil.id, { db, status, pagina })
-    return { funil, membros }
+    const envios = await resumoEnviosFunil(slug, { db }).catch((e): ResumoEnviosFunil | null => {
+      console.error('crm: envios do funil falharam:', e instanceof Error ? e.name : 'erro')
+      return null
+    })
+    return { funil, membros, envios }
   } catch (e) {
     console.error('crm: leitura do funil falhou:', e instanceof Error ? e.name : 'erro')
     return null
   }
+}
+
+function Numero({ rotulo, valor }: { rotulo: string; valor: number }) {
+  return (
+    <div>
+      <dt className="text-xs font-medium text-tinta-suave">{rotulo}</dt>
+      <dd className="font-titulo text-xl font-semibold tabular-nums text-tinta">{valor.toLocaleString('pt-BR')}</dd>
+    </div>
+  )
+}
+
+function Envios({ r }: { r: ResumoEnviosFunil }) {
+  return (
+    <div className="space-y-4">
+      <dl className="grid grid-cols-3 gap-3">
+        <Numero rotulo="Enviados (30 dias)" valor={r.enviados} />
+        <Numero rotulo="Erros (30 dias)" valor={r.erros} />
+        <Numero rotulo="Fila de hoje" valor={r.fila} />
+      </dl>
+      {r.incertos.length > 0 && (
+        <Aviso tipo="alerta" titulo="Envios a conferir no Resend: o resultado não voltou; não são repetidos automaticamente" role={null}>
+          <ul className="mt-1 space-y-1">
+            {r.incertos.map((e) => (
+              <li key={`${e.contatoId}-${e.etapa}-${e.quando.getTime()}`} className="text-sm">
+                <Link href={`/crm/contatos/${e.contatoId}`} className="font-medium underline-offset-2 hover:underline">{e.nome || e.email}</Link>
+                {e.nome ? ` (${e.email})` : ''} · email {e.etapa + 1} · {formatarQuando(e.quando)}
+              </li>
+            ))}
+          </ul>
+        </Aviso>
+      )}
+    </div>
+  )
 }
 
 function Situacao({ f }: { f: Funil }) {
@@ -216,6 +255,8 @@ export default async function FunilPage({
   const dados = await carregar(slug, status, pagina)
   const whatsapp = linkWhatsapp()
   const emails = EMAILS_FUNIS[slug].map((e) => ({ ...e, corpo: aplicarMarcadores(e.corpo, { whatsapp }) }))
+  const urlExemplo = `${urlPublicaPainel()}/descadastro?token=exemplo-de-previa`
+  const previas = EMAILS_FUNIS[slug].map((e) => ({ ...e, ...montarEmail(e, { nome: 'Maria Souza', urlDescadastro: urlExemplo, whatsapp }) }))
   const temSequencia = etapasDaSequencia(slug).length > 0
   const pendentes = !temSequencia ? [] : marcadoresPendentes(emails.flatMap((e) => [e.assunto, e.preCabecalho, e.corpo]))
 
@@ -267,6 +308,12 @@ export default async function FunilPage({
         </Aviso>
       )}
 
+      {dados?.envios && (
+        <Cartao titulo="Envios" descricao="Últimos 30 dias e o que a rotina de hoje deve enviar (dentro do limite diário do plano).">
+          <Envios r={dados.envios} />
+        </Cartao>
+      )}
+
       <Cartao
         titulo="Envio pelo painel"
         descricao={
@@ -279,16 +326,23 @@ export default async function FunilPage({
       </Cartao>
 
       {temSequencia && (
-        <Cartao titulo="Emails prontos" descricao="Três emails, no tom de perito falando com advogado. Marcadores entre colchetes aparecem destacados.">
+        <Cartao titulo="Etapas" descricao="Prévia de cada email como o contato recebe (com um nome de exemplo e o link de descadastro de teste). Marcadores entre colchetes aparecem como estão.">
           <div className="space-y-6">
-            {emails.map((e, i) => (
+            {previas.map((e, i) => (
               <article key={i} className="space-y-3 rounded-lg border border-borda p-4">
                 <h3 className="font-titulo text-base font-semibold text-tinta">
-                  Email {i + 1} <span className="text-sm font-normal text-tinta-suave">· {i === 0 ? 'logo ao entrar no funil' : `${e.esperarDias} dias depois do anterior`}</span>
+                  Etapa {i + 1}{' '}
+                  <span className="text-sm font-normal text-tinta-suave">
+                    · {i === 0 ? 'logo ao entrar no funil' : `${e.esperarDias} ${e.esperarDias === 1 ? 'dia' : 'dias'} depois do anterior`}
+                  </span>
                 </h3>
-                <TextoCopiavel rotulo="Assunto" texto={e.assunto} />
-                <TextoCopiavel rotulo="Pré-cabeçalho" texto={e.preCabecalho} />
-                <TextoCopiavel rotulo="Corpo" texto={e.corpo} multilinha />
+                <p className="text-sm text-tinta"><span className="font-medium">Assunto:</span> {e.assunto}</p>
+                <iframe
+                  title={`Prévia da etapa ${i + 1}: ${e.assunto}`}
+                  srcDoc={e.html}
+                  sandbox=""
+                  className="h-[34rem] w-full rounded-md border border-borda bg-white"
+                />
               </article>
             ))}
           </div>

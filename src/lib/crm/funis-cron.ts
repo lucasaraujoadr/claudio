@@ -27,6 +27,18 @@ export type ResultadoEtapaFunis = {
   linhas: number
   detalhes: Record<string, number | string>
   mensagem: string
+  /** Sem chave do Resend: o banco andou (inscrições), mas nenhum email saiu. */
+  semResend: boolean
+}
+
+/** Retorno da etapa para a rotina diária: sem chave do Resend a fonte fica `nao_configurado`. */
+export function paraRelatorioCron(r: ResultadoEtapaFunis) {
+  return {
+    linhas: r.linhas,
+    detalhes: r.detalhes,
+    mensagem: r.mensagem,
+    ...(r.semResend ? { status: 'nao_configurado' as const } : {}),
+  }
 }
 
 /**
@@ -162,7 +174,7 @@ export async function executarEtapaFunis(
         : `emails enviados: ${detalhes.enviados ?? '—'}, erros: ${detalhes.envioErros ?? '—'}, incertos (conferir no Resend; não são repetidos): ${detalhes.envioIncertos ?? '—'}, para amanhã: ${detalhes.envioRestantes ?? '—'}`,
     ...(resend ? [`contatos sincronizados: ${detalhes.contatosEnviados ?? '—'}`] : []),
   ].join('; ') + '.'
-  const resultado = { linhas, detalhes, mensagem }
+  const resultado: ResultadoEtapaFunis = { linhas, detalhes, mensagem, semResend: !resend }
   if (parouPorTempo) throw new FalhaEtapaFunis(falhas, resultado, { naoRodaram })
   if (falhas.length > 0) throw new FalhaEtapaFunis(falhas, resultado)
   return resultado

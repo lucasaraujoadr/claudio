@@ -25,7 +25,7 @@ export const DIAS_SEM_INTERACAO_REATIVACAO = 180
  * O que conta como interação real para o relógio da reativação. Ficam de fora os eventos
  * automáticos: `enviado`, `aberto` (o Apple Mail Privacy Protection "abre" sem ninguém ler),
  * `importado`, `entrou_funil`/`saiu_funil`, `bounce`, `spam`, `descadastrou` e `atualizado`
- * que não seja manual (sincronização, planilha, Brevo).
+ * que não seja manual (sincronização, planilha).
  */
 export const EVENTOS_INTERACAO = ['formulario', 'clicado', 'criado', 'mudou_status'] as const
 /** `atualizado` só conta quando a origem é a edição manual na tela. */

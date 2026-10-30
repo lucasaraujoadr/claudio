@@ -9,11 +9,11 @@ export type ResultadoApagarDados = { ok: true } | { ok: false; motivo: 'sem_moti
 /**
  * "Apagar dados a pedido" (LGPD art. 18, VI): anonimiza o contato numa transação só.
  *
- * - Apaga nome, telefone, escritório, cidade, UF, notas, tags e o id do Brevo, e os `dados`
+ * - Apaga nome, telefone, escritório, cidade, UF, notas, tags e o id do Resend, e os `dados`
  *   de todo evento da linha do tempo.
  * - Fica só o email (`email`/`email_normalizado`), como chave de supressão: apagar a linha
  *   inteira deixaria uma planilha futura cadastrar e prospectar a pessoa de novo — o oposto do
- *   que ela pediu. Com status `descadastrado`, a próxima sincronização a bloqueia no Brevo e a
+ *   que ela pediu. Com status `descadastrado`, a próxima sincronização a bloqueia no Resend e a
  *   tira de toda lista; as inscrições em funis acabam aqui mesmo.
  * - Registra um evento `dados_apagados` com a data e o motivo (sem dado pessoal).
  * - Depois disso nada repreenche o contato (upsert de qualquer origem, edição manual) e ele

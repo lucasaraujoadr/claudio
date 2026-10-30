@@ -5,11 +5,22 @@ import { estadoIntegracao, type EstadoIntegracao } from '@/lib/crm/sincronizar'
 import { formatarQuando } from '../contatos/_compartilhado'
 import { UrlSecreta } from './url-secreta'
 import { LIMITE_POR_MINUTO } from '@/lib/crm/webhook-site'
+import { urlPublicaPainel } from '@/lib/acesso-publico'
+import { configResend } from '@/lib/resend'
 
 export const metadata = { title: 'Integração' }
 
-/** Endereço público do painel em produção (é o que o Brevo e o Elementor chamam). */
-const URL_PRODUCAO = 'https://claudio-psi-lime.vercel.app'
+/** Domínio que envia os emails; o usuário o adiciona no Resend e copia os registros DNS para a Hostinger. */
+const DOMINIO_REMETENTE = 'ogpericiacontabil.com.br'
+
+/** Eventos a assinar no webhook do Resend (o `email.delivered` é ignorado pelo painel). */
+const EVENTOS_WEBHOOK = ['email.opened', 'email.clicked', 'email.bounced', 'email.complained', 'contact.updated'] as const
+
+/** Domínio do remetente configurado (`Nome <a@dominio>` ou `a@dominio`), ou `null`. */
+function dominioDoRemetente(remetente: string | undefined): string | null {
+  const m = remetente?.match(/@([^\s>]+)/)
+  return m ? m[1].toLowerCase() : null
+}
 
 const AVISOS: Record<string, { texto: string; tipo: TipoAviso }> = {
   'sync-ok': { texto: 'Sincronização concluída: nada pendente.', tipo: 'sucesso' },
@@ -65,35 +76,32 @@ export default async function IntegracaoPage({
   await connection()
   const sp = await searchParams
   const aviso = typeof sp.aviso === 'string' ? AVISOS[sp.aviso] : undefined
-    const tokenBrevo = process.env.BREVO_WEBHOOK_TOKEN?.trim() || null
   const tokenSite = process.env.SITE_WEBHOOK_TOKEN?.trim() || null
   const estado = await carregar()
   const conectado = estado?.conectado ?? false
+  const remetente = configResend()?.remetente
+  const dominio = dominioDoRemetente(remetente)
+  const urlPublica = urlPublicaPainel()
+  const segredoWebhook = Boolean(process.env.RESEND_WEBHOOK_SECRET?.trim())
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <CabecalhoPagina
         secao="CRM"
         titulo="Integração"
-        subtitulo="Brevo (envio dos emails) e formulário do site. O CRM continua sendo a fonte da verdade dos contatos."
+        subtitulo="Resend (envio dos emails) e formulário do site. O CRM continua sendo a fonte da verdade dos contatos."
       />
 
       {aviso && <Aviso tipo={aviso.tipo}>{aviso.texto}</Aviso>}
 
-      <Aviso tipo="alerta" titulo="Hoje o Brevo e o site não conseguem chamar os webhooks" role={null}>
-        A produção está atrás da proteção de login da Vercel (Deployment Protection / SSO). O Vercel Cron passa, mas o Brevo e o
-        Elementor recebem a tela de login da Vercel em <code>/api/webhooks/*</code>. Para ligar, escolha uma das duas saídas no
-        painel da Vercel (Settings → Deployment Protection): <strong>restringir a proteção às prévias</strong> (Preview), deixando a
-        produção aberta — o painel continua exigindo a senha própria —, ou criar um <strong>Protection Bypass for Automation</strong>{' '}
-        e acrescentar <code>&amp;x-vercel-protection-bypass=…</code> às duas URLs abaixo. Os webhooks já exigem token próprio.
-      </Aviso>
-
       <Cartao titulo="Resend" descricao="Contatos e segmento da newsletter (RESEND_API_KEY).">
         <div className="space-y-5">
           {conectado ? (
-            <p className="text-sm text-tinta"><Selo variante="sucesso">Conectado</Selo> A chave do Resend está configurada.</p>
+            <p className="text-sm text-tinta">
+              <Selo variante="sucesso">Conectado</Selo> A chave do Resend está configurada. Domínio remetente: <strong>{dominio ?? DOMINIO_REMETENTE}</strong>.
+            </p>
           ) : (
-            <Aviso tipo="info" titulo="Resend não configurado" role={null}>
+            <Aviso tipo="info" titulo="Resend não conectado" role={null}>
               O CRM funciona por completo sem o Resend: os contatos ficam como &quot;pendente&quot; e são sincronizados quando a chave for
               configurada (<code>RESEND_API_KEY</code> e <code>RESEND_REMETENTE</code> na Vercel, Production, e um novo deploy).
             </Aviso>
@@ -130,20 +138,44 @@ export default async function IntegracaoPage({
         </div>
       </Cartao>
 
-      <Cartao titulo="Webhook do Brevo" descricao="Descadastros, bounces, spam, aberturas e cliques voltam para a linha do tempo.">
+      {estado?.acessoPublico === false && (
+        <Aviso tipo="alerta" titulo="O painel está bloqueado para acesso público: nenhum email de funil ou newsletter sai" role={null}>
+          O link de descadastro, os webhooks do Resend e o formulário do site precisam alcançar <code>{urlPublica}</code> sem o login da
+          Vercel. Hoje a produção está atrás do Deployment Protection. No painel da Vercel (Settings → Deployment Protection), troque para{' '}
+          <strong>Standard Protection</strong>: ela protege só as prévias, e a produção fica acessível — o painel continua todo atrás da
+          própria senha. Essa mudança de segurança é sua; até ela, os envios ficam parados (a verificação roda a cada poucos minutos).
+        </Aviso>
+      )}
+
+      <Cartao titulo="Domínio remetente (DNS)" descricao="Sem o domínio verificado no Resend, os emails não saem (ou caem no spam).">
+        <Passos
+          itens={[
+            <>No Resend, abra Domains → Add Domain e adicione <code>{DOMINIO_REMETENTE}</code>.</>,
+            'O Resend mostra os registros DNS (SPF, DKIM e, se quiser, DMARC). Copie cada um exatamente como aparece.',
+            'Na Hostinger, abra o domínio → DNS / Zona DNS e crie os registros um a um (tipo, nome e valor).',
+            'Volte ao Resend e clique em Verify. A propagação pode levar de minutos a algumas horas.',
+            <>Defina <code>RESEND_REMETENTE</code> (por exemplo, <code>Oliveira Guimarães &lt;contato@{DOMINIO_REMETENTE}&gt;</code>) na Vercel e faça um novo deploy.</>,
+          ]}
+        />
+      </Cartao>
+
+      <Cartao titulo="Webhook do Resend" descricao="Aberturas, cliques, bounces, reclamações de spam e descadastros voltam para a linha do tempo.">
         <div className="space-y-4">
-          {tokenBrevo ? (
-            <UrlSecreta rotulo="URL para colar no Brevo" base={`${URL_PRODUCAO}/api/webhooks/brevo`} token={tokenBrevo} />
+          <div className="space-y-1.5">
+            <p className="text-sm font-medium text-tinta">URL para colar no Resend</p>
+            <code className="block rounded-md border border-borda bg-elevada px-3 py-2 font-mono text-xs break-all text-tinta">{urlPublica}/api/webhooks/resend</code>
+          </div>
+          {segredoWebhook ? (
+            <p className="text-sm text-tinta"><Selo variante="sucesso">Segredo configurado</Selo> <code>RESEND_WEBHOOK_SECRET</code> está definido.</p>
           ) : (
-            <Aviso tipo="erro" role={null}>BREVO_WEBHOOK_TOKEN não está configurado: o webhook recusa tudo (401) até ele existir.</Aviso>
+            <Aviso tipo="erro" role={null}>RESEND_WEBHOOK_SECRET não está configurado: o webhook recusa tudo até ele existir.</Aviso>
           )}
           <Passos
             itens={[
-              'No Brevo, abra Configurações (engrenagem) → Webhooks → Adicionar novo webhook.',
-              'Tipo: Marketing. Cole a URL acima (com o token) no campo URL.',
-              'Marque os eventos: Descadastro, Hard bounce, Marcado como spam, Aberto, Clicado e Entregue.',
-              'Salve. Repita com o tipo Transacional se for enviar emails transacionais pelo Brevo.',
-              'Descadastro, hard bounce e spam viram "Descadastrado" no CRM e tiram o contato de todos os funis. Eventos repetidos não duplicam nada.',
+              'No Resend, abra Webhooks → Add Webhook e cole a URL acima.',
+              <>Assine estes eventos: {EVENTOS_WEBHOOK.map((e, i) => <span key={e}>{i > 0 && ', '}<code>{e}</code></span>)}.</>,
+              <>Copie o <em>Signing Secret</em> (começa com <code>whsec_</code>) para <code>RESEND_WEBHOOK_SECRET</code> na Vercel e faça um novo deploy.</>,
+              'Reclamação de spam e descadastro pela página do Resend viram "Descadastrado" no CRM e tiram o contato dos funis; hard bounce só tira dos funis. Eventos repetidos não duplicam nada.',
             ]}
           />
         </div>
@@ -152,7 +184,7 @@ export default async function IntegracaoPage({
       <Cartao titulo="Webhook do formulário do site" descricao="Cada envio do formulário vira (ou atualiza) um lead com consentimento.">
         <div className="space-y-4">
           {tokenSite ? (
-            <UrlSecreta rotulo="URL para colar no Elementor" base={`${URL_PRODUCAO}/api/webhooks/site`} token={tokenSite} />
+            <UrlSecreta rotulo="URL para colar no Elementor" base={`${urlPublica}/api/webhooks/site`} token={tokenSite} />
           ) : (
             <Aviso tipo="erro" role={null}>SITE_WEBHOOK_TOKEN não está configurado: o webhook recusa tudo (401) até ele existir.</Aviso>
           )}

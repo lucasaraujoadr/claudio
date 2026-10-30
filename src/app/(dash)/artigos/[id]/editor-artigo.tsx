@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { EditorContent, useEditor, useEditorState, type Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
-import { Aviso, Botao, BotaoEnviar, Cartao, IconeTom, Selo, cx, type Tom } from '@/components/ui'
+import { Aviso, Botao, Cartao, IconeTom, Selo, cx, type Tom } from '@/components/ui'
 import { CLASSES_ROTULO, classesCampo } from '@/components/ui/campo'
 import type { ItemConferencia } from '@/lib/artigos/conferencia'
 import { ROTULO_WP, linkSeguro } from '../situacao'
@@ -16,7 +16,6 @@ export type EditorArtigoProps = {
   inicial: ArtigoTela
   wpConfigurado: boolean
   iaConfigurada: boolean
-  brevoConfigurado: boolean
   categorias: { id: number; nome: string }[]
   /** Aviso quando as categorias não puderam ser lidas do WordPress. */
   avisoCategorias?: string | null
@@ -95,7 +94,6 @@ export function EditorArtigo({
   inicial,
   wpConfigurado,
   iaConfigurada,
-  brevoConfigurado,
   categorias,
   avisoCategorias,
 }: EditorArtigoProps) {
@@ -618,16 +616,6 @@ export function EditorArtigo({
               aoTentar={(modo) => void enviar(modo)}
               aoFechar={() => setResultado(null)}
             />
-
-            {publicado && brevoConfigurado && (
-              <form method="POST" action="/api/temas/campanha" className="space-y-1 border-t border-borda pt-4">
-                <input type="hidden" name="id" value={visao.topicId} />
-                <BotaoEnviar rotuloEnviando="Criando rascunho…" variante="secundario">
-                  Criar campanha no Brevo
-                </BotaoEnviar>
-                <p className="text-xs text-tinta-suave">Cria só o rascunho da campanha; o envio é feito por você, no Brevo.</p>
-              </form>
-            )}
           </div>
         </Cartao>
       </aside>

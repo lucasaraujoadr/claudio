@@ -19,8 +19,8 @@ export function tokenConfere(recebido: string | null | undefined, esperado: stri
 }
 
 /**
- * Token da chamada: `?token=` (o Brevo e o Elementor só deixam configurar a URL) ou
- * `Authorization: Bearer` (webhooks do Brevo criados pela API aceitam cabeçalho).
+ * Token da chamada: `?token=` (o Elementor só deixa configurar a URL) ou
+ * `Authorization: Bearer` (para quem consegue enviar cabeçalho).
  */
 export function tokenDaRequisicao(request: Request): string | null {
   const daUrl = new URL(request.url).searchParams.get('token')

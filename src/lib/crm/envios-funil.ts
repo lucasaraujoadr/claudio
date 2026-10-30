@@ -75,7 +75,12 @@ async function concluir(db: BancoCrm, inscricaoId: number, contatoId: number, sl
 
 type EstadoEtapa = { status: 'enviado' | 'erro' | 'incerto'; tentativas: number; enviadoEm: Date }
 
-async function buscarDevidas(db: BancoCrm, agora: Date, filtro?: { contatoId: number; slug: SlugFunil }): Promise<EtapaDevida[]> {
+async function buscarDevidas(
+  db: BancoCrm,
+  agora: Date,
+  filtro?: { contatoId: number; slug: SlugFunil },
+  somenteLeitura = false,
+): Promise<EtapaDevida[]> {
   const linhas = await db
     .select({
       inscricaoId: funilInscricoes.id,
@@ -125,7 +130,7 @@ async function buscarDevidas(db: BancoCrm, agora: Date, filtro?: { contatoId: nu
     while (etapa < etapas.length && i.etapas.get(etapa)?.status === 'enviado') etapa++
     if (etapa >= etapas.length) {
       // Todas enviadas (ex.: queda depois do último envio): conclui aqui.
-      await concluir(db, inscricaoId, i.contatoId, i.slug, agora)
+      if (!somenteLeitura) await concluir(db, inscricaoId, i.contatoId, i.slug, agora)
       continue
     }
     const atual = i.etapas.get(etapa)
@@ -144,10 +149,11 @@ async function buscarDevidas(db: BancoCrm, agora: Date, filtro?: { contatoId: nu
 
 /**
  * Etapas devidas agora, já na ordem de prioridade (boas-vindas, reativação, prospecção, nutrição).
- * Conclui, de passagem, inscrições cuja rodada atual já teve todas as etapas enviadas.
+ * Conclui, de passagem, inscrições cuja rodada atual já teve todas as etapas enviadas
+ * (`somenteLeitura` não conclui nada: é o que as telas usam).
  */
-export async function etapasDevidas(agora: Date, opts: { db?: BancoCrm } = {}): Promise<EtapaDevida[]> {
-  return buscarDevidas(opts.db ?? bancoPadrao(), agora)
+export async function etapasDevidas(agora: Date, opts: { db?: BancoCrm; somenteLeitura?: boolean } = {}): Promise<EtapaDevida[]> {
+  return buscarDevidas(opts.db ?? bancoPadrao(), agora, undefined, opts.somenteLeitura ?? false)
 }
 
 /** Emails de funil que saíram (ou podem ter saído) hoje, fuso de Brasília, em qualquer rodada. */

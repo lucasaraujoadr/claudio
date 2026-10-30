@@ -33,7 +33,7 @@ async function contatoPorEmail(email: string) {
 async function eventos(contatoId: number) {
   return db.select().from(eventosContato).where(eq(eventosContato.contatoId, contatoId)).orderBy(asc(eventosContato.id))
 }
-/** Simula o Brevo tendo sincronizado o contato. */
+/** Simula o Resend tendo sincronizado o contato. */
 async function marcarSincronizado(id: number) {
   await db.update(contatos).set({ syncStatus: 'sincronizado' }).where(eq(contatos.id, id))
 }
@@ -147,12 +147,16 @@ describe('upsertContato — mescla', () => {
     expect((await eventos(c.id)).map((e) => e.tipo)).toEqual(['criado'])
   })
 
-  it('marca pendente só quando muda campo que vai para o Brevo', async () => {
+  it('marca pendente só quando muda campo que o Resend usa (nome, status, base legal)', async () => {
     const { contatoId } = await upsertContato({ email: 'p@example.com', baseLegal: 'contrato' }, 'manual', { db })
     await marcarSincronizado(contatoId!)
-    await upsertContato({ email: 'p@example.com', notas: 'só nota' }, 'manual', { db })
+    // Notas, telefone, escritório, cidade, UF e tags não vão para o Resend.
+    await upsertContato({ email: 'p@example.com', notas: 'só nota', telefone: '81999990000', cidade: 'Recife', uf: 'PE', escritorio: 'Novo', tags: ['x'] }, 'manual', { db })
     expect((await contatoPorEmail('p@example.com')).syncStatus).toBe('sincronizado')
-    await upsertContato({ email: 'p@example.com', escritorio: 'Novo' }, 'manual', { db })
+    await upsertContato({ email: 'p@example.com', nome: 'Nome Novo' }, 'manual', { db })
+    expect((await contatoPorEmail('p@example.com')).syncStatus).toBe('pendente')
+    await marcarSincronizado(contatoId!)
+    await upsertContato({ email: 'p@example.com', baseLegal: 'consentimento' }, 'manual', { db })
     expect((await contatoPorEmail('p@example.com')).syncStatus).toBe('pendente')
   })
 

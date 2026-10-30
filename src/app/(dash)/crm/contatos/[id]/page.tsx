@@ -155,8 +155,8 @@ function Reativar({ c }: { c: Contato }) {
         irregular de dados pessoais. A reativação fica registrada na linha do tempo com o motivo informado.
       </Aviso>
       <p className="mt-3 text-sm text-tinta">
-        O Brevo mantém o contato bloqueado mesmo depois da reativação aqui: desbloqueie o contato no Brevo também
-        (Contatos → abra o contato → desbloquear), senão os emails continuam sem sair.
+        A reativação só libera o contato para novos envios: ele não volta sozinho a nenhum funil nem à newsletter, e precisa ser
+        inscrito de novo (e ter base legal) para receber.
       </p>
       <details className="mt-4">
         <summary className="cursor-pointer text-sm font-medium text-acento-texto">A pessoa pediu para voltar — reativar</summary>
@@ -182,8 +182,8 @@ function ApagarDados({ c }: { c: Contato }) {
       <Aviso tipo="erro" titulo="Não tem como desfazer" role={null}>
         Apaga nome, telefone, escritório, cidade, UF, notas, tags e os detalhes da linha do tempo, e marca o contato como
         descadastrado. Fica só o e-mail, para que nenhuma planilha, formulário ou importação cadastre a pessoa de novo. Depois
-        disso, o contato não pode ser editado nem reativado. No Brevo, o contato fica bloqueado; para apagar também o que
-        está guardado lá, apague o contato no próprio Brevo.
+        disso, o contato não pode ser editado nem reativado. No Resend, o contato fica só como supressão (sem nome, fora do
+        segmento da newsletter); para apagar também o registro de lá, apague o contato no próprio Resend.
       </Aviso>
       <details className="mt-4">
         <summary className="cursor-pointer text-sm font-medium text-acento-texto">A pessoa pediu para apagar os dados — apagar</summary>
@@ -258,7 +258,7 @@ export default async function ContatoPage({
       )}
       {!c.dadosApagadosEm && c.status === 'descadastrado' && aviso?.texto !== AVISOS.bloqueado.texto && (
         <Aviso tipo="alerta" titulo="Contato descadastrado">
-          Não recebe nenhum email e não entra em nenhuma lista do Brevo. Importações e formulários não mudam isso.
+          Não recebe nenhum email e não entra no segmento da newsletter. Importações e formulários não mudam isso.
         </Aviso>
       )}
 
@@ -289,7 +289,7 @@ export default async function ContatoPage({
 
         <Cartao titulo="Linha do tempo" descricao="Do mais recente ao mais antigo." semPreenchimento>
           {eventos.length === 0 ? (
-            <div className="p-5"><EstadoVazio nivelTitulo={3} titulo="Sem eventos" explicacao="Os envios, aberturas e cliques aparecem aqui quando o Brevo estiver conectado." /></div>
+            <div className="p-5"><EstadoVazio nivelTitulo={3} titulo="Sem eventos" explicacao="Os envios, aberturas e cliques aparecem aqui quando o Resend estiver conectado." /></div>
           ) : (
             <ol className="divide-y divide-borda">
               {eventos.map((e) => {

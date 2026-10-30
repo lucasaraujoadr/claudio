@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { connection } from 'next/server'
 import { eq } from 'drizzle-orm'
 import { Aviso, BotaoEnviar, CabecalhoPagina, Cartao, Selo, type TipoAviso } from '@/components/ui'
-import { brevoConfigurado } from '@/lib/brevo'
+import { configResend } from '@/lib/resend'
 import { bancoPadrao } from '@/lib/crm/banco'
 import { definicaoFunil } from '@/lib/crm/funis-conteudo'
 import { FONTE_FUNIS } from '@/lib/crm/funis-cron'
@@ -46,7 +46,7 @@ export default async function FunisPage({ searchParams }: { searchParams: Promis
   await connection()
   const sp = await searchParams
   const aviso = typeof sp.aviso === 'string' ? AVISOS[sp.aviso] : undefined
-  const conectado = brevoConfigurado()
+  const conectado = configResend() !== null
   const dados = await carregar()
 
   return (
@@ -54,10 +54,10 @@ export default async function FunisPage({ searchParams }: { searchParams: Promis
       <CabecalhoPagina
         secao="CRM"
         titulo="Funis"
-        subtitulo="O CRM decide quem está em cada funil; cada funil é uma lista do Brevo, e a automação do Brevo envia os emails."
+        subtitulo="O CRM decide quem está em cada funil; o painel envia os emails pelo Resend, na rotina diária."
         acoes={
           <form method="POST" action="/api/crm/funis/sincronizar" className="sm:text-right">
-            <BotaoEnviar rotuloEnviando="Atualizando…">Atualizar listas do Brevo</BotaoEnviar>
+            <BotaoEnviar rotuloEnviando="Sincronizando…">Sincronizar contatos com o Resend</BotaoEnviar>
           </form>
         }
       />
@@ -65,9 +65,9 @@ export default async function FunisPage({ searchParams }: { searchParams: Promis
       {aviso && <Aviso tipo={aviso.tipo}>{aviso.texto}</Aviso>}
 
       {!conectado && (
-        <Aviso tipo="info" titulo="Brevo não conectado" role={null}>
-          Os funis funcionam sem o Brevo: as inscrições ficam guardadas como pendentes e entram nas listas quando a chave for
-          configurada (veja <Link href="/crm/integracao">Integração</Link>).
+        <Aviso tipo="info" titulo="Resend não conectado" role={null}>
+          Os funis funcionam sem o Resend: as inscrições ficam guardadas, mas nenhum email sai até a chave ser configurada
+          (veja <Link href="/crm/integracao">Integração</Link>).
         </Aviso>
       )}
 
@@ -105,10 +105,12 @@ export default async function FunisPage({ searchParams }: { searchParams: Promis
             })}
           </div>
 
-          <Cartao titulo="Rotina diária" descricao="Reativação (até 50 por dia), prospecção fria (se ligada, no teto) e atualização das listas do Brevo.">
+          <Cartao titulo="Rotina diária" descricao="Reativação (até 50 por dia), prospecção fria (se ligada, no teto) envio dos emails devidos pelo Resend e sincronização dos contatos.">
             {dados.ultima ? (
               <p className="text-sm text-tinta">
-                <Selo variante={dados.ultima.status === 'ok' ? 'sucesso' : 'critico'}>{dados.ultima.status === 'ok' ? 'ok' : 'erro'}</Selo>{' '}
+                <Selo variante={dados.ultima.status === 'ok' ? 'sucesso' : dados.ultima.status === 'nao_configurado' ? 'aviso' : 'critico'}>
+                  {dados.ultima.status === 'ok' ? 'ok' : dados.ultima.status === 'nao_configurado' ? 'Resend não conectado' : 'erro'}
+                </Selo>{' '}
                 {formatarQuando(dados.ultima.executadoEm)}
                 {dados.ultima.mensagem && <span className="block text-xs text-tinta-suave">{dados.ultima.mensagem}</span>}
               </p>

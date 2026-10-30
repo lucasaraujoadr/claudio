@@ -38,7 +38,7 @@ export const DEFINICOES_FUNIS: readonly DefinicaoFunil[] = [
   {
     slug: 'nutricao-blog',
     nome: 'Nutrição com o blog',
-    descricao: 'Leads e clientes que recebem os artigos novos do blog, em campanhas criadas como rascunho.',
+    descricao: 'Leads e clientes que recebem a newsletter com os artigos novos do blog.',
     ativoInicial: true,
     exigeBaseLegal: null,
     quemEntra: 'Leads e clientes com base legal de consentimento ou contrato, escolhidos na tela (por email ou por tag de importação).',
@@ -221,73 +221,6 @@ export function linkWhatsapp(env: Record<string, string | undefined> = process.e
   }
 }
 
-// ---------------------------------------------------------------------------
-// Rascunho de campanha da nutrição com o blog
-// ---------------------------------------------------------------------------
-
-export type DadosTemaCampanha = {
-  topicId: number
-  titulo: string
-  keyword: string
-  urlPublicada: string
-  briefing: { title: string; metaDescription: string } | null
-}
-
-export type CampanhaComposta = {
-  nome: string
-  assunto: string
-  preCabecalho: string
-  link: string
-  texto: string
-  html: string
-}
-
 export function escaparHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
-}
-
-/** Link do artigo com UTM da campanha (mantém os parâmetros que já existirem). */
-export function linkComUtm(url: string, topicId: number): string {
-  const u = new URL(url)
-  u.searchParams.set('utm_source', 'brevo')
-  u.searchParams.set('utm_medium', 'email')
-  u.searchParams.set('utm_campaign', `nutricao-blog-tema-${topicId}`)
-  return u.toString()
-}
-
-/**
- * Monta o rascunho da campanha a partir do tema publicado e do briefing (título e meta
- * description). Não usa dado de contato nem IA. Sem briefing, usa o título do tema e uma
- * frase neutra.
- */
-export function comporCampanhaBlog(t: DadosTemaCampanha): CampanhaComposta {
-  const titulo = (t.briefing?.title || t.titulo).trim()
-  const resumo = (t.briefing?.metaDescription || `Publicamos um artigo novo sobre ${t.keyword.trim()}.`).trim()
-  const link = linkComUtm(t.urlPublicada, t.topicId)
-  const assunto = `Novo artigo: ${titulo}`
-  const texto = [
-    'Prezado(a) Dr(a).,',
-    'Publicamos um artigo novo no blog:',
-    titulo,
-    resumo,
-    `Leia o artigo completo: ${link}`,
-    'Se tiver um caso em que este tema aparece, responda a este email com os documentos do processo.',
-    ASSINATURA,
-    // A campanha ainda é do Brevo (sai no Task 7): usa o marcador do editor do Brevo.
-    LINHA_DESCADASTRO.replace(MARCADOR_DESCADASTRO, '{{ unsubscribe }}'),
-  ].join('\n\n')
-  const p = (s: string) => `<p style="margin:0 0 16px">${s}</p>`
-  const html = [
-    '<div style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.5;color:#1f2933;max-width:600px">',
-    p('Prezado(a) Dr(a).,'),
-    p('Publicamos um artigo novo no blog:'),
-    `<h2 style="font-size:20px;margin:0 0 12px">${escaparHtml(titulo)}</h2>`,
-    p(escaparHtml(resumo)),
-    p(`<a href="${escaparHtml(link)}">Leia o artigo completo</a>`),
-    p('Se tiver um caso em que este tema aparece, responda a este email com os documentos do processo.'),
-    p(`Atenciosamente,<br>${NOME_EMPRESA}`),
-    `<p style="margin:24px 0 0;font-size:12px;color:#616e7c">Se não quiser mais receber estes emails, <a href="{{ unsubscribe }}">descadastre-se aqui</a>.</p>`,
-    '</div>',
-  ].join('\n')
-  return { nome: `Blog — ${titulo}`.slice(0, 200), assunto, preCabecalho: resumo.slice(0, 150), link, texto, html }
 }

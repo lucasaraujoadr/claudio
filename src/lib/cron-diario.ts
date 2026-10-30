@@ -16,7 +16,13 @@ export type RelatorioFonte = {
 export type RelatorioDiario = Record<'gsc' | 'ga4', RelatorioFonte> & { funis?: RelatorioFonte; artigos?: RelatorioFonte }
 
 /** Uma fonte pronta para rodar; `null` = não configurada. `mensagem` não pode ter dado pessoal. */
-export type ExecutorFonte = () => Promise<{ linhas: number; detalhes?: Record<string, number | string>; mensagem?: string }>
+export type ExecutorFonte = () => Promise<{
+  linhas: number
+  detalhes?: Record<string, number | string>
+  mensagem?: string
+  /** A fonte rodou o que podia sem a credencial: registra `nao_configurado` em vez de `ok`. */
+  status?: 'nao_configurado'
+}>
 
 /** Erro que traz uma frase própria, já sem dado pessoal, para gravar em `sincronizacoes`. */
 function mensagemSegura(e: unknown): string | null {
@@ -61,7 +67,7 @@ async function rodar(fonte: FonteDiaria, executor: ExecutorFonte | null): Promis
   if (!executor) return { status: 'nao_configurado', mensagem: MSG_NAO_CONFIGURADO }
   try {
     const r = await executor()
-    return { status: 'ok', linhas: r.linhas, detalhes: r.detalhes, ...(r.mensagem ? { mensagem: r.mensagem } : {}) }
+    return { status: r.status ?? 'ok', linhas: r.linhas, detalhes: r.detalhes, ...(r.mensagem ? { mensagem: r.mensagem } : {}) }
   } catch (e) {
     // Mensagem só no log do servidor: nunca na resposta HTTP nem em `sincronizacoes`.
     // Nos funis, nem no log: um erro do banco pode ecoar dado de contato.

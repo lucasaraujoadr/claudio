@@ -228,8 +228,8 @@ async function encerrar(db: BancoCrm, filtro: ReturnType<typeof and>, motivo: st
 }
 
 /**
- * Defesa extra: contato que virou descadastrado por outro caminho (planilha, importação do
- * Brevo) e ainda tem inscrição ativa sai de todos os funis.
+ * Defesa extra: contato que virou descadastrado por outro caminho (planilha, importação
+ * legada) e ainda tem inscrição ativa sai de todos os funis.
  */
 export async function encerrarInscricoesDeDescadastrados(opts: { db?: BancoCrm; agora?: Date } = {}): Promise<number> {
   const db = opts.db ?? bancoPadrao()

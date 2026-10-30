@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { executarCronDiario, registrarSincronizacao, type ExecutorFonte } from '@/lib/cron-diario'
 import { sincronizarAgendados } from '@/lib/artigos/enviar'
-import { executarEtapaFunis } from '@/lib/crm/funis-cron'
+import { executarEtapaFunis, paraRelatorioCron } from '@/lib/crm/funis-cron'
 import { buscarGa4, executarGa4, transacaoGa4 } from '@/lib/ga4'
 import { buscarSearchAnalytics, executarCronGsc, transacaoGsc } from '@/lib/gsc'
 import { configWp, criarClienteWp } from '@/lib/wordpress'
@@ -50,12 +50,10 @@ export async function GET(request: Request) {
         }
       : null
 
-  // Funis do CRM: só precisam do banco (o Brevo é opcional). Rodam em paralelo com as fontes
+  // Funis do CRM: inscrições e limpeza só precisam do banco; os envios e a sincronização de contatos
+  // precisam do Resend (sem chave, a fonte fica `nao_configurado`). Rodam em paralelo com as fontes
   // do Google e falham sem afetá-las.
-  const funis: ExecutorFonte = async () => {
-    const r = await executarEtapaFunis({ agora: hoje })
-    return { linhas: r.linhas, detalhes: r.detalhes, mensagem: r.mensagem }
-  }
+  const funis: ExecutorFonte = async () => paraRelatorioCron(await executarEtapaFunis({ agora: hoje }))
 
   // Artigos agendados no WordPress: só roda com as credenciais do WP; só lê, nunca escreve no site.
   const cfgWp = configWp()

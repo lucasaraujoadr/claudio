@@ -5,13 +5,13 @@ import { LimitadorPorIp } from '@/lib/webhooks'
 import type { BancoCrm } from '../banco'
 import { mudarStatus, upsertContato } from '../contatos'
 import { expandirColchetes, lerFormulario, tratarWebhookSite } from '../webhook-site'
-import { criarBancoTesteBrevo } from './banco-teste-brevo'
+import { criarBancoTesteFunis } from './banco-teste-funis'
 
 const TOKEN = 'token-de-teste-site'
 let db: BancoCrm
 let fechar: () => Promise<void>
 beforeEach(async () => {
-  ;({ db, fechar } = await criarBancoTesteBrevo())
+  ;({ db, fechar } = await criarBancoTesteFunis())
 })
 afterEach(async () => {
   await fechar()

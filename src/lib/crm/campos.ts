@@ -12,7 +12,7 @@ export const ROTULO_ORIGEM: Record<Origem, string> = {
   site: 'Site',
   planilha: 'Planilha',
   manual: 'Manual',
-  brevo: 'Brevo',
+  brevo: 'Brevo (legado)',
 }
 export const ROTULO_BASE_LEGAL: Record<BaseLegal, string> = {
   consentimento: 'Consentimento',
@@ -48,8 +48,12 @@ export function ehStatus(v: unknown): v is StatusContato {
   return typeof v === 'string' && (STATUS_CONTATO as readonly string[]).includes(v)
 }
 
-/** Campos que o Brevo recebe: mudar qualquer um deixa o contato `pendente` de sincronização. */
-export const CAMPOS_BREVO = ['nome', 'telefone', 'escritorio', 'cidade', 'uf', 'status', 'tags', 'baseLegal'] as const
+/**
+ * Campos que mudam o que o Resend recebe: o nome (o email é a chave e não muda por aqui) e os que decidem
+ * a supressão e o segmento (status e base legal). Mudar um deles deixa o contato `pendente` de sincronização;
+ * telefone, escritório, cidade, UF, tags e notas nunca vão ao Resend.
+ */
+export const CAMPOS_RESEND = ['nome', 'status', 'baseLegal'] as const
 
 export type CampoContato =
   | 'nome'

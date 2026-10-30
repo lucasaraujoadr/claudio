@@ -1,6 +1,6 @@
 import type { Contato } from '@/lib/db/schema'
 import {
-  CAMPOS_BREVO,
+  CAMPOS_RESEND,
   FORCA_BASE_LEGAL,
   normalizarTags,
   normalizarUf,
@@ -37,8 +37,8 @@ export type Mescla = {
   mantidos: CampoContato[]
   /** Presente quando o status mudou. */
   status?: { de: StatusContato; para: StatusContato }
-  /** Algum campo que vai para o Brevo mudou. */
-  brevoMudou: boolean
+  /** Algum campo que o Resend usa mudou. */
+  resendMudou: boolean
 }
 
 export function estadoDe(c: Contato): EstadoContato {
@@ -75,8 +75,8 @@ export function diferencas(a: EstadoContato, b: EstadoContato): CampoContato[] {
   return campos
 }
 
-export function brevoMudou(campos: readonly CampoContato[]): boolean {
-  return campos.some((c) => (CAMPOS_BREVO as readonly string[]).includes(c))
+export function resendMudou(campos: readonly CampoContato[]): boolean {
+  return campos.some((c) => (CAMPOS_RESEND as readonly string[]).includes(c))
 }
 
 /**
@@ -115,7 +115,7 @@ const SOBRESCREVE: Record<Origem, readonly CampoDado[]> = {
   manual: CAMPOS_DADOS,
   // Formulário do site: o próprio contato informou nome, telefone e escritório.
   site: ['nome', 'telefone', 'escritorio'],
-  // Planilha antiga e Brevo: só preenchem o que está vazio.
+  // Planilha antiga e Brevo (legado): só preenchem o que está vazio.
   planilha: [],
   brevo: [],
 }
@@ -175,6 +175,6 @@ export function mesclarEstado(atual: EstadoContato, dados: DadosContato, origem:
     alterados,
     mantidos,
     status: novo.status !== atual.status ? { de: atual.status, para: novo.status } : undefined,
-    brevoMudou: brevoMudou(alterados),
+    resendMudou: resendMudou(alterados),
   }
 }

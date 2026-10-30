@@ -3,7 +3,7 @@ import { executarCronDiario, type RegistroSincronizacao } from '@/lib/cron-diari
 import { contatos, enviosFunil, funilInscricoes, funis, importacoesContatos } from '@/lib/db/schema'
 import { ErroResend, type ClienteResend } from '@/lib/resend'
 import type { BancoCrm } from '../banco'
-import { executarEtapaFunis, FalhaEtapaFunis } from '../funis-cron'
+import { executarEtapaFunis, FalhaEtapaFunis, paraRelatorioCron } from '../funis-cron'
 import { INTERROMPIDO_POR_TEMPO } from '../funis'
 import { criarBancoTesteFunis } from './banco-teste-funis'
 
@@ -117,6 +117,20 @@ describe('rotina diária com funis', () => {
     return { regs, registrar: async (r: RegistroSincronizacao) => void regs.push(r) }
   }
 
+  it('sem chave do Resend, a fonte funis é registrada como nao_configurado (e a inscrição continua)', async () => {
+    const { regs, registrar } = registrador()
+    const r = await executarCronDiario({
+      hoje: AGORA,
+      gsc: null,
+      ga4: null,
+      funis: async () => paraRelatorioCron(await executarEtapaFunis({ db, resend: null, agora: AGORA })),
+      registrar,
+    })
+    expect(r.funis?.status).toBe('nao_configurado')
+    expect(regs.find((x) => x.fonte === 'funis')).toMatchObject({ status: 'nao_configurado' })
+    expect(regs.find((x) => x.fonte === 'funis')?.mensagem).toContain('Resend não configurado')
+  })
+
   it('falha dos funis não afeta o GSC e o GA4; registra fonte "funis" sem dado de contato', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {})
     const { regs, registrar } = registrador()
@@ -149,7 +163,7 @@ describe('rotina diária com funis', () => {
       gsc: null,
       ga4: null,
       funis: async () => {
-        throw new FalhaEtapaFunis(['reativacao'], { linhas: 0, detalhes: {}, mensagem: 'Reativação: —.' })
+        throw new FalhaEtapaFunis(['reativacao'], { linhas: 0, detalhes: {}, mensagem: 'Reativação: —.', semResend: false })
       },
       registrar: reg2,
     })
