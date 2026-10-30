@@ -6,7 +6,7 @@ import type { BancoCrm } from '../banco'
 import { mudarStatus } from '../contatos'
 import { enviarBoasVindasAgora, enviarEtapa, etapasDevidas, executarEnviosFunil } from '../envios-funil'
 import { EMAILS_FUNIS } from '../funis-conteudo'
-import { definirAtivo, garantirFunis, inscrever, obterFunil, sair } from '../funis'
+import { definirAtivo, garantirFunis, inscrever, ligarProspeccaoFria, obterFunil, sair } from '../funis'
 import { criarBancoTesteFunis } from './banco-teste-funis'
 
 let db: BancoCrm
@@ -35,17 +35,23 @@ async function inscricao() {
 }
 
 describe('envios_funil', () => {
-  it('uma etapa nunca é gravada duas vezes para a mesma inscrição', async () => {
+  it('uma etapa nunca é gravada duas vezes na mesma rodada da inscrição', async () => {
     const i = await inscricao()
-    await db.insert(enviosFunil).values({ inscricaoId: i.id, etapa: 0, status: 'enviado', resendEmailId: 'r1' })
-    await expect(db.insert(enviosFunil).values({ inscricaoId: i.id, etapa: 0, status: 'erro' })).rejects.toThrow()
-    await db.insert(enviosFunil).values({ inscricaoId: i.id, etapa: 1, status: 'erro', erro: 'x' })
-    expect(await db.select().from(enviosFunil)).toHaveLength(2)
+    const rodada = i.entrouEm
+    await db.insert(enviosFunil).values({ inscricaoId: i.id, rodada, etapa: 0, status: 'enviado', resendEmailId: 'r1' })
+    await expect(db.insert(enviosFunil).values({ inscricaoId: i.id, rodada, etapa: 0, status: 'erro' })).rejects.toThrow()
+    await db.insert(enviosFunil).values({ inscricaoId: i.id, rodada, etapa: 1, status: 'incerto', erro: 'x' })
+    // Outra rodada (reentrada): a mesma etapa pode sair de novo, e o histórico fica.
+    await db.insert(enviosFunil).values({ inscricaoId: i.id, rodada: new Date(rodada.getTime() + 1000), etapa: 0, status: 'enviado' })
+    const linhas = await db.select().from(enviosFunil)
+    expect(linhas).toHaveLength(3)
+    expect(linhas[0]).toMatchObject({ tentativas: 0 })
+    expect(linhas[0].primeiraTentativaEm).toBeInstanceOf(Date)
   })
 
   it('apagar a inscrição apaga os envios (cascade)', async () => {
     const i = await inscricao()
-    await db.insert(enviosFunil).values({ inscricaoId: i.id, etapa: 0, status: 'enviado' })
+    await db.insert(enviosFunil).values({ inscricaoId: i.id, rodada: i.entrouEm, etapa: 0, status: 'enviado' })
     await db.delete(funilInscricoes).where(eq(funilInscricoes.id, i.id))
     expect(await db.select().from(enviosFunil)).toHaveLength(0)
   })
@@ -72,12 +78,15 @@ type Enviado = Parameters<ClienteResend['enviarEmail']>[0]
 /** Cliente do Resend falso: só `enviarEmail`; o resto falha se for chamado. */
 function resendFalso(opts: { falhar?: () => Error | null; antes?: (e: Enviado) => Promise<void> } = {}) {
   const enviados: Enviado[] = []
+  /** Toda chamada à API, inclusive as que falharam. */
+  const tentativas: Enviado[] = []
   let n = 0
   const cliente = new Proxy({} as ClienteResend, {
     get(_t, prop) {
       if (prop === 'enviarEmail') {
         return async (e: Enviado) => {
           await opts.antes?.(e)
+          tentativas.push(e)
           const erro = opts.falhar?.()
           if (erro) throw erro
           enviados.push(e)
@@ -90,7 +99,7 @@ function resendFalso(opts: { falhar?: () => Error | null; antes?: (e: Enviado) =
       }
     },
   })
-  return { cliente, enviados }
+  return { cliente, enviados, tentativas }
 }
 
 let seq = 0
@@ -148,7 +157,7 @@ describe('etapasDevidas', () => {
     await definirAtivo('boas-vindas', false, { db })
     expect(await etapasDevidas(AGORA, { db })).toEqual([])
     const r = resendFalso()
-    expect(await executarEnviosFunil({ ...base(r.cliente) })).toEqual({ enviados: 0, pulados: 0, erros: 0, restantes: 0 })
+    expect(await executarEnviosFunil({ ...base(r.cliente) })).toEqual({ enviados: 0, pulados: 0, erros: 0, incertos: 0, restantes: 0 })
     expect(r.enviados).toHaveLength(0)
   })
 
@@ -214,32 +223,102 @@ describe('enviarEtapa', () => {
     expect(await enviarEtapa(item, base(r.cliente))).toBe('enviado')
     const [e] = r.enviados
     expect(e.para).toBe(c.email)
-    expect(e.chaveIdempotencia).toBe(`funil-${item.inscricaoId}-0`)
+    const insc = await inscricaoDe(c.id, 'boas-vindas')
+    expect(e.chaveIdempotencia).toBe(`funil-${item.inscricaoId}-0-${insc.entrouEm.getTime()}`)
     expect(e.cabecalhos?.['List-Unsubscribe']).toMatch(/^<https:\/\/painel\.example\.com\/api\/publico\/descadastro\?t=[^>]+>$/)
     expect(e.cabecalhos?.['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click')
     expect(e.tags).toContainEqual({ name: 'funil', value: 'boas-vindas' })
     expect(e.assunto).toBe(EMAILS_FUNIS['boas-vindas'][0].assunto)
     expect(e.html).toContain('https://painel.example.com/descadastro?t=')
     const [envio] = await db.select().from(enviosFunil)
-    expect(envio).toMatchObject({ inscricaoId: item.inscricaoId, etapa: 0, status: 'enviado', resendEmailId: 're_1', erro: null })
+    expect(envio).toMatchObject({ inscricaoId: item.inscricaoId, etapa: 0, status: 'enviado', resendEmailId: 're_1', erro: null, tentativas: 1 })
     const evs = await db.select().from(eventosContato).where(and(eq(eventosContato.contatoId, c.id), eq(eventosContato.tipo, 'enviado')))
     expect(evs).toHaveLength(1)
     expect(JSON.stringify(evs[0].dados)).not.toContain('example.com')
     expect(JSON.stringify(evs[0].dados)).not.toContain('Pessoa')
   })
 
-  it('erro do Resend fica gravado sem dado pessoal e a etapa é tentada de novo depois', async () => {
+  it('recusa do Resend fica gravada sem dado pessoal e a etapa é tentada de novo depois', async () => {
     await lead()
     const [item] = await etapasDevidas(AGORA, { db })
     let falhar = true
-    const r = resendFalso({ falhar: () => (falhar ? new ErroResend('servidor') : null) })
+    const r = resendFalso({ falhar: () => (falhar ? new ErroResend('invalido') : null) })
     expect(await enviarEtapa(item, base(r.cliente))).toBe('erro')
     const [envio] = await db.select().from(enviosFunil)
-    expect(envio).toMatchObject({ status: 'erro', erro: 'o Resend está indisponível; tente de novo' })
+    expect(envio).toMatchObject({ status: 'erro', erro: 'o Resend recusou os dados enviados', tentativas: 1 })
     expect(await etapasDevidas(depois(1), { db })).toMatchObject([{ etapa: 0 }])
     falhar = false
     expect(await enviarEtapa(item, base(r.cliente, depois(1)))).toBe('enviado')
-    expect(await db.select().from(enviosFunil)).toMatchObject([{ status: 'enviado', erro: null }])
+    expect(await db.select().from(enviosFunil)).toMatchObject([{ status: 'enviado', erro: null, tentativas: 2 }])
+  })
+
+  it('erro de rede vira incerto e não é tentado de novo no dia seguinte', async () => {
+    await lead()
+    const r = resendFalso({ falhar: () => new ErroResend('rede') })
+    expect(await executarEnviosFunil({ ...base(r.cliente) })).toEqual({ enviados: 0, pulados: 0, erros: 0, incertos: 1, restantes: 0 })
+    expect(await db.select().from(enviosFunil)).toMatchObject([{ status: 'incerto', tentativas: 1 }])
+    expect(await etapasDevidas(depois(1), { db })).toEqual([])
+    expect(await executarEnviosFunil({ ...base(r.cliente, depois(1)) })).toMatchObject({ incertos: 0, erros: 0, enviados: 0 })
+    expect(r.tentativas).toHaveLength(1)
+  })
+
+  it('5xx também vira incerto e conta no limite do dia', async () => {
+    process.env.RESEND_LIMITE_DIARIO = '1'
+    const a = await lead()
+    await lead()
+    const r = resendFalso({ falhar: () => new ErroResend('servidor') })
+    expect(await executarEnviosFunil({ ...base(r.cliente) })).toMatchObject({ incertos: 1, restantes: 1 })
+    // O incerto de hoje ocupa a vaga: a boas-vindas imediata espera amanhã.
+    const b = await lead()
+    expect(await enviarBoasVindasAgora(b.id, base(resendFalso().cliente))).toBe('pulado')
+    expect(a.id).toBeLessThan(b.id)
+  })
+
+  it('a mesma cadeia de tentativas gera corpo e token idênticos', async () => {
+    await lead()
+    let falhar = true
+    const r = resendFalso({ falhar: () => (falhar ? new ErroResend('invalido') : null) })
+    await executarEnviosFunil({ ...base(r.cliente) })
+    falhar = false
+    await executarEnviosFunil({ ...base(r.cliente, depois(2)) })
+    expect(r.tentativas).toHaveLength(2)
+    const [t1, t2] = r.tentativas
+    expect(t2.html).toBe(t1.html)
+    expect(t2.texto).toBe(t1.texto)
+    expect(t2.cabecalhos).toEqual(t1.cabecalhos)
+    expect(t2.chaveIdempotencia).toBe(t1.chaveIdempotencia)
+  })
+
+  it('a 3ª recusa encerra a inscrição com saiu_funil e não tenta mais', async () => {
+    const c = await lead()
+    const r = resendFalso({ falhar: () => new ErroResend('invalido') })
+    for (let d = 0; d < 3; d++) expect(await executarEnviosFunil({ ...base(r.cliente, depois(d)) })).toMatchObject({ erros: 1 })
+    expect(await inscricaoDe(c.id, 'boas-vindas')).toMatchObject({ status: 'saiu', motivoSaida: 'falha permanente no envio' })
+    const evs = await db.select().from(eventosContato).where(and(eq(eventosContato.contatoId, c.id), eq(eventosContato.tipo, 'saiu_funil')))
+    expect(evs).toHaveLength(1)
+    expect(evs[0].dados).toMatchObject({ motivo: 'falha permanente no envio' })
+    expect(await db.select().from(enviosFunil)).toMatchObject([{ status: 'erro', tentativas: 3 }])
+    expect(await executarEnviosFunil({ ...base(r.cliente, depois(3)) })).toMatchObject({ erros: 0 })
+    expect(r.tentativas).toHaveLength(3)
+  })
+
+  it('marcador pendente não consome o limite, não conta tentativa e não encerra a inscrição', async () => {
+    process.env.RESEND_LIMITE_DIARIO = '1'
+    expect(await ligarProspeccaoFria({ avaliacaoLegitimoInteresse: true, fonteDocumentada: true, descadastroEmTodoEmail: true, volumeBaixoAquecido: true }, 10, { db })).toEqual({ ok: true })
+    const p1 = await contato({ baseLegal: 'legitimo_interesse', origem: 'planilha' })
+    const p2 = await contato({ baseLegal: 'legitimo_interesse', origem: 'planilha' })
+    await inscrever('prospeccao-fria', [p1.id, p2.id], { db, caminho: 'manual', agora: AGORA })
+    const r = resendFalso()
+    for (let d = 0; d < 4; d++) expect(await executarEnviosFunil({ ...base(r.cliente, depois(d)) })).toMatchObject({ erros: 2, enviados: 0, restantes: 0 })
+    expect(r.tentativas).toHaveLength(0)
+    expect(await db.select().from(enviosFunil)).toMatchObject([
+      { status: 'erro', tentativas: 0, erro: 'texto com marcador pendente' },
+      { status: 'erro', tentativas: 0, erro: 'texto com marcador pendente' },
+    ])
+    expect((await inscricaoDe(p1.id, 'prospeccao-fria')).status).toBe('ativo')
+    // A vaga do dia continua livre.
+    const l = await lead(depois(3))
+    expect(await enviarBoasVindasAgora(l.id, base(r.cliente, depois(3)))).toBe('enviado')
   })
 
   it('última etapa conclui inscrição', async () => {
@@ -267,6 +346,37 @@ describe('enviarEtapa', () => {
     expect(await etapasDevidas(depois(40), { db })).toMatchObject([{ contatoId: c.id, etapa: 0 }])
     expect(await executarEnviosFunil({ ...base(r.cliente, depois(40)) })).toMatchObject({ enviados: 1 })
   })
+
+  it('reentrada em menos de 24 h usa chave nova e mantém as linhas antigas', async () => {
+    const c = await lead()
+    const r = resendFalso()
+    await executarEnviosFunil({ ...base(r.cliente) })
+    const f = await obterFunil('boas-vindas', { db })
+    const umaHora = new Date(AGORA.getTime() + 3_600_000)
+    await sair(f.id, [c.id], { db, motivo: 'x', agora: umaHora })
+    await inscrever('boas-vindas', [c.id], { db, caminho: 'manual', agora: umaHora })
+    expect(await executarEnviosFunil({ ...base(r.cliente, umaHora) })).toMatchObject({ enviados: 1 })
+    expect(r.enviados).toHaveLength(2)
+    expect(r.enviados[1].chaveIdempotencia).not.toBe(r.enviados[0].chaveIdempotencia)
+    const linhas = await db.select().from(enviosFunil).orderBy(asc(enviosFunil.id))
+    expect(linhas).toHaveLength(2)
+    expect(linhas.map((l) => [l.etapa, l.status])).toEqual([[0, 'enviado'], [0, 'enviado']])
+    expect(linhas[0].rodada.getTime()).not.toBe(linhas[1].rodada.getTime())
+  })
+
+  it('inscrição com todas as etapas da rodada enviadas é concluída na seleção', async () => {
+    const c = await lead()
+    const i = await inscricaoDe(c.id, 'boas-vindas')
+    // Simula uma queda depois do último envio: as três linhas existem, a inscrição ficou ativa.
+    await db.insert(enviosFunil).values([0, 1, 2].map((etapa) => ({ inscricaoId: i.id, rodada: i.entrouEm, etapa, status: 'enviado' as const, enviadoEm: AGORA })))
+    expect(await etapasDevidas(depois(30), { db })).toEqual([])
+    expect(await inscricaoDe(c.id, 'boas-vindas')).toMatchObject({ status: 'concluido', motivoSaida: 'sequência concluída' })
+    // Nutrição (sem sequência) nunca é concluída pela seleção.
+    const n = await contato({ status: 'cliente', baseLegal: 'contrato' })
+    await inscrever('nutricao-blog', [n.id], { db, caminho: 'manual', agora: AGORA })
+    await etapasDevidas(depois(30), { db })
+    expect((await inscricaoDe(n.id, 'nutricao-blog')).status).toBe('ativo')
+  })
 })
 
 describe('executarEnviosFunil', () => {
@@ -274,8 +384,8 @@ describe('executarEnviosFunil', () => {
     await lead()
     await lead()
     const r = resendFalso()
-    expect(await executarEnviosFunil({ ...base(r.cliente) })).toEqual({ enviados: 2, pulados: 0, erros: 0, restantes: 0 })
-    expect(await executarEnviosFunil({ ...base(r.cliente) })).toEqual({ enviados: 0, pulados: 0, erros: 0, restantes: 0 })
+    expect(await executarEnviosFunil({ ...base(r.cliente) })).toEqual({ enviados: 2, pulados: 0, erros: 0, incertos: 0, restantes: 0 })
+    expect(await executarEnviosFunil({ ...base(r.cliente) })).toEqual({ enviados: 0, pulados: 0, erros: 0, incertos: 0, restantes: 0 })
     expect(r.enviados).toHaveLength(2)
     // A mesma etapa reenviada à mão (corrida entre duas execuções) bate no índice único.
     const [i] = await db.select().from(funilInscricoes).orderBy(asc(funilInscricoes.id))
@@ -290,7 +400,7 @@ describe('executarEnviosFunil', () => {
     const a = await lead()
     const b = await lead()
     const r = resendFalso()
-    expect(await executarEnviosFunil({ ...base(r.cliente), limite: 2 })).toEqual({ enviados: 2, pulados: 0, erros: 0, restantes: 1 })
+    expect(await executarEnviosFunil({ ...base(r.cliente), limite: 2 })).toEqual({ enviados: 2, pulados: 0, erros: 0, incertos: 0, restantes: 1 })
     expect(r.enviados.map((e) => e.para).sort()).toEqual([a.email, b.email].sort())
     // No dia seguinte, a que sobrou sai.
     expect(await executarEnviosFunil({ ...base(r.cliente, depois(1)), limite: 2 })).toMatchObject({ enviados: 1, restantes: 0 })
@@ -304,14 +414,14 @@ describe('executarEnviosFunil', () => {
     expect(await enviarBoasVindasAgora(a.id, base(r.cliente))).toBe('enviado')
     await lead()
     await lead()
-    expect(await executarEnviosFunil({ ...base(r.cliente) })).toEqual({ enviados: 1, pulados: 0, erros: 0, restantes: 1 })
+    expect(await executarEnviosFunil({ ...base(r.cliente) })).toEqual({ enviados: 1, pulados: 0, erros: 0, incertos: 0, restantes: 1 })
   })
 
   it('sem acesso público não envia', async () => {
     const a = await lead()
     await lead()
     const r = resendFalso()
-    expect(await executarEnviosFunil({ ...base(r.cliente), acessoPublico: false })).toEqual({ enviados: 0, pulados: 0, erros: 0, restantes: 2 })
+    expect(await executarEnviosFunil({ ...base(r.cliente), acessoPublico: false })).toEqual({ enviados: 0, pulados: 0, erros: 0, incertos: 0, restantes: 2 })
     expect(await enviarBoasVindasAgora(a.id, { ...base(r.cliente), acessoPublico: false })).toBe('pulado')
     expect(r.enviados).toHaveLength(0)
     expect(await db.select().from(enviosFunil)).toHaveLength(0)

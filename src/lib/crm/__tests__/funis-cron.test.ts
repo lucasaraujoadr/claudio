@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { criarClienteBrevo } from '@/lib/brevo'
 import { executarCronDiario, type RegistroSincronizacao } from '@/lib/cron-diario'
 import { contatos, enviosFunil, funilInscricoes, funis, importacoesContatos } from '@/lib/db/schema'
-import type { ClienteResend } from '@/lib/resend'
+import { ErroResend, type ClienteResend } from '@/lib/resend'
 import type { BancoCrm } from '../banco'
 import { executarEtapaFunis, FalhaEtapaFunis } from '../funis-cron'
 import { INTERROMPIDO_POR_TEMPO } from '../funis'
@@ -62,6 +62,15 @@ describe('executarEtapaFunis', () => {
     expect(ok.detalhes).toMatchObject({ reativacao: 0, enviados: 1, envioErros: 0, envioRestantes: 0 })
     expect(ok.mensagem).toContain('emails enviados: 1')
     expect(await db.select().from(enviosFunil)).toHaveLength(1)
+  })
+
+  it('incertos aparecem na mensagem para alguém conferir', async () => {
+    process.env.DESCADASTRO_SEGREDO = 'segredo-de-teste-descartavel'
+    await db.insert(contatos).values({ nome: 'C', email: 'c@example.com', emailNormalizado: 'c@example.com', origem: 'planilha', baseLegal: 'contrato', status: 'cliente', criadoEm: ANTIGO })
+    const cliente = { enviarEmail: async () => { throw new ErroResend('rede') } } as unknown as ClienteResend
+    const r = await executarEtapaFunis({ db, cliente: criarClienteBrevo({ apiKey: null }), resend: cliente, acessoPublico: async () => true, agora: AGORA })
+    expect(r.detalhes).toMatchObject({ enviados: 0, envioIncertos: 1 })
+    expect(r.mensagem).toContain('incertos (conferir no Resend; não são repetidos): 1')
   })
 
   it('sem chave do Resend: nada é enviado e a mensagem diz', async () => {

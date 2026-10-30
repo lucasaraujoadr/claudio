@@ -142,6 +142,7 @@ export async function executarEtapaFunis(
       detalhes.enviados = r.enviados
       detalhes.envioPulados = r.pulados
       detalhes.envioErros = r.erros
+      detalhes.envioIncertos = r.incertos
       detalhes.envioRestantes = r.restantes
       if (acesso && r.restantes > 0 && semTempo()) parouPorTempo = true
     })
@@ -158,7 +159,7 @@ export async function executarEtapaFunis(
       ? 'Resend não configurado (nenhum email de funil enviado)'
       : detalhes.acessoPublico === 'não'
         ? `painel sem acesso público: nenhum email enviado (${detalhes.envioRestantes ?? 0} na fila)`
-        : `emails enviados: ${detalhes.enviados ?? '—'}, erros: ${detalhes.envioErros ?? '—'}, para amanhã: ${detalhes.envioRestantes ?? '—'}`,
+        : `emails enviados: ${detalhes.enviados ?? '—'}, erros: ${detalhes.envioErros ?? '—'}, incertos (conferir no Resend; não são repetidos): ${detalhes.envioIncertos ?? '—'}, para amanhã: ${detalhes.envioRestantes ?? '—'}`,
     ...(cliente.conectado ? [] : ['Brevo não conectado']),
   ].join('; ') + '.'
   const resultado = { linhas, detalhes, mensagem }

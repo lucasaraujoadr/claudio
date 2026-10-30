@@ -512,9 +512,17 @@ export const funilInscricoes = pgTable(
 export type Funil = typeof funis.$inferSelect
 export type FunilInscricao = typeof funilInscricoes.$inferSelect
 
-export const envioStatus = pgEnum('envio_status', ['enviado', 'erro'])
+/**
+ * `erro`: o Resend recusou (pode ser tentado de novo, até 3 vezes). `incerto`: rede ou 5xx; o
+ * email pode ter saído, então nunca é tentado de novo sozinho (alguém confere no Resend).
+ */
+export const envioStatus = pgEnum('envio_status', ['enviado', 'erro', 'incerto'])
 
-/** Um email de etapa de funil enviado (ou que falhou). Único por (inscrição, etapa): a etapa nunca sai duas vezes. */
+/**
+ * Um email de etapa de funil enviado (ou que falhou). Único por (inscrição, rodada, etapa): a
+ * etapa nunca sai duas vezes na mesma passagem pelo funil. `rodada` é o `entrou_em` da inscrição
+ * na hora do envio; a reentrada abre uma rodada nova e mantém o histórico.
+ */
 export const enviosFunil = pgTable(
   'envios_funil',
   {
@@ -522,14 +530,19 @@ export const enviosFunil = pgTable(
     inscricaoId: integer('inscricao_id')
       .notNull()
       .references(() => funilInscricoes.id, { onDelete: 'cascade' }),
+    rodada: timestamp('rodada', { withTimezone: true }).notNull(),
     /** Índice da etapa na sequência do funil. */
     etapa: integer('etapa').notNull(),
     status: envioStatus('status').notNull(),
     resendEmailId: text('resend_email_id'),
     erro: text('erro'),
+    /** Chamadas reais à API do Resend para esta etapa. */
+    tentativas: integer('tentativas').notNull().default(0),
+    /** Primeira reserva da etapa; nunca muda. O token de descadastro deriva daqui (corpo idêntico nas novas tentativas). */
+    primeiraTentativaEm: timestamp('primeira_tentativa_em', { withTimezone: true }).notNull().defaultNow(),
     enviadoEm: timestamp('enviado_em', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('envios_funil_inscricao_etapa_uq').on(t.inscricaoId, t.etapa)],
+  (t) => [uniqueIndex('envios_funil_inscricao_rodada_etapa_uq').on(t.inscricaoId, t.rodada, t.etapa)],
 )
 
 export type EnvioFunil = typeof enviosFunil.$inferSelect

@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gte, inArray, ne, notExists, sql } from 'drizzle-orm'
-import { contatos, enviosFunil, eventosContato, funilInscricoes, funis, type Funil, type FunilInscricao } from '@/lib/db/schema'
+import { contatos, eventosContato, funilInscricoes, funis, type Funil, type FunilInscricao } from '@/lib/db/schema'
 import { bancoPadrao, type BancoCrm } from './banco'
 import type { StatusContato } from './campos'
 import { DEFINICOES_FUNIS } from './funis-conteudo'
@@ -28,8 +28,8 @@ import {
  *
  * - Entrar num funil grava a inscrição e o evento `entrou_funil`; sair grava `saiu_funil`.
  *   Quem não está `ativo` não recebe a etapa seguinte.
- * - A reentrada reabre a mesma linha e apaga os envios da passagem anterior: a sequência
- *   recomeça do primeiro email.
+ * - A reentrada reabre a mesma linha com `entrou_em` novo: é uma rodada nova de envios (o
+ *   histórico da anterior fica em `envios_funil`) e a sequência recomeça do primeiro email.
  * - A sequência é concluída pelo motor de envios, depois da última etapa.
  * - Nada aqui registra dado de contato em log.
  */
@@ -157,8 +157,6 @@ export async function inscrever(
         somar(r, d.motivo)
         continue
       }
-      // Reentrada: os envios da passagem anterior saem, para a sequência recomeçar do email 1.
-      if (atual) await tx.delete(enviosFunil).where(eq(enviosFunil.inscricaoId, atual.id))
       await tx
         .insert(funilInscricoes)
         .values({ contatoId: c.id, funilId: funil.id, status: 'ativo', origem: opts.caminho, entrouEm: agora })

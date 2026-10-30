@@ -1,9 +1,10 @@
-import { and, asc, eq, gte, sql } from 'drizzle-orm'
+import { and, asc, eq, gte, inArray, sql } from 'drizzle-orm'
 import { contatos, enviosFunil, eventosContato, funilInscricoes, funis } from '@/lib/db/schema'
 import { urlDescadastro } from '@/lib/descadastro'
 import { ErroResend, type ClienteResend } from '@/lib/resend'
 import { bancoPadrao, type BancoCrm } from './banco'
 import { montarEmail } from './email-html'
+import { sair } from './funis'
 import { etapasDaSequencia, linkWhatsapp, marcadoresPendentes } from './funis-conteudo'
 import { ehSlugFunil, inicioDoDiaBrasilia, type SlugFunil } from './funis-regras'
 
@@ -11,33 +12,64 @@ import { ehSlugFunil, inicioDoDiaBrasilia, type SlugFunil } from './funis-regras
  * Motor dos funis (spec §2.4): o painel envia cada etapa pelo Resend.
  *
  * - Uma etapa é devida quando a referência + `esperarDias` já passou. A referência é a entrada
- *   no funil (etapa 0) ou o envio da etapa anterior.
- * - `envios_funil` é único por (inscrição, etapa): a linha é gravada **antes** do envio (reserva) e
- *   um conflito vira `pulado`. Uma etapa com `erro` é tentada de novo na rodada seguinte.
+ *   no funil (etapa 0) ou o envio da etapa anterior, sempre na rodada atual (`rodada` = o
+ *   `entrou_em` da inscrição; a reentrada abre rodada nova e mantém o histórico).
+ * - `envios_funil` é único por (inscrição, rodada, etapa): a linha é reservada **antes** do envio
+ *   e um conflito vira `pulado`.
+ * - Resultado de cada tentativa:
+ *   - recusa do Resend (`erro`): tentada de novo na rodada seguinte, até 3 chamadas; na 3ª a
+ *     inscrição sai do funil;
+ *   - rede ou 5xx (`incerto`): o email pode ter saído, então nunca é repetido sozinho;
+ *   - erro sem chamada à API (marcador pendente, token): fica `erro`, sem contar tentativa nem limite.
+ * - O token de descadastro deriva da primeira reserva: toda tentativa da mesma etapa manda o
+ *   mesmo corpo, com a mesma chave de idempotência.
  * - Imediatamente antes de cada envio, o contato, a inscrição e o funil são relidos: descadastrado,
- *   dados apagados, inscrição que não está ativa ou funil desligado nunca recebem.
+ *   dados apagados, inscrição que não está ativa (ou mudou de rodada) ou funil desligado nunca recebem.
  * - Sem acesso público (o link de descadastro não abriria), nada sai.
  * - Para o Resend vão só o email e o nome (no corpo). Nada de dado de contato em log ou evento.
  */
 
 export type EtapaDevida = { inscricaoId: number; contatoId: number; slug: SlugFunil; etapa: number }
-export type ResultadoEnvio = 'enviado' | 'pulado' | 'erro'
-export type ResultadoEnviosFunil = { enviados: number; pulados: number; erros: number; restantes: number }
+export type ResultadoEnvio = 'enviado' | 'pulado' | 'erro' | 'incerto'
+export type ResultadoEnviosFunil = { enviados: number; pulados: number; erros: number; incertos: number; restantes: number }
 export type ResultadoBoasVindasAgora = ResultadoEnvio | 'nada_devido'
 
 /** Ordem de envio quando o limite diário não cobre tudo. */
 export const PRIORIDADE_FUNIS: readonly SlugFunil[] = ['boas-vindas', 'reativacao', 'prospeccao-fria', 'nutricao-blog']
 export const LIMITE_DIARIO_PADRAO = 90
 export const MOTIVO_CONCLUSAO = 'sequência concluída'
+export const MOTIVO_FALHA_PERMANENTE = 'falha permanente no envio'
+/** Chamadas à API recusadas antes de desistir da etapa (e tirar o contato do funil). */
+export const MAX_TENTATIVAS = 3
 
 const DIA_MS = 86_400_000
 const ERRO_MARCADOR = 'texto com marcador pendente'
-const ERRO_GENERICO = 'falha no envio'
+const ERRO_TOKEN = 'link de descadastro indisponível (DESCADASTRO_SEGREDO)'
+const ERRO_DESCONHECIDO = 'falha no envio; confira no Resend se o email saiu'
+const TIPOS_INCERTOS: ReadonlySet<ErroResend['tipo']> = new Set(['rede', 'servidor'])
 
 export function limiteDiario(env: NodeJS.ProcessEnv = process.env): number {
   const n = Number(env.RESEND_LIMITE_DIARIO ?? LIMITE_DIARIO_PADRAO)
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : LIMITE_DIARIO_PADRAO
 }
+
+async function concluir(db: BancoCrm, inscricaoId: number, contatoId: number, slug: SlugFunil, agora: Date): Promise<void> {
+  const concluidas = await db
+    .update(funilInscricoes)
+    .set({ status: 'concluido', saiuEm: agora, motivoSaida: MOTIVO_CONCLUSAO })
+    .where(and(eq(funilInscricoes.id, inscricaoId), eq(funilInscricoes.status, 'ativo')))
+    .returning({ id: funilInscricoes.id })
+  if (concluidas.length === 0) return
+  const [f] = await db.select({ nome: funis.nome }).from(funis).where(eq(funis.slug, slug))
+  await db.insert(eventosContato).values({
+    contatoId,
+    tipo: 'saiu_funil',
+    dados: { funil: slug, nome: f?.nome ?? null, motivo: MOTIVO_CONCLUSAO, concluido: true },
+    em: agora,
+  })
+}
+
+type EstadoEtapa = { status: 'enviado' | 'erro' | 'incerto'; tentativas: number; enviadoEm: Date }
 
 async function buscarDevidas(db: BancoCrm, agora: Date, filtro?: { contatoId: number; slug: SlugFunil }): Promise<EtapaDevida[]> {
   const linhas = await db
@@ -48,12 +80,14 @@ async function buscarDevidas(db: BancoCrm, agora: Date, filtro?: { contatoId: nu
       entrouEm: funilInscricoes.entrouEm,
       etapa: enviosFunil.etapa,
       status: enviosFunil.status,
+      tentativas: enviosFunil.tentativas,
       enviadoEm: enviosFunil.enviadoEm,
     })
     .from(funilInscricoes)
     .innerJoin(funis, eq(funis.id, funilInscricoes.funilId))
     .innerJoin(contatos, eq(contatos.id, funilInscricoes.contatoId))
-    .leftJoin(enviosFunil, eq(enviosFunil.inscricaoId, funilInscricoes.id))
+    // Só a rodada atual (comparação no banco: sem perder a precisão do timestamp).
+    .leftJoin(enviosFunil, and(eq(enviosFunil.inscricaoId, funilInscricoes.id), eq(enviosFunil.rodada, funilInscricoes.entrouEm)))
     .where(
       and(
         eq(funilInscricoes.status, 'ativo'),
@@ -65,25 +99,35 @@ async function buscarDevidas(db: BancoCrm, agora: Date, filtro?: { contatoId: nu
     )
     .orderBy(asc(funilInscricoes.id))
 
-  const porInscricao = new Map<number, { contatoId: number; slug: SlugFunil; entrouEm: Date; enviados: Map<number, Date> }>()
+  const porInscricao = new Map<number, { contatoId: number; slug: SlugFunil; entrouEm: Date; etapas: Map<number, EstadoEtapa> }>()
   for (const l of linhas) {
     if (!ehSlugFunil(l.slug)) continue
     let i = porInscricao.get(l.inscricaoId)
     if (!i) {
-      i = { contatoId: l.contatoId, slug: l.slug, entrouEm: l.entrouEm, enviados: new Map() }
+      i = { contatoId: l.contatoId, slug: l.slug, entrouEm: l.entrouEm, etapas: new Map() }
       porInscricao.set(l.inscricaoId, i)
     }
-    if (l.etapa !== null && l.status === 'enviado' && l.enviadoEm) i.enviados.set(l.etapa, l.enviadoEm)
+    if (l.etapa !== null && l.status !== null && l.tentativas !== null && l.enviadoEm !== null) {
+      i.etapas.set(l.etapa, { status: l.status, tentativas: l.tentativas, enviadoEm: l.enviadoEm })
+    }
   }
 
   const devidas: (EtapaDevida & { referencia: number })[] = []
   for (const [inscricaoId, i] of porInscricao) {
     const etapas = etapasDaSequencia(i.slug)
+    // Sem sequência (nutrição): nada a enviar e nada a concluir.
+    if (etapas.length === 0) continue
     let etapa = 0
-    while (etapa < etapas.length && i.enviados.has(etapa)) etapa++
-    if (etapa >= etapas.length) continue
-    const referencia = etapa === 0 ? i.entrouEm : i.enviados.get(etapa - 1)
-    // Etapa anterior sem envio confirmado (só acontece se faltar uma do meio): espera.
+    while (etapa < etapas.length && i.etapas.get(etapa)?.status === 'enviado') etapa++
+    if (etapa >= etapas.length) {
+      // Todas enviadas (ex.: queda depois do último envio): conclui aqui.
+      await concluir(db, inscricaoId, i.contatoId, i.slug, agora)
+      continue
+    }
+    const atual = i.etapas.get(etapa)
+    // Incerto nunca é repetido sozinho; recusa só até o máximo de tentativas.
+    if (atual && (atual.status === 'incerto' || atual.tentativas >= MAX_TENTATIVAS)) continue
+    const referencia = etapa === 0 ? i.entrouEm : i.etapas.get(etapa - 1)?.enviadoEm
     if (!referencia) continue
     if (referencia.getTime() + etapas[etapa].esperarDias * DIA_MS > agora.getTime()) continue
     devidas.push({ inscricaoId, contatoId: i.contatoId, slug: i.slug, etapa, referencia: referencia.getTime() })
@@ -94,17 +138,20 @@ async function buscarDevidas(db: BancoCrm, agora: Date, filtro?: { contatoId: nu
   return devidas.map(({ inscricaoId, contatoId, slug, etapa }) => ({ inscricaoId, contatoId, slug, etapa }))
 }
 
-/** Etapas devidas agora, já na ordem de prioridade (boas-vindas, reativação, prospecção, nutrição). */
+/**
+ * Etapas devidas agora, já na ordem de prioridade (boas-vindas, reativação, prospecção, nutrição).
+ * Conclui, de passagem, inscrições cuja rodada atual já teve todas as etapas enviadas.
+ */
 export async function etapasDevidas(agora: Date, opts: { db?: BancoCrm } = {}): Promise<EtapaDevida[]> {
   return buscarDevidas(opts.db ?? bancoPadrao(), agora)
 }
 
-/** Emails de funil já enviados hoje (fuso de Brasília): contam no limite diário do plano. */
+/** Emails de funil que saíram (ou podem ter saído) hoje, fuso de Brasília, em qualquer rodada. */
 async function enviadosHoje(db: BancoCrm, agora: Date): Promise<number> {
   const [{ n }] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(enviosFunil)
-    .where(and(eq(enviosFunil.status, 'enviado'), gte(enviosFunil.enviadoEm, inicioDoDiaBrasilia(agora))))
+    .where(and(inArray(enviosFunil.status, ['enviado', 'incerto']), gte(enviosFunil.enviadoEm, inicioDoDiaBrasilia(agora))))
   return Number(n)
 }
 
@@ -115,38 +162,38 @@ function urlOneClick(url: string): string {
   return u.toString()
 }
 
-/**
- * Envia uma etapa. Reserva a linha em `envios_funil` (conflito = `pulado`), relê contato,
- * inscrição e funil logo antes de enviar e grava o resultado. Depois da última etapa, a
- * inscrição vira `concluido`.
- */
-export async function enviarEtapa(
+/** Resultado interno: `chamouApi` diz se a tentativa conta no limite do plano. */
+async function tentarEtapa(
   item: EtapaDevida,
-  opts: { db?: BancoCrm; cliente: ClienteResend; agora: Date; acessoPublico: boolean },
-): Promise<ResultadoEnvio> {
-  if (!opts.acessoPublico) return 'pulado'
-  const db = opts.db ?? bancoPadrao()
-  const { agora } = opts
+  db: BancoCrm,
+  cliente: ClienteResend,
+  agora: Date,
+): Promise<{ resultado: ResultadoEnvio; chamouApi: boolean }> {
+  const nada = (resultado: ResultadoEnvio) => ({ resultado, chamouApi: false })
   const etapas = etapasDaSequencia(item.slug)
   const email = etapas[item.etapa]
-  if (!email) return 'pulado'
+  if (!email) return nada('pulado')
 
-  // Reserva: insere, ou retoma uma tentativa que falhou. Linha `enviado` existente = conflito.
-  const reservada = await db
+  // Reserva na rodada atual: insere, ou retoma uma recusa com tentativas sobrando. `enviado` e
+  // `incerto` existentes = conflito sem atualização = pulado.
+  const rodadaAtual = sql`(select ${funilInscricoes.entrouEm} from ${funilInscricoes} where ${funilInscricoes.id} = ${item.inscricaoId})`
+  const [reserva] = await db
     .insert(enviosFunil)
-    .values({ inscricaoId: item.inscricaoId, etapa: item.etapa, status: 'enviado', enviadoEm: agora })
+    .values({ inscricaoId: item.inscricaoId, rodada: rodadaAtual, etapa: item.etapa, status: 'enviado', primeiraTentativaEm: agora, enviadoEm: agora })
     .onConflictDoUpdate({
-      target: [enviosFunil.inscricaoId, enviosFunil.etapa],
-      set: { status: 'enviado', erro: null, resendEmailId: null, enviadoEm: agora },
-      setWhere: sql`${enviosFunil.status} = 'erro'`,
+      target: [enviosFunil.inscricaoId, enviosFunil.rodada, enviosFunil.etapa],
+      set: { status: 'enviado', enviadoEm: agora },
+      setWhere: sql`${enviosFunil.status} = 'erro' and ${enviosFunil.tentativas} < ${MAX_TENTATIVAS}`,
     })
-    .returning({ id: enviosFunil.id })
-  if (reservada.length === 0) return 'pulado'
-  const envioId = reservada[0].id
-  const falhou = async (mensagem: string): Promise<'erro'> => {
-    await db.update(enviosFunil).set({ status: 'erro', erro: mensagem }).where(eq(enviosFunil.id, envioId))
-    return 'erro'
-  }
+    .returning({
+      id: enviosFunil.id,
+      rodada: enviosFunil.rodada,
+      primeiraTentativaEm: enviosFunil.primeiraTentativaEm,
+      tentativas: enviosFunil.tentativas,
+      nova: sql<boolean>`(xmax = 0)`,
+    })
+  if (!reserva) return nada('pulado')
+  const envioId = reserva.id
 
   // Releitura imediatamente antes do envio (LGPD): nada do que foi selecionado antes vale aqui.
   const [atual] = await db
@@ -157,15 +204,19 @@ export async function enviarEtapa(
       dadosApagadosEm: contatos.dadosApagadosEm,
       inscricao: funilInscricoes.status,
       contatoDaInscricao: funilInscricoes.contatoId,
+      funilId: funis.id,
       funilAtivo: funis.ativo,
       slug: funis.slug,
+      mesmaRodada: sql<boolean>`${funilInscricoes.entrouEm} = ${enviosFunil.rodada}`,
     })
-    .from(funilInscricoes)
+    .from(enviosFunil)
+    .innerJoin(funilInscricoes, eq(funilInscricoes.id, enviosFunil.inscricaoId))
     .innerJoin(funis, eq(funis.id, funilInscricoes.funilId))
     .innerJoin(contatos, eq(contatos.id, funilInscricoes.contatoId))
-    .where(eq(funilInscricoes.id, item.inscricaoId))
+    .where(eq(enviosFunil.id, envioId))
   if (
     !atual ||
+    !atual.mesmaRodada ||
     atual.contatoDaInscricao !== item.contatoId ||
     atual.slug !== item.slug ||
     atual.status === 'descadastrado' ||
@@ -173,30 +224,39 @@ export async function enviarEtapa(
     atual.inscricao !== 'ativo' ||
     !atual.funilAtivo
   ) {
-    await db.delete(enviosFunil).where(eq(enviosFunil.id, envioId))
-    return 'pulado'
+    // Desfaz a reserva sem apagar histórico de tentativas anteriores.
+    if (reserva.nova) await db.delete(enviosFunil).where(eq(enviosFunil.id, envioId))
+    else await db.update(enviosFunil).set({ status: 'erro' }).where(eq(enviosFunil.id, envioId))
+    return nada('pulado')
   }
 
+  // Erro sem chamada à API: fica `erro`, sem tentativa contada; volta a ser tentado (de graça).
+  const semApi = async (mensagem: string) => {
+    await db.update(enviosFunil).set({ status: 'erro', erro: mensagem }).where(eq(enviosFunil.id, envioId))
+    return nada('erro')
+  }
   let montado: ReturnType<typeof montarEmail>
   let url: string
   try {
-    url = urlDescadastro(item.contatoId, agora)
+    // Token da primeira reserva: a mesma etapa manda sempre o mesmo corpo.
+    url = urlDescadastro(item.contatoId, reserva.primeiraTentativaEm)
     montado = montarEmail(email, { nome: atual.nome || null, urlDescadastro: url, whatsapp: linkWhatsapp() })
   } catch {
-    return falhou('link de descadastro indisponível (DESCADASTRO_SEGREDO)')
+    return semApi(ERRO_TOKEN)
   }
   // `[fonte do contato]` (prospecção) sem resolver: o email não sai.
-  if (marcadoresPendentes([montado.assunto, montado.texto]).length > 0) return falhou(ERRO_MARCADOR)
+  if (marcadoresPendentes([montado.assunto, email.preCabecalho, montado.texto]).length > 0) return semApi(ERRO_MARCADOR)
 
+  const tentativas = reserva.tentativas + 1
   let resendEmailId: string
   try {
-    const r = await opts.cliente.enviarEmail({
+    const r = await cliente.enviarEmail({
       para: atual.email,
       assunto: montado.assunto,
       html: montado.html,
       texto: montado.texto,
       cabecalhos: { 'List-Unsubscribe': `<${urlOneClick(url)}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
-      chaveIdempotencia: `funil-${item.inscricaoId}-${item.etapa}`,
+      chaveIdempotencia: `funil-${item.inscricaoId}-${item.etapa}-${reserva.rodada.getTime()}`,
       tags: [
         { name: 'funil', value: item.slug },
         { name: 'etapa', value: String(item.etapa) },
@@ -204,41 +264,50 @@ export async function enviarEtapa(
     })
     resendEmailId = r.id
   } catch (e) {
-    // Mensagens do ErroResend são fixas (sem chave nem corpo da resposta); o resto, frase própria.
-    return falhou(e instanceof ErroResend ? e.message : ERRO_GENERICO)
+    // Mensagens do ErroResend são fixas (sem chave nem corpo da resposta).
+    if (!(e instanceof ErroResend) || TIPOS_INCERTOS.has(e.tipo)) {
+      // Rede, 5xx ou falha desconhecida: pode ter saído. Nunca repetido sozinho.
+      await db
+        .update(enviosFunil)
+        .set({ status: 'incerto', tentativas, erro: e instanceof ErroResend ? e.message : ERRO_DESCONHECIDO })
+        .where(eq(enviosFunil.id, envioId))
+      return { resultado: 'incerto', chamouApi: true }
+    }
+    await db.update(enviosFunil).set({ status: 'erro', tentativas, erro: e.message }).where(eq(enviosFunil.id, envioId))
+    if (tentativas >= MAX_TENTATIVAS) {
+      await sair(atual.funilId, [item.contatoId], { db, motivo: MOTIVO_FALHA_PERMANENTE, agora })
+    }
+    return { resultado: 'erro', chamouApi: true }
   }
 
-  await db.update(enviosFunil).set({ resendEmailId }).where(eq(enviosFunil.id, envioId))
+  await db.update(enviosFunil).set({ resendEmailId, tentativas, erro: null }).where(eq(enviosFunil.id, envioId))
   await db.insert(eventosContato).values({
     contatoId: item.contatoId,
     tipo: 'enviado',
     dados: { funil: item.slug, etapa: item.etapa, resendEmailId },
     em: agora,
   })
+  if (item.etapa === etapas.length - 1) await concluir(db, item.inscricaoId, item.contatoId, item.slug, agora)
+  return { resultado: 'enviado', chamouApi: true }
+}
 
-  if (item.etapa === etapas.length - 1) {
-    const concluidas = await db
-      .update(funilInscricoes)
-      .set({ status: 'concluido', saiuEm: agora, motivoSaida: MOTIVO_CONCLUSAO })
-      .where(and(eq(funilInscricoes.id, item.inscricaoId), eq(funilInscricoes.status, 'ativo')))
-      .returning({ id: funilInscricoes.id })
-    if (concluidas.length > 0) {
-      const [f] = await db.select({ nome: funis.nome }).from(funis).where(eq(funis.slug, item.slug))
-      await db.insert(eventosContato).values({
-        contatoId: item.contatoId,
-        tipo: 'saiu_funil',
-        dados: { funil: item.slug, nome: f?.nome ?? null, motivo: MOTIVO_CONCLUSAO, concluido: true },
-        em: agora,
-      })
-    }
-  }
-  return 'enviado'
+/**
+ * Envia uma etapa: reserva a linha em `envios_funil` (conflito = `pulado`), relê contato,
+ * inscrição e funil logo antes de enviar e grava o resultado. Depois da última etapa, a
+ * inscrição vira `concluido`.
+ */
+export async function enviarEtapa(
+  item: EtapaDevida,
+  opts: { db?: BancoCrm; cliente: ClienteResend; agora: Date; acessoPublico: boolean },
+): Promise<ResultadoEnvio> {
+  if (!opts.acessoPublico) return 'pulado'
+  return (await tentarEtapa(item, opts.db ?? bancoPadrao(), opts.cliente, opts.agora)).resultado
 }
 
 /**
  * Rotina diária: envia as etapas devidas por ordem de prioridade até o limite do plano
  * (descontado o que já saiu hoje). O que não couber fica para o dia seguinte (`restantes`).
- * `deveParar` (prazo da rotina) para entre envios.
+ * Só tentativas que chamaram a API contam no limite. `deveParar` (prazo da rotina) para entre envios.
  */
 export async function executarEnviosFunil(opts: {
   db?: BancoCrm
@@ -250,15 +319,17 @@ export async function executarEnviosFunil(opts: {
 }): Promise<ResultadoEnviosFunil> {
   const db = opts.db ?? bancoPadrao()
   const devidas = await buscarDevidas(db, opts.agora)
-  const r: ResultadoEnviosFunil = { enviados: 0, pulados: 0, erros: 0, restantes: devidas.length }
+  const r: ResultadoEnviosFunil = { enviados: 0, pulados: 0, erros: 0, incertos: 0, restantes: devidas.length }
   if (!opts.acessoPublico || devidas.length === 0) return r
   const cota = Math.max(0, (opts.limite ?? limiteDiario()) - (await enviadosHoje(db, opts.agora)))
+  let usadas = 0
   for (const item of devidas) {
-    // Erro conta: a chamada ao Resend pode ter sido contada no plano.
-    if (r.enviados + r.erros >= cota || opts.deveParar?.()) break
-    const s = await enviarEtapa(item, { db, cliente: opts.cliente, agora: opts.agora, acessoPublico: true })
-    if (s === 'enviado') r.enviados++
-    else if (s === 'pulado') r.pulados++
+    if (usadas >= cota || opts.deveParar?.()) break
+    const { resultado, chamouApi } = await tentarEtapa(item, db, opts.cliente, opts.agora)
+    if (chamouApi) usadas++
+    if (resultado === 'enviado') r.enviados++
+    else if (resultado === 'pulado') r.pulados++
+    else if (resultado === 'incerto') r.incertos++
     else r.erros++
     r.restantes--
   }
@@ -278,5 +349,5 @@ export async function enviarBoasVindasAgora(
   const [item] = (await buscarDevidas(db, opts.agora, { contatoId, slug: 'boas-vindas' })).filter((d) => d.etapa === 0)
   if (!item) return 'nada_devido'
   if ((await enviadosHoje(db, opts.agora)) >= limiteDiario()) return 'pulado'
-  return enviarEtapa(item, { ...opts, db })
+  return (await tentarEtapa(item, db, opts.cliente, opts.agora)).resultado
 }
