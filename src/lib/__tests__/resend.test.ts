@@ -211,6 +211,14 @@ describe('broadcasts', () => {
     })
   })
 
+  it('atualizarBroadcast usa PATCH no rascunho', async () => {
+    const { f, chamadas } = fetchFalso([{ status: 200, json: { id: 'b1' } }])
+    await criarClienteResend(cfg, f).atualizarBroadcast('b1', { nome: 'N', assunto: 'A', html: '<p>x</p>', texto: 'x' })
+    expect(chamadas[0].url).toBe('https://api.resend.com/broadcasts/b1')
+    expect(chamadas[0].metodo).toBe('PATCH')
+    expect(chamadas[0].corpo).toMatchObject({ subject: 'A', html: '<p>x</p>' })
+  })
+
   it('enviarBroadcast com e sem agendamento', async () => {
     const { f, chamadas } = fetchFalso([{ status: 200, json: { id: 'b1' } }])
     const c = criarClienteResend(cfg, f)

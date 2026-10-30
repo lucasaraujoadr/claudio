@@ -12,6 +12,7 @@
  * - `POST /broadcasts` (`segment_id`, `name`, `from`, `reply_to`, `subject`, `html`, `text`;
  *   `send` fica falso: nasce como rascunho) → `{id}`. `preview_text` não é documentado na criação, então
  *   não é enviado: o pré-cabeçalho vai no HTML (div oculto), montado por quem chama.
+ * - `PATCH /broadcasts/{id}` (mesmos campos; só rascunho) → `{id}`; 404 se não existe mais.
  * - `POST /broadcasts/{id}/send` (`scheduled_at` ISO 8601, opcional) → `{id}`.
  * - `GET /broadcasts/{id}` → `{id, status, ...}`.
  *
@@ -203,6 +204,16 @@ export function criarClienteResend(cfg: ConfigResend, f: typeof fetch = fetch) {
         },
       })
       return { id: lerId(json) }
+    },
+
+    /** Reescreve o conteúdo de um broadcast ainda em rascunho. */
+    async atualizarBroadcast(
+      id: string,
+      b: { nome: string; assunto: string; html: string; texto: string },
+    ): Promise<void> {
+      await chamar('PATCH', `/broadcasts/${encodeURIComponent(id)}`, {
+        json: { name: b.nome, from: cfg.remetente, ...(cfg.responderPara ? { reply_to: cfg.responderPara } : {}), subject: b.assunto, html: b.html, text: b.texto },
+      })
     },
 
     async enviarBroadcast(id: string, agendarPara?: Date): Promise<void> {

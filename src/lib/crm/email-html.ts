@@ -21,10 +21,10 @@ import { SLUGS_FUNIS, type SlugFunil } from './funis-regras'
  * WhatsApp sai do email: nunca vai `[link do WhatsApp]` para o advogado.
  */
 
-const DOURADO = '#DAA522'
+export const DOURADO = '#DAA522'
 const ESCURO = '#0E0F11'
 const CLARO = '#F5F3EE'
-const TINTA = '#1F2933'
+export const TINTA = '#1F2933'
 const FONTE = 'Arial,Helvetica,sans-serif'
 const SAUDACAO = 'Prezado(a) Dr(a).,'
 const MAX_NOME = 100
@@ -58,6 +58,40 @@ function slugDoEmail(e: EmailFunil): SlugFunil | null {
 function limparNome(nome: string | null): string {
   // Sem quebras nem caracteres de controle (o nome vai também para o texto puro).
   return (nome ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_NOME)
+}
+
+/**
+ * Modelo da marca compartilhado (funis e newsletter): tabela de 600 px, logo, corpo e rodapé escuro com
+ * a empresa, o motivo do envio e o descadastro. O pré-cabeçalho vai num div oculto no topo do corpo
+ * (o Resend não tem campo próprio). `corpoHtml` já vem escapado e montado por quem chama.
+ */
+export function montarLayoutMarca(l: {
+  titulo: string
+  preCabecalho: string
+  corpoHtml: string
+  motivo: string
+  urlDescadastro: string
+}): string {
+  const logo = escaparHtml(`${urlPublicaPainel()}/logo-og.png`)
+  const href = escaparHtml(l.urlDescadastro)
+  const link = `<a href="${href}" style="color:${DOURADO};text-decoration:underline">descadastre-se aqui</a>`
+  return [
+    '<!doctype html>',
+    `<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escaparHtml(l.titulo)}</title></head>`,
+    `<body style="margin:0;padding:0;background:${CLARO}">`,
+    `<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all">${escaparHtml(l.preCabecalho)}</div>`,
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${CLARO}"><tr><td align="center" style="padding:24px 12px">`,
+    `<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background:#FFFFFF;border-top:4px solid ${DOURADO}">`,
+    `<tr><td style="padding:24px 32px 8px"><img src="${logo}" width="200" alt="Oliveira Guimarães" style="display:block;border:0;outline:none;height:auto;width:200px;max-width:100%"></td></tr>`,
+    `<tr><td style="padding:16px 32px 24px;font-family:${FONTE};font-size:16px;line-height:1.6;color:${TINTA}">${l.corpoHtml}</td></tr>`,
+    `<tr><td style="padding:20px 32px;background:${ESCURO};font-family:${FONTE};font-size:12px;line-height:1.5;color:${CLARO}">`,
+    `<p style="margin:0 0 8px;color:${DOURADO};font-weight:bold">${escaparHtml(NOME_EMPRESA)}</p>`,
+    `<p style="margin:0 0 8px">${escaparHtml(l.motivo)}</p>`,
+    `<p style="margin:0">Se não quiser mais receber estes emails, ${link}.</p>`,
+    '</td></tr></table>',
+    '</td></tr></table>',
+    '</body></html>',
+  ].join('\n')
 }
 
 export function montarEmail(
@@ -95,24 +129,13 @@ export function montarEmail(
     )
     .join('')
 
-  const logo = escaparHtml(`${urlPublicaPainel()}/logo-og.png`)
-  const html = [
-    '<!doctype html>',
-    `<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escaparHtml(e.assunto)}</title></head>`,
-    `<body style="margin:0;padding:0;background:${CLARO}">`,
-    `<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">${escaparHtml(e.preCabecalho)}</div>`,
-    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${CLARO}"><tr><td align="center" style="padding:24px 12px">`,
-    `<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background:#FFFFFF;border-top:4px solid ${DOURADO}">`,
-    `<tr><td style="padding:24px 32px 8px"><img src="${logo}" width="200" alt="Oliveira Guimarães" style="display:block;border:0;outline:none;height:auto;width:200px;max-width:100%"></td></tr>`,
-    `<tr><td style="padding:16px 32px 24px;font-family:${FONTE};font-size:16px;line-height:1.6;color:${TINTA}">${corpoHtml}</td></tr>`,
-    `<tr><td style="padding:20px 32px;background:${ESCURO};font-family:${FONTE};font-size:12px;line-height:1.5;color:${CLARO}">`,
-    `<p style="margin:0 0 8px;color:${DOURADO};font-weight:bold">${escaparHtml(NOME_EMPRESA)}</p>`,
-    `<p style="margin:0 0 8px">${escaparHtml(motivo)}</p>`,
-    `<p style="margin:0">Se não quiser mais receber estes emails, ${link('descadastre-se aqui')}.</p>`,
-    '</td></tr></table>',
-    '</td></tr></table>',
-    '</body></html>',
-  ].join('\n')
+  const html = montarLayoutMarca({
+    titulo: e.assunto,
+    preCabecalho: e.preCabecalho,
+    corpoHtml,
+    motivo,
+    urlDescadastro: ctx.urlDescadastro,
+  })
 
   return { html, texto, assunto: e.assunto }
 }
