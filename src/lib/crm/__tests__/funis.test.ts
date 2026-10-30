@@ -17,7 +17,7 @@ import {
   sair,
 } from '../funis'
 import { inscreverBoasVindasDoSite, sairDeTodosOsFunis } from '../ganchos-funis'
-import { tratarWebhookBrevo } from '../webhook-brevo'
+import { aplicarEventoResend } from '../webhook-resend'
 import { tratarWebhookSite } from '../webhook-site'
 import { criarBancoTesteFunis } from './banco-teste-funis'
 
@@ -124,7 +124,7 @@ describe('inscrição e saída', () => {
     expect(await sairDeTodosOsFunis(c.id, { db, motivo: 'de novo' })).toBe(0)
   })
 
-  it('webhook do site inscreve em boas-vindas; webhook do Brevo (descadastro) tira', async () => {
+  it('webhook do site inscreve em boas-vindas; webhook do Resend (descadastro) tira', async () => {
     const corpo = new URLSearchParams({ Nome: 'Teste', 'E-mail': 'teste.e9@example.com', form_id: 'x' }).toString()
     const rs = await tratarWebhookSite(
       new Request('http://localhost/api/webhooks/site?token=t', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: corpo }),
@@ -133,15 +133,11 @@ describe('inscrição e saída', () => {
     expect(rs.status).toBe(200)
     const [c] = await db.select().from(contatos)
     expect((await inscricao(c.id, 'boas-vindas')).status).toBe('ativo')
-    const rb = await tratarWebhookBrevo(
-      new Request('http://localhost/api/webhooks/brevo?token=b', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ event: 'unsubscribe', email: 'teste.e9@example.com', camp_id: 1, ts_event: 1_700_000_000 }),
-      }),
-      { db, token: 'b' },
+    const rb = await aplicarEventoResend(
+      { svixId: 'msg_funis_1', corpo: { type: 'contact.updated', data: { email: 'teste.e9@example.com', unsubscribed: true } } },
+      { db },
     )
-    expect(rb.status).toBe(200)
+    expect(rb).toBe('processado')
     expect((await inscricao(c.id, 'boas-vindas')).status).toBe('saiu')
   })
 

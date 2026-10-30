@@ -31,7 +31,7 @@ function redirecionaParaLogin(path: string, cookie?: string) {
 describe('proxy: lista de rotas liberadas', () => {
   it.each([
     '/login', '/api/login', '/api/cron/gsc', '/api/cron', '/_next/static/x.js', '/favicon.ico',
-    '/api/webhooks/brevo', '/api/webhooks/site', '/api/webhooks',
+    '/api/webhooks/resend', '/api/webhooks/site', '/api/webhooks',
     '/descadastro', '/api/publico/x', '/api/publico/descadastro', '/api/publico/saude',
     // Logo dos emails de funil: o cliente de email busca a imagem sem cookie.
     '/logo-og.png',

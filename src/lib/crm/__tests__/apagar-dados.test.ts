@@ -7,7 +7,7 @@ import { apagarDadosAPedido } from '../apagar-dados'
 import { editarContato, reativarContato, upsertContato, upsertContatos } from '../contatos'
 import { inscrever } from '../funis'
 import { sincronizarPendentes } from '../sincronizar'
-import { aplicarEventoBrevo } from '../webhook-brevo'
+import { aplicarEventoResend } from '../webhook-resend'
 import { tratarWebhookSite } from '../webhook-site'
 import { criarBancoTesteFunis } from './banco-teste-funis'
 import { resendContatosFalso } from './resend-falso'
@@ -150,10 +150,10 @@ describe('apagarDadosAPedido', () => {
     expect(await db.select().from(funilInscricoes)).toHaveLength(0)
   })
 
-  it('evento do Brevo para um contato apagado entra sem dados', async () => {
+  it('evento do Resend para um contato apagado entra sem dados', async () => {
     const c = await contatoCompleto()
     await apagarDadosAPedido(c.id, 'pedido', { db })
-    await aplicarEventoBrevo({ tipo: 'clicado', descadastra: false, email: EMAIL, chave: 'k1', em: AGORA, dados: { evento: 'click', link: 'https://x.example/?nome=Ana' } }, { db })
+    await aplicarEventoResend({ svixId: 'msg_k1', corpo: { type: 'email.clicked', created_at: AGORA.toISOString(), data: { email_id: 'e1', to: [EMAIL], click: { link: 'https://x.example/?nome=Ana' } } } }, { db })
     const ultimo = (await eventosDe(c.id)).at(-1)
     expect(ultimo).toMatchObject({ tipo: 'clicado', dados: null })
   })
