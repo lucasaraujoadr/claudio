@@ -143,3 +143,29 @@ export async function listarDistribuicao(db: BancoCrm = bancoPadrao()): Promise<
     .orderBy(desc(pecasDistribuicao.atualizadoEm))
   return linhas.map((l) => ({ ...l.peca, artigoTitulo: l.artigoTitulo, keyword: l.keyword }))
 }
+
+export type PecaComSlug = PecaDistribuicao & { artigoSlug: string | null }
+
+export async function obterPeca(id: number, db: BancoCrm = bancoPadrao()): Promise<PecaComSlug | null> {
+  const [linha] = await db
+    .select({ peca: pecasDistribuicao, artigoSlug: artigos.slug })
+    .from(pecasDistribuicao)
+    .innerJoin(artigos, eq(artigos.id, pecasDistribuicao.artigoId))
+    .where(eq(pecasDistribuicao.id, id))
+  return linha ? { ...linha.peca, artigoSlug: linha.artigoSlug } : null
+}
+
+/** Troca a variação (escura/clara) do carrossel. Null se a peça não existe ou está gerando. */
+export async function definirVariacao(
+  id: number,
+  variacao: 'escura' | 'clara',
+  agora: Date = new Date(),
+  db: BancoCrm = bancoPadrao(),
+): Promise<PecaDistribuicao | null> {
+  const [nova] = await db
+    .update(pecasDistribuicao)
+    .set({ variacao, atualizadoEm: agora })
+    .where(and(eq(pecasDistribuicao.id, id), eq(pecasDistribuicao.tipo, 'carrossel'), sql`${pecasDistribuicao.situacao} <> 'gerando'`))
+    .returning()
+  return nova ?? null
+}

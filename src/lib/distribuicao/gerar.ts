@@ -25,12 +25,13 @@ export type ResultadoGerarPecas =
   | { tipo: 'recusado'; motivo: 'nao_encontrado' | 'verificar' | 'situacao'; mensagem: string }
   | { tipo: 'processado'; pecas: Partial<Record<TipoPeca, ResultadoPeca>> }
 
-/** Gera as peças do artigo em paralelo; cada uma tem a própria reivindicação e a própria situação. */
-export async function gerarPecas(artigoId: number, opts: OpcoesGerarPecas = {}): Promise<ResultadoGerarPecas> {
-  const db = opts.db ?? bancoPadrao()
-  const gerar = opts.gerar ?? gerarObjetoPadrao
-  const agora = opts.agora ?? (() => new Date())
+export type RecusaPecas = Extract<ResultadoGerarPecas, { tipo: 'recusado' }>
 
+/** Carrega o artigo e confere se ele pode gerar peças (pronto e sem trechos "verificar"). */
+export async function carregarArtigoParaPecas(
+  artigoId: number,
+  db: BancoCrm = bancoPadrao(),
+): Promise<RecusaPecas | { tipo: 'ok'; artigo: typeof artigos.$inferSelect; keyword: string }> {
   const [linha] = await db
     .select({ artigo: artigos, keyword: topics.keyword })
     .from(artigos)
@@ -50,10 +51,23 @@ export async function gerarPecas(artigoId: number, opts: OpcoesGerarPecas = {}):
     }
   }
 
+  return { tipo: 'ok', artigo, keyword }
+}
+
+/** Gera as peças do artigo em paralelo; cada uma tem a própria reivindicação e a própria situação. */
+export async function gerarPecas(artigoId: number, opts: OpcoesGerarPecas = {}): Promise<ResultadoGerarPecas> {
+  const db = opts.db ?? bancoPadrao()
+  const gerar = opts.gerar ?? gerarObjetoPadrao
+  const agora = opts.agora ?? (() => new Date())
+
+  const carregado = await carregarArtigoParaPecas(artigoId, db)
+  if (carregado.tipo === 'recusado') return carregado
+  const { artigo, keyword } = carregado
+
   const ctx = {
     titulo: artigo.titulo ?? keyword,
     keyword,
-    texto: htmlParaTexto(artigo.conteudoHtml),
+    texto: htmlParaTexto(artigo.conteudoHtml ?? ''),
     link: artigo.wpLink ?? `${siteUrl()}/${artigo.slug ?? ''}/`,
   }
   const tipos = [...new Set(opts.tipos ?? TIPOS_PECA)]

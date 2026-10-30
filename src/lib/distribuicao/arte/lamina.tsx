@@ -254,6 +254,11 @@ function montar(l: Lamina, n: number, c: Cores): { filhos: React.ReactNode; most
   }
 }
 
+/** Regra única de "a lâmina cabe": a mesma usada ao renderizar, para a edição validar antes de salvar. */
+export function laminaCabe(l: Lamina): boolean {
+  return montar(l, 1, CORES.escura) !== null
+}
+
 export async function renderizarLamina(
   l: Lamina,
   n: number,
