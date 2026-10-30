@@ -47,6 +47,13 @@ describe('verificarAssinaturaSvix', () => {
     const ok = String(Math.floor(AGORA.getTime() / 1000) - 240)
     expect(verificarAssinaturaSvix(corpo, cab({ timestamp: ok, assinatura: assinar('msg_1', ok, corpo) }), SEGREDO, AGORA)).toBe(true)
   })
+  it('timestamp futuro além da tolerância ou não numérico → false', () => {
+    const futuro = String(Math.floor(AGORA.getTime() / 1000) + 360)
+    expect(verificarAssinaturaSvix(corpo, cab({ timestamp: futuro, assinatura: assinar('msg_1', futuro, corpo) }), SEGREDO, AGORA)).toBe(false)
+    for (const ts of ['abc', '1e9', '-5', '']) {
+      expect(verificarAssinaturaSvix(corpo, cab({ timestamp: ts, assinatura: assinar('msg_1', ts, corpo) }), SEGREDO, AGORA)).toBe(false)
+    }
+  })
   it('múltiplas assinaturas, uma válida → true', () => {
     const a = `v1,${Buffer.from('x'.repeat(32)).toString('base64')} v2,abc ${assinar('msg_1', TS, corpo)}`
     expect(verificarAssinaturaSvix(corpo, cab({ assinatura: a }), SEGREDO, AGORA)).toBe(true)
@@ -113,7 +120,7 @@ describe('aplicarEventoResend', () => {
     expect(ins.every((i) => i.status === 'saiu')).toBe(true)
   })
 
-  it('hard bounce tira dos funis; bounce temporário só registra', async () => {
+  it('hard bounce tira dos funis sem mudar o status; bounce temporário só registra', async () => {
     const t = await criar('t@example.com')
     expect(await aplicar('m0', email('email.bounced', { bounce: { type: 'Temporary', subType: 'MailboxFull', message: 'x' } }, ['t@example.com']))).toBe('processado')
     expect((await linha(t)).status).toBe('lead')
@@ -122,8 +129,11 @@ describe('aplicarEventoResend', () => {
     const id = await criar()
     await inscrever('boas-vindas', [id], { db, caminho: 'site' })
     await aplicar('m1', email('email.bounced', { bounce: { type: 'Permanent', subType: 'Suppressed', message: 'x' } }))
-    expect((await linha(id)).status).toBe('descadastrado')
+    const c = await linha(id)
+    expect(c.status).toBe('lead')
+    expect(c.syncStatus).toBe('sincronizado')
     expect((await eventos(id)).some((e) => e.tipo === 'bounce')).toBe(true)
+    expect((await eventos(id)).some((e) => e.tipo === 'mudou_status')).toBe(false)
     const ins = await db.select().from(funilInscricoes).where(eq(funilInscricoes.contatoId, id))
     expect(ins.length).toBeGreaterThan(0)
     expect(ins.every((i) => i.status === 'saiu')).toBe(true)
@@ -138,6 +148,31 @@ describe('aplicarEventoResend', () => {
     expect(c.status).toBe('descadastrado')
     expect(c.syncStatus).toBe('pendente')
     expect((await eventos(id)).some((e) => e.tipo === 'descadastrou')).toBe(true)
+  })
+
+  it('contact.updated de quem já está descadastrado → ignorado, sem evento e sem consumir a chave', async () => {
+    const id = await criar()
+    await aplicar('m1', { type: 'contact.updated', data: { email: 'ana@example.com', unsubscribed: true } })
+    const n = (await eventos(id)).length
+    expect(await aplicar('m2', { type: 'contact.updated', data: { email: 'ana@example.com', unsubscribed: true } })).toBe('ignorado')
+    expect(await eventos(id)).toHaveLength(n)
+    expect((await db.select().from(webhookEventosRecebidos)).map((r) => r.id)).toEqual(['m1'])
+  })
+
+  it('clique não guarda token: link do painel só origem+caminho; nos outros some o t e ficam os UTM', async () => {
+    const id = await criar()
+    const antes = process.env.URL_PUBLICA_PAINEL
+    process.env.URL_PUBLICA_PAINEL = 'https://painel.example.com/'
+    try {
+      await aplicar('m1', email('email.clicked', { click: { link: 'https://painel.example.com/descadastro?t=SEGREDO&x=1' } }))
+      await aplicar('m2', email('email.clicked', { click: { link: 'https://site.com.br/a?t=SEGREDO&utm_source=funil' } }))
+    } finally {
+      if (antes === undefined) delete process.env.URL_PUBLICA_PAINEL
+      else process.env.URL_PUBLICA_PAINEL = antes
+    }
+    const links = (await eventos(id)).filter((e) => e.tipo === 'clicado').map((e) => (e.dados as { link: string }).link)
+    expect(links).toEqual(['https://painel.example.com/descadastro', 'https://site.com.br/a?utm_source=funil'])
+    expect(JSON.stringify(links)).not.toContain('SEGREDO')
   })
 
   it('acha o contato pelo resend_email_id mesmo com outro destinatário', async () => {
@@ -188,6 +223,8 @@ describe('rota: tratarWebhookResend', () => {
     await criar()
     const ruim = { ...bons(), 'svix-signature': assinar('msg_r1', TS, 'outro') }
     expect((await tratarWebhookResend(req(corpo, ruim), { db, segredo: SEGREDO, agora: AGORA })).status).toBe(401)
+    expect(await db.select().from(webhookEventosRecebidos)).toHaveLength(0)
+    expect((await db.select().from(eventosContato)).map((e) => e.tipo)).toEqual(['criado'])
     expect((await tratarWebhookResend(req(corpo, {}), { db, segredo: SEGREDO, agora: AGORA })).status).toBe(401)
     const depois = new Date(AGORA.getTime() + 6 * 60_000)
     expect((await tratarWebhookResend(req(corpo, bons()), { db, segredo: SEGREDO, agora: depois })).status).toBe(401)

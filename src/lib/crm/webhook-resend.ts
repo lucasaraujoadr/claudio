@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { contatos, enviosFunil, funilInscricoes, webhookEventosRecebidos } from '@/lib/db/schema'
+import { urlPublicaPainel } from '@/lib/acesso-publico'
 import { lerCorpoLimitado } from '@/lib/webhooks'
 import { bancoPadrao, type BancoCrm } from './banco'
 import { mudarStatus, registrarEvento, type TipoEvento } from './contatos'
@@ -19,6 +20,7 @@ import { sairDeTodosOsFunis } from './ganchos-funis'
  *   nunca reativam ninguém;
  * - `email.bounced` permanente, `email.complained` e `contact.updated` com `unsubscribed: true`
  *   descadastram (status → `descadastrado`, `syncStatus='pendente'`) e tiram dos funis;
+ * - bounce permanente só tira dos funis (não é opt-out; o Resend já suprime o endereço);
  * - contato com dados apagados: evento sem dados, nunca PII.
  */
 
@@ -58,32 +60,50 @@ function texto(v: unknown, max = 1000): string | null {
 export type EventoResend = { svixId: string; corpo: unknown }
 export type DesfechoResend = 'processado' | 'repetido' | 'ignorado' | 'contato_desconhecido'
 
-type Plano = { tipo: TipoEvento; descadastra: boolean; motivo: string; dados: Record<string, unknown> }
+/**
+ * Links do painel (descadastro) carregam token: guarda só origem + caminho. Nos demais, tira o
+ * parâmetro `t` e mantém o resto (UTM).
+ */
+function limparLink(link: string | null): string | null {
+  if (!link) return null
+  try {
+    const u = new URL(link)
+    if (u.origin === new URL(urlPublicaPainel()).origin) return `${u.origin}${u.pathname}`
+    u.searchParams.delete('t')
+    return u.toString().slice(0, 1000)
+  } catch {
+    return null
+  }
+}
+
+type Plano = { tipo: TipoEvento; descadastra: boolean; saiDosFunis: boolean; motivo: string; dados: Record<string, unknown> }
 
 function planejar(tipo: string, data: Record<string, unknown>): Plano | null {
   switch (tipo) {
     case 'email.opened':
-      return { tipo: 'aberto', descadastra: false, motivo: '', dados: { evento: tipo, origem: 'resend' } }
+      return { tipo: 'aberto', descadastra: false, saiDosFunis: false, motivo: '', dados: { evento: tipo, origem: 'resend' } }
     case 'email.clicked': {
       const click = ehObjeto(data.click) ? data.click : {}
-      const link = texto(click.link)
-      return { tipo: 'clicado', descadastra: false, motivo: '', dados: link ? { link } : {} }
+      const link = limparLink(texto(click.link))
+      return { tipo: 'clicado', descadastra: false, saiDosFunis: false, motivo: '', dados: link ? { link } : {} }
     }
     case 'email.bounced': {
       const bounce = ehObjeto(data.bounce) ? data.bounce : {}
       const tipoBounce = texto(bounce.type, 40)
       return {
         tipo: 'bounce',
+        // Bounce permanente não é opt-out (spec §2.7): sai dos funis, o status não muda.
         descadastra: false,
+        saiDosFunis: tipoBounce?.toLowerCase() === 'permanent',
         motivo: 'Hard bounce no Resend',
         dados: { evento: tipo, origem: 'resend', ...(tipoBounce ? { bounce: tipoBounce } : {}) },
       }
     }
     case 'email.complained':
-      return { tipo: 'spam', descadastra: true, motivo: 'Marcado como spam no Resend', dados: { evento: tipo, origem: 'resend' } }
+      return { tipo: 'spam', descadastra: true, saiDosFunis: true, motivo: 'Marcado como spam no Resend', dados: { evento: tipo, origem: 'resend' } }
     case 'contact.updated':
       if (data.unsubscribed !== true) return null
-      return { tipo: 'descadastrou', descadastra: true, motivo: 'Descadastro pelo Resend', dados: { evento: tipo, origem: 'resend' } }
+      return { tipo: 'descadastrou', descadastra: true, saiDosFunis: true, motivo: 'Descadastro pelo Resend', dados: { evento: tipo, origem: 'resend' } }
     default:
       return null
   }
@@ -97,10 +117,6 @@ export async function aplicarEventoResend(ev: EventoResend, opts: { db?: BancoCr
   if (!tipo || !ehObjeto(data)) return 'ignorado'
   const plano = planejar(tipo, data)
   if (!plano) return 'ignorado'
-  if (tipo === 'email.bounced') {
-    const b = ehObjeto(data.bounce) ? data.bounce : null
-    plano.descadastra = texto(b?.type, 40)?.toLowerCase() === 'permanent'
-  }
   const emails: string[] = []
   if (tipo === 'contact.updated') {
     const e = normalizarEmail(typeof data.email === 'string' ? data.email : '')
@@ -145,6 +161,8 @@ export async function aplicarEventoResend(ev: EventoResend, opts: { db?: BancoCr
       .where(eq(contatos.id, contatoId))
       .for('update')
     if (!c) return 'contato_desconhecido' as const
+    // O eco da nossa própria sincronização (já descadastrado): nada a gravar, chave não consumida.
+    if (tipo === 'contact.updated' && c.status === 'descadastrado') return 'ignorado' as const
     const novo = await banco
       .insert(webhookEventosRecebidos)
       .values({ id: ev.svixId })
@@ -153,8 +171,10 @@ export async function aplicarEventoResend(ev: EventoResend, opts: { db?: BancoCr
     if (novo.length === 0) return 'repetido' as const
     // Dados apagados a pedido: o evento entra (prova do que houve), sem dados.
     await registrarEvento(c.id, plano.tipo, c.dadosApagadosEm ? null : plano.dados, { db: banco, ...(em ? { em } : {}) })
-    if (plano.descadastra) {
-      if (c.status !== 'descadastrado') await mudarStatus(c.id, 'descadastrado', { db: banco, origem: 'resend', motivo: plano.motivo })
+    if (plano.descadastra && c.status !== 'descadastrado') {
+      await mudarStatus(c.id, 'descadastrado', { db: banco, origem: 'resend', motivo: plano.motivo })
+    }
+    if (plano.saiDosFunis) {
       await sairDeTodosOsFunis(c.id, { db: banco, motivo: plano.motivo })
     }
     return 'processado' as const
