@@ -13,6 +13,7 @@ import {
   contarDestinatariosNewsletter,
   criarRascunhoNewsletter,
   enviarNewsletter,
+  MENSAGEM_DESCADASTROS_PENDENTES,
   montarNewsletter,
 } from '../newsletter'
 
@@ -78,6 +79,7 @@ function resendFalso() {
       chamadas.push('enviar')
       if (estado.falharEnvio) throw estado.falharEnvio
     }),
+    lerBroadcast: vi.fn(async (id: string) => ({ id, status: 'draft' })),
     salvarContato: vi.fn(async () => ({ id: 'rc' })),
     adicionarAoSegmento: vi.fn(async () => {}),
     removerDoSegmento: vi.fn(async () => {}),
@@ -181,6 +183,43 @@ describe('criarRascunhoNewsletter', () => {
   })
 })
 
+describe('rascunho: envio repetido e concorrência', () => {
+  it('re-rascunho depois de enviado é recusado', async () => {
+    await contato()
+    const r = resendFalso()
+    const { peca } = await artigoComPeca()
+    await criarRascunhoNewsletter(peca.id, opts(r))
+    const [e] = await db.select().from(newslettersEnvios)
+    expect((await enviarNewsletter(e.id, opts(r))).ok).toBe(true)
+    const res = await criarRascunhoNewsletter(peca.id, opts(r))
+    expect(res).toEqual({ ok: false, mensagem: 'a newsletter deste artigo já foi enviada' })
+    expect(await db.select().from(newslettersEnvios)).toHaveLength(1)
+    expect(r.mocks.criarBroadcast).toHaveBeenCalledTimes(1)
+  })
+  it('duas criações simultâneas: uma linha e um broadcast', async () => {
+    const { peca } = await artigoComPeca()
+    const r = resendFalso()
+    await Promise.all([criarRascunhoNewsletter(peca.id, opts(r)), criarRascunhoNewsletter(peca.id, opts(r))])
+    expect(await db.select().from(newslettersEnvios)).toHaveLength(1)
+    expect(r.mocks.criarBroadcast).toHaveBeenCalledTimes(1)
+  })
+  it('falha ao criar o broadcast não deixa linha órfã', async () => {
+    const { peca } = await artigoComPeca()
+    const r = resendFalso()
+    r.mocks.criarBroadcast.mockRejectedValueOnce(new ErroResend('servidor'))
+    expect((await criarRascunhoNewsletter(peca.id, opts(r))).ok).toBe(false)
+    expect(await db.select().from(newslettersEnvios)).toHaveLength(0)
+    expect((await criarRascunhoNewsletter(peca.id, opts(r))).ok).toBe(true)
+  })
+  it('link malformado devolve recusa amigável', async () => {
+    const { peca } = await artigoComPeca({ wpLink: 'http://' })
+    const r = resendFalso()
+    const res = await criarRascunhoNewsletter(peca.id, opts(r))
+    expect(res).toMatchObject({ ok: false })
+    expect(r.mocks.criarBroadcast).not.toHaveBeenCalled()
+  })
+})
+
 describe('contarDestinatariosNewsletter', () => {
   it('conta só elegíveis já sincronizados', async () => {
     await contato() // conta
@@ -211,26 +250,7 @@ describe('enviarNewsletter', () => {
     const [depois] = await db.select().from(newslettersEnvios)
     expect(depois).toMatchObject({ situacao: 'enviado', destinatarios: 1 })
     expect(depois.enviadoEm).not.toBeNull()
-    expect(r.mocks.enviarBroadcast).toHaveBeenCalledWith('bc_1', undefined)
-  })
-  it('agendado: grava agendado e passa a data', async () => {
-    await contato()
-    const r = resendFalso()
-    const e = await rascunhoPronto(r)
-    const quando = new Date(Date.now() + 3_600_000)
-    const res = await enviarNewsletter(e.id, opts(r, { agendarPara: quando }))
-    expect(res).toMatchObject({ ok: true, situacao: 'agendado' })
-    expect(r.mocks.enviarBroadcast).toHaveBeenCalledWith('bc_1', quando)
-    const [depois] = await db.select().from(newslettersEnvios)
-    expect(depois.agendadoPara?.getTime()).toBe(quando.getTime())
-  })
-  it('agendar no passado → recusa', async () => {
-    await contato()
-    const r = resendFalso()
-    const e = await rascunhoPronto(r)
-    const res = await enviarNewsletter(e.id, opts(r, { agendarPara: new Date(Date.now() - 1000) }))
-    expect(res.ok).toBe(false)
-    expect(r.mocks.enviarBroadcast).not.toHaveBeenCalled()
+    expect(r.mocks.enviarBroadcast).toHaveBeenCalledWith('bc_1')
   })
   it('enviar sem acesso público → bloqueado', async () => {
     await contato()
@@ -307,6 +327,62 @@ describe('enviarNewsletter', () => {
     const res = await enviarNewsletter(e.id, opts(r))
     expect(res.ok).toBe(false)
     expect(r.mocks.enviarBroadcast).not.toHaveBeenCalled()
+  })
+  it('saiu do funil e o sync falhou → recusa', async () => {
+    await contato()
+    const c = await contato({ syncStatus: 'erro' }, false) // sem inscrição ativa
+    const r = resendFalso()
+    const e = await rascunhoPronto(r)
+    r.mocks.removerDoSegmento.mockRejectedValue(new ErroResend('servidor'))
+    r.mocks.salvarContato.mockRejectedValue(new ErroResend('servidor'))
+    expect(c.id).toBeGreaterThan(0)
+    const res = await enviarNewsletter(e.id, opts(r))
+    expect(res).toEqual({ ok: false, mensagem: MENSAGEM_DESCADASTROS_PENDENTES })
+    expect(r.mocks.enviarBroadcast).not.toHaveBeenCalled()
+  })
+  it('base legal mudou e o sync falhou → recusa', async () => {
+    await contato()
+    await contato({ baseLegal: 'legitimo_interesse', syncStatus: 'pendente' })
+    const r = resendFalso()
+    const e = await rascunhoPronto(r)
+    r.mocks.removerDoSegmento.mockRejectedValue(new ErroResend('servidor'))
+    const res = await enviarNewsletter(e.id, opts(r))
+    expect(res.ok).toBe(false)
+    expect(r.mocks.enviarBroadcast).not.toHaveBeenCalled()
+  })
+  it('contato elegível pendente não bloqueia', async () => {
+    await contato()
+    await contato({ syncStatus: 'pendente' })
+    const r = resendFalso()
+    const e = await rascunhoPronto(r)
+    r.mocks.salvarContato.mockRejectedValue(new ErroResend('servidor'))
+    expect((await enviarNewsletter(e.id, opts(r))).ok).toBe(true)
+  })
+  it('erro ambíguo: broadcast já não é rascunho → mantém enviado', async () => {
+    await contato()
+    const r = resendFalso()
+    const e = await rascunhoPronto(r)
+    r.estado.falharEnvio = new ErroResend('rede')
+    r.mocks.lerBroadcast.mockResolvedValue({ id: 'bc_1', status: 'sent' })
+    expect(await enviarNewsletter(e.id, opts(r))).toMatchObject({ ok: true, situacao: 'enviado' })
+    expect((await db.select().from(newslettersEnvios))[0].situacao).toBe('enviado')
+  })
+  it('erro ambíguo: ainda rascunho ou leitura falha → volta a rascunho com erro', async () => {
+    await contato()
+    const r = resendFalso()
+    const e = await rascunhoPronto(r)
+    r.estado.falharEnvio = new ErroResend('servidor')
+    expect((await enviarNewsletter(e.id, opts(r))).ok).toBe(false)
+    expect((await db.select().from(newslettersEnvios))[0]).toMatchObject({ situacao: 'rascunho', erro: expect.any(String) })
+    r.mocks.lerBroadcast.mockRejectedValue(new ErroResend('rede'))
+    expect((await enviarNewsletter(e.id, opts(r))).ok).toBe(false)
+    expect((await db.select().from(newslettersEnvios))[0].situacao).toBe('rascunho')
+  })
+  it('contagem não duplica contato', async () => {
+    const c = await contato()
+    await garantirFunis({ db })
+    expect(await contarDestinatariosNewsletter(db)).toBe(1)
+    expect(c.id).toBeGreaterThan(0)
   })
   it('sem destinatários → recusa', async () => {
     const r = resendFalso()

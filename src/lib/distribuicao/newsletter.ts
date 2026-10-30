@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { acessoPublicoOk } from '@/lib/acesso-publico'
 import { bancoPadrao, type BancoCrm } from '@/lib/crm/banco'
 import { DOURADO, montarLayoutMarca, TINTA } from '@/lib/crm/email-html'
@@ -29,7 +29,7 @@ export type ResultadoNewsletter<T = object> = ({ ok: true } & T) | { ok: false; 
 
 export type ClienteNewsletter = Pick<
   ClienteResend,
-  'garantirSegmento' | 'criarBroadcast' | 'atualizarBroadcast' | 'enviarBroadcast' | 'salvarContato' | 'adicionarAoSegmento' | 'removerDoSegmento'
+  'garantirSegmento' | 'criarBroadcast' | 'atualizarBroadcast' | 'enviarBroadcast' | 'lerBroadcast' | 'salvarContato' | 'adicionarAoSegmento' | 'removerDoSegmento'
 >
 
 export type OpcoesNewsletter = {
@@ -45,8 +45,14 @@ function clientePadrao(): ClienteNewsletter | null {
   return cfg ? criarClienteResend(cfg) : null
 }
 
-function comUtm(link: string, slug: string): string {
-  const u = new URL(link)
+function comUtm(link: string, slug: string): string | null {
+  let u: URL
+  try {
+    u = new URL(link)
+  } catch {
+    return null
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return null
   u.searchParams.set('utm_source', 'newsletter')
   u.searchParams.set('utm_medium', 'email')
   u.searchParams.set('utm_campaign', slug)
@@ -58,6 +64,7 @@ export function montarNewsletter(
   ctx: { link: string; slug: string },
 ): { html: string; texto: string; assunto: string; preCabecalho: string } {
   const url = comUtm(ctx.link, ctx.slug)
+  if (!url) throw new Error('link do artigo inválido')
   const pontos = p.pontos.map((x) => `<li style="margin:0 0 8px">${escaparHtml(x)}</li>`).join('')
   const corpoHtml = [
     `<p style="margin:0 0 16px">${escaparHtml(p.abertura)}</p>`,
@@ -86,7 +93,7 @@ export function montarNewsletter(
 /** Contatos que receberiam o broadcast: elegíveis pela regra da newsletter e já sincronizados com o Resend. */
 export async function contarDestinatariosNewsletter(db: BancoCrm = bancoPadrao()): Promise<number> {
   const linhas = await db
-    .select({ status: contatos.status, baseLegal: contatos.baseLegal, dadosApagadosEm: contatos.dadosApagadosEm })
+    .selectDistinctOn([contatos.id], { status: contatos.status, baseLegal: contatos.baseLegal, dadosApagadosEm: contatos.dadosApagadosEm })
     .from(contatos)
     .innerJoin(funilInscricoes, eq(funilInscricoes.contatoId, contatos.id))
     .innerJoin(funis, eq(funis.id, funilInscricoes.funilId))
@@ -146,76 +153,105 @@ export async function criarRascunhoNewsletter(
   const link = linha.wpLink?.trim() || (slug ? `${siteUrl()}/${slug}/` : null)
   if (!link || !/^https?:\/\//i.test(link)) return { ok: false, mensagem: 'o artigo ainda não tem link publicado' }
 
-  const email = montarNewsletter(conteudo.data, { link, slug: slug || 'newsletter' })
+  let email: ReturnType<typeof montarNewsletter>
+  try {
+    email = montarNewsletter(conteudo.data, { link, slug: slug || 'newsletter' })
+  } catch {
+    return { ok: false, mensagem: 'o link do artigo é inválido' }
+  }
   const nome = `Newsletter — ${email.assunto}`.slice(0, 150)
   const agora = opts.agora ?? new Date()
 
   try {
+    const [jaEnviada] = await db
+      .select({ id: newslettersEnvios.id })
+      .from(newslettersEnvios)
+      .where(and(eq(newslettersEnvios.artigoId, linha.peca.artigoId), eq(newslettersEnvios.situacao, 'enviado')))
+      .limit(1)
+    if (jaEnviada) return { ok: false, mensagem: 'a newsletter deste artigo já foi enviada' }
+
     const segmento = await cliente.garantirSegmento(SEGMENTO_NEWSLETTER)
     const destinatarios = await contarDestinatariosNewsletter(db)
-    const existente = await rascunhoDaPeca(pecaId, db)
-    let broadcastId = existente?.resendBroadcastId ?? null
     const dados = { nome, assunto: email.assunto, html: email.html, texto: email.texto }
-    if (broadcastId) {
+
+    // A linha vem antes do broadcast: o índice único de envio em aberto decide quem cria.
+    const [criada] = await db
+      .insert(newslettersEnvios)
+      .values({ artigoId: linha.peca.artigoId, situacao: 'rascunho', destinatarios, criadoEm: agora, atualizadoEm: agora })
+      .onConflictDoNothing()
+      .returning()
+    if (criada) {
       try {
-        await cliente.atualizarBroadcast(broadcastId, dados)
+        const { id } = await cliente.criarBroadcast({ segmentoId: segmento.id, ...dados })
+        const [nova] = await db
+          .update(newslettersEnvios)
+          .set({ resendBroadcastId: id, atualizadoEm: agora })
+          .where(eq(newslettersEnvios.id, criada.id))
+          .returning()
+        return { ok: true, envio: nova }
       } catch (e) {
-        if (!(e instanceof ErroResend && e.tipo === 'nao_encontrado')) throw e
-        broadcastId = null // apagado no Resend: cria outro na mesma linha
+        await db.delete(newslettersEnvios).where(eq(newslettersEnvios.id, criada.id))
+        throw e
       }
     }
-    if (!broadcastId) broadcastId = (await cliente.criarBroadcast({ segmentoId: segmento.id, ...dados })).id
 
-    if (existente) {
-      const [nova] = await db
-        .update(newslettersEnvios)
-        .set({ resendBroadcastId: broadcastId, destinatarios, erro: null, atualizadoEm: agora })
-        .where(and(eq(newslettersEnvios.id, existente.id), eq(newslettersEnvios.situacao, 'rascunho')))
-        .returning()
-      if (nova) return { ok: true, envio: nova }
-      return { ok: false, mensagem: 'a newsletter já foi enviada ou está sendo enviada' }
+    const existente = await rascunhoDaPeca(pecaId, db)
+    if (!existente) return { ok: false, mensagem: 'a newsletter deste artigo já foi enviada ou está sendo enviada' }
+    if (!existente.resendBroadcastId) return { ok: false, mensagem: 'o rascunho está sendo criado; tente de novo em instantes' }
+    let broadcastId: string | null = existente.resendBroadcastId
+    try {
+      await cliente.atualizarBroadcast(broadcastId, dados)
+    } catch (e) {
+      if (!(e instanceof ErroResend && e.tipo === 'nao_encontrado')) throw e
+      broadcastId = null // apagado no Resend: cria outro na mesma linha
     }
-    const [novo] = await db
-      .insert(newslettersEnvios)
-      .values({ artigoId: linha.peca.artigoId, resendBroadcastId: broadcastId, situacao: 'rascunho', destinatarios, criadoEm: agora, atualizadoEm: agora })
+    if (!broadcastId) broadcastId = (await cliente.criarBroadcast({ segmentoId: segmento.id, ...dados })).id
+    const [nova] = await db
+      .update(newslettersEnvios)
+      .set({ resendBroadcastId: broadcastId, destinatarios, erro: null, atualizadoEm: agora })
+      .where(and(eq(newslettersEnvios.id, existente.id), eq(newslettersEnvios.situacao, 'rascunho')))
       .returning()
-    return { ok: true, envio: novo }
+    if (nova) return { ok: true, envio: nova }
+    return { ok: false, mensagem: 'a newsletter já foi enviada ou está sendo enviada' }
   } catch (e) {
     console.error('Falha ao criar rascunho da newsletter', e instanceof Error ? e.name : 'erro')
     return { ok: false, mensagem: mensagemErro(e) }
   }
 }
 
-async function descadastrosPendentes(db: BancoCrm): Promise<number> {
-  const [r] = await db
-    .select({ n: sql<number>`count(*)::int` })
+/**
+ * Contatos ainda `pendente`/`erro` que NÃO são elegíveis: podem continuar no segmento do Resend
+ * (descadastro, apagamento, saída do funil, mudança de base legal que não sincronizou). Os
+ * elegíveis pendentes são inofensivos e não bloqueiam.
+ */
+async function pendentesNaoElegiveis(db: BancoCrm): Promise<number> {
+  const linhas = await db
+    .select({ id: contatos.id, status: contatos.status, baseLegal: contatos.baseLegal, dadosApagadosEm: contatos.dadosApagadosEm })
     .from(contatos)
-    .where(
-      and(
-        sql`${contatos.syncStatus} in ('pendente', 'erro')`,
-        sql`(${contatos.status} = 'descadastrado' or ${contatos.dadosApagadosEm} is not null)`,
-      ),
-    )
-  return Number(r?.n ?? 0)
+    .where(inArray(contatos.syncStatus, ['pendente', 'erro']))
+  if (linhas.length === 0) return 0
+  const nutricao = await db
+    .selectDistinct({ id: funilInscricoes.contatoId })
+    .from(funilInscricoes)
+    .innerJoin(funis, eq(funis.id, funilInscricoes.funilId))
+    .where(and(eq(funis.slug, 'nutricao-blog'), eq(funilInscricoes.status, 'ativo')))
+  const naNutricao = new Set(nutricao.map((n) => n.id))
+  return linhas.filter((c) => !elegivelNewsletter(c, naNutricao.has(c.id))).length
 }
 
 /**
- * Dispara o broadcast (agora ou agendado). Só envia a partir de `rascunho`; a troca de situação
+ * Dispara o broadcast (sempre agora: o descadastro é checado imediatamente antes, e um envio agendado sairia sem essa checagem). Só envia a partir de `rascunho`; a troca de situação
  * acontece ANTES da chamada ao Resend, de forma condicional, então dois cliques nunca enviam duas
  * vezes. Se o Resend recusar, a linha volta a `rascunho` com o erro.
  */
 export async function enviarNewsletter(
   envioId: number,
-  opts: OpcoesNewsletter & { agendarPara?: Date } = {},
-): Promise<ResultadoNewsletter<{ situacao: 'agendado' | 'enviado'; destinatarios: number }>> {
+  opts: OpcoesNewsletter = {},
+): Promise<ResultadoNewsletter<{ situacao: 'enviado'; destinatarios: number }>> {
   const db = opts.db ?? bancoPadrao()
   const cliente = opts.cliente !== undefined ? opts.cliente : clientePadrao()
   if (!cliente) return { ok: false, mensagem: 'Resend não configurado' }
   const agora = opts.agora ?? new Date()
-  const agendarPara = opts.agendarPara
-  if (agendarPara && (Number.isNaN(agendarPara.getTime()) || agendarPara.getTime() <= agora.getTime())) {
-    return { ok: false, mensagem: 'a data de agendamento precisa estar no futuro' }
-  }
 
   const [envio] = await db.select().from(newslettersEnvios).where(eq(newslettersEnvios.id, envioId))
   if (!envio) return { ok: false, mensagem: 'envio não encontrado' }
@@ -234,19 +270,18 @@ export async function enviarNewsletter(
   } catch (e) {
     console.error('Falha ao sincronizar antes da newsletter', e instanceof Error ? e.name : 'erro')
   }
-  if ((await descadastrosPendentes(db)) > 0) return { ok: false, mensagem: MENSAGEM_DESCADASTROS_PENDENTES }
+  if ((await pendentesNaoElegiveis(db)) > 0) return { ok: false, mensagem: MENSAGEM_DESCADASTROS_PENDENTES }
 
   const destinatarios = await contarDestinatariosNewsletter(db)
   if (destinatarios === 0) return { ok: false, mensagem: 'não há destinatários sincronizados no segmento da newsletter' }
 
-  const situacao = agendarPara ? 'agendado' : 'enviado'
   const [reivindicado] = await db
     .update(newslettersEnvios)
     .set({
-      situacao,
+      situacao: 'enviado',
       destinatarios,
-      agendadoPara: agendarPara ?? null,
-      enviadoEm: agendarPara ? null : agora,
+      agendadoPara: null,
+      enviadoEm: agora,
       erro: null,
       atualizadoEm: agora,
     })
@@ -255,8 +290,16 @@ export async function enviarNewsletter(
   if (!reivindicado) return { ok: false, mensagem: 'esta newsletter já foi enviada ou está sendo enviada' }
 
   try {
-    await cliente.enviarBroadcast(envio.resendBroadcastId, agendarPara)
+    await cliente.enviarBroadcast(envio.resendBroadcastId)
   } catch (e) {
+    // Erro ambíguo (rede/servidor): o Resend pode ter aceitado o envio. Se o broadcast deixou de ser rascunho, vale como enviado.
+    if (e instanceof ErroResend && (e.tipo === 'rede' || e.tipo === 'servidor')) {
+      const saiuDeRascunho = await cliente
+        .lerBroadcast(envio.resendBroadcastId)
+        .then((b) => b.status !== '' && b.status !== 'draft')
+        .catch(() => false)
+      if (saiuDeRascunho) return { ok: true, situacao: 'enviado', destinatarios }
+    }
     const mensagem = mensagemErro(e)
     console.error('Falha ao enviar newsletter', e instanceof Error ? e.name : 'erro')
     await db
@@ -265,5 +308,5 @@ export async function enviarNewsletter(
       .where(eq(newslettersEnvios.id, envioId))
     return { ok: false, mensagem }
   }
-  return { ok: true, situacao, destinatarios }
+  return { ok: true, situacao: 'enviado', destinatarios }
 }

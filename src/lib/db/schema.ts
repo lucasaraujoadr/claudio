@@ -314,7 +314,11 @@ export const newslettersEnvios = pgTable('newsletters_envios', {
   erro: text('erro'),
   criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
   atualizadoEm: timestamp('atualizado_em', { withTimezone: true }).notNull().defaultNow(),
-})
+},
+(t) => [
+  // Um envio em aberto por artigo: duas criações simultâneas de rascunho dão uma linha só.
+  uniqueIndex('newsletters_envios_artigo_aberto_uq').on(t.artigoId).where(sql`${t.situacao} in ('rascunho', 'agendado')`),
+])
 
 export type NewsletterEnvio = typeof newslettersEnvios.$inferSelect
 

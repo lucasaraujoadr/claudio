@@ -15,9 +15,7 @@ type Ctx = { params: Promise<{ id: string }> }
 
 const corpoSchema = z.discriminatedUnion('acao', [
   z.object({ acao: z.literal('rascunho') }).strict(),
-  z
-    .object({ acao: z.literal('enviar'), agendarPara: z.string().datetime({ offset: true }).nullable().optional() })
-    .strict(),
+  z.object({ acao: z.literal('enviar') }).strict(),
 ])
 
 const naoEncontrada = () => NextResponse.json({ erro: 'peça não encontrada' }, { status: 404 })
@@ -28,7 +26,8 @@ export async function GET(_request: NextRequest, ctx: Ctx) {
   if (!id) return naoEncontrada()
   try {
     const [envio, destinatarios] = await Promise.all([ultimoEnvioDaPeca(id), contarDestinatariosNewsletter()])
-    return NextResponse.json({ envio, destinatarios })
+    const { agendadoPara: _semAgendamento, ...visivel } = envio ?? ({} as Record<string, unknown>)
+    return NextResponse.json({ envio: envio ? visivel : null, destinatarios })
   } catch (e) {
     console.error('Falha ao ler a newsletter', e instanceof Error ? e.name : 'erro')
     return NextResponse.json({ erro: 'falha ao ler a newsletter' }, { status: 500 })
@@ -54,8 +53,7 @@ export async function POST(request: NextRequest, ctx: Ctx) {
     }
     const envio = await rascunhoDaPeca(id)
     if (!envio) return NextResponse.json({ erro: 'crie o rascunho da newsletter antes de enviar' }, { status: 409 })
-    const quando = parsed.data.agendarPara ? new Date(parsed.data.agendarPara) : undefined
-    const r = await enviarNewsletter(envio.id, { agendarPara: quando })
+    const r = await enviarNewsletter(envio.id)
     return r.ok
       ? NextResponse.json({ situacao: r.situacao, destinatarios: r.destinatarios })
       : NextResponse.json({ erro: r.mensagem }, { status: 422 })
