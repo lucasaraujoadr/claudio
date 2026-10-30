@@ -166,7 +166,7 @@ describe('apagarDadosAPedido', () => {
     await sincronizarPendentes({ db, cliente: f.cliente, registrar: false })
     // Nada além de: contato unsubscribed (sem nome) e fora do segmento. Nunca entra no segmento.
     expect(f.chamadas.filter((x) => x.op !== 'segmento')).toEqual([
-      { op: 'salvar', corpo: { email: EMAIL, nome: null, descadastrado: true } },
+      { op: 'salvar', corpo: { email: EMAIL, nome: null, descadastrar: true } },
       { op: 'remover', email: EMAIL, segmentoId: 'seg_newsletter' },
     ])
     const enviado = JSON.stringify(f.chamadas)

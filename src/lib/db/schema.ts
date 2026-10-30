@@ -312,6 +312,12 @@ export const newslettersEnvios = pgTable('newsletters_envios', {
   agendadoPara: timestamp('agendado_para', { withTimezone: true }),
   enviadoEm: timestamp('enviado_em', { withTimezone: true }),
   erro: text('erro'),
+  /**
+   * Quando o conteúdo do broadcast foi gravado no Resend pela última vez (criação ou atualização
+   * do rascunho). Só isso mexe aqui; a trava e a volta a rascunho mexem em `atualizadoEm`. O envio
+   * é recusado se a peça mudou depois desta data.
+   */
+  conteudoEm: timestamp('conteudo_em', { withTimezone: true }),
   criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
   atualizadoEm: timestamp('atualizado_em', { withTimezone: true }).notNull().defaultNow(),
 },

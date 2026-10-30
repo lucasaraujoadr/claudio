@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { contatos, funilInscricoes, funis, sincronizacoes } from '@/lib/db/schema'
-import { ErroResend } from '@/lib/resend'
+import { criarClienteResend, ErroResend } from '@/lib/resend'
 import type { BancoCrm } from '../banco'
 import { garantirFunis, INTERROMPIDO_POR_TEMPO } from '../funis'
 import { elegivelNewsletter, estadoIntegracao, SEGMENTO_NEWSLETTER, sincronizarPendentes } from '../sincronizar'
@@ -66,7 +66,7 @@ describe('sincronizarPendentes', () => {
     const r = await sincronizarPendentes({ db, cliente: f.cliente })
     expect(r).toEqual({ conectado: true, enviados: 1, erros: 0, restantes: 0, interrompido: null })
     expect(f.de('segmento')).toEqual([{ op: 'segmento', nome: SEGMENTO_NEWSLETTER }])
-    expect(f.de('salvar')).toEqual([{ op: 'salvar', corpo: { email: 'a@example.com', nome: 'Fulano de Tal', descadastrado: false } }])
+    expect(f.de('salvar')).toEqual([{ op: 'salvar', corpo: { email: 'a@example.com', nome: 'Fulano de Tal', descadastrar: false } }])
     expect(f.de('adicionar')).toEqual([{ op: 'adicionar', email: 'a@example.com', segmentoId: 'seg_newsletter' }])
     expect(f.de('remover')).toHaveLength(0)
     expect(await linha(id)).toMatchObject({ syncStatus: 'sincronizado', syncErro: null, resendContatoId: 'rc_1' })
@@ -78,7 +78,7 @@ describe('sincronizarPendentes', () => {
     await criar('c@example.com', { status: 'cliente', baseLegal: 'contrato', nome: '  ' })
     const f = resendContatosFalso()
     await sincronizarPendentes({ db, cliente: f.cliente })
-    expect(f.de('salvar')).toEqual([{ op: 'salvar', corpo: { email: 'c@example.com', nome: null, descadastrado: false } }])
+    expect(f.de('salvar')).toEqual([{ op: 'salvar', corpo: { email: 'c@example.com', nome: null, descadastrar: false } }])
     expect(f.de('adicionar')).toHaveLength(1)
   })
 
@@ -113,7 +113,7 @@ describe('sincronizarPendentes', () => {
     const id = await criar('d@example.com', { status: 'descadastrado' })
     const f = resendContatosFalso()
     await sincronizarPendentes({ db, cliente: f.cliente })
-    expect(f.de('salvar')).toEqual([{ op: 'salvar', corpo: { email: 'd@example.com', nome: 'Fulano de Tal', descadastrado: true } }])
+    expect(f.de('salvar')).toEqual([{ op: 'salvar', corpo: { email: 'd@example.com', nome: 'Fulano de Tal', descadastrar: true } }])
     expect(f.de('remover')).toHaveLength(1)
     expect(f.de('adicionar')).toHaveLength(0)
     expect(await linha(id)).toMatchObject({ syncStatus: 'sincronizado', resendContatoId: 'rc_1' })
@@ -130,7 +130,7 @@ describe('sincronizarPendentes', () => {
     const f = resendContatosFalso()
     await sincronizarPendentes({ db, cliente: f.cliente })
     expect(f.chamadas.filter((c) => c.op !== 'segmento')).toEqual([
-      { op: 'salvar', corpo: { email: 'apagado@example.com', nome: null, descadastrado: true } },
+      { op: 'salvar', corpo: { email: 'apagado@example.com', nome: null, descadastrar: true } },
       { op: 'remover', email: 'apagado@example.com', segmentoId: 'seg_newsletter' },
     ])
     expect(await linha(id)).toMatchObject({ syncStatus: 'sincronizado', resendContatoId: null })
@@ -141,7 +141,7 @@ describe('sincronizarPendentes', () => {
     const f = resendContatosFalso()
     await sincronizarPendentes({ db, cliente: f.cliente })
     expect(f.de('adicionar')).toHaveLength(0)
-    expect(f.de('salvar')).toEqual([{ op: 'salvar', corpo: { email: 'x@example.com', nome: null, descadastrado: true } }])
+    expect(f.de('salvar')).toEqual([{ op: 'salvar', corpo: { email: 'x@example.com', nome: null, descadastrar: true } }])
   })
 
   it('não envia telefone, cidade, escritório, notas nem tags', async () => {
@@ -149,7 +149,7 @@ describe('sincronizarPendentes', () => {
     const f = resendContatosFalso()
     await sincronizarPendentes({ db, cliente: f.cliente })
     const [salvar] = f.de('salvar')
-    expect(Object.keys(salvar.op === 'salvar' ? salvar.corpo : {}).sort()).toEqual(['descadastrado', 'email', 'nome'])
+    expect(Object.keys(salvar.op === 'salvar' ? salvar.corpo : {}).sort()).toEqual(['descadastrar', 'email', 'nome'])
     const json = JSON.stringify(f.chamadas)
     for (const proibido of ['99999', 'Campinas', 'Silva Advocacia', 'secreta', 't1']) expect(json).not.toContain(proibido)
   })
@@ -246,6 +246,31 @@ describe('sincronizarPendentes', () => {
     f.chamadas.length = 0
     await sincronizarPendentes({ db, cliente: f.cliente, ids: [], registrar: false })
     expect(f.chamadas).toHaveLength(0)
+  })
+})
+
+describe('sincronizarPendentes com o cliente real (fetch falso)', () => {
+  it('contato elegível que já se descadastrou no Resend nunca recebe unsubscribed: false', async () => {
+    await criar('saiu-no-resend@example.com')
+    const chamadas: { metodo: string; url: string; corpo: unknown }[] = []
+    const f = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url)
+      const metodo = init?.method ?? 'GET'
+      chamadas.push({ metodo, url: u, corpo: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined })
+      if (metodo === 'GET' && u.includes('/segments')) {
+        return new Response(JSON.stringify({ has_more: false, data: [{ id: 'seg1', name: SEGMENTO_NEWSLETTER }] }), { status: 200 })
+      }
+      // O contato já existe no Resend (e lá está unsubscribed: true, pela página do Resend).
+      if (metodo === 'PATCH') return new Response(JSON.stringify({ object: 'contact', id: 'rc_existente' }), { status: 200 })
+      return new Response(JSON.stringify({ id: 'x' }), { status: 200 })
+    }) as typeof fetch
+    const cliente = criarClienteResend({ chave: 're_teste', remetente: 'a@b.com', responderPara: null }, f)
+    const r = await sincronizarPendentes({ db, cliente, registrar: false })
+    expect(r).toMatchObject({ enviados: 1, erros: 0 })
+    const patches = chamadas.filter((c) => c.metodo === 'PATCH')
+    expect(patches).toHaveLength(1)
+    expect(patches[0].corpo).not.toHaveProperty('unsubscribed')
+    for (const c of chamadas) expect(JSON.stringify(c.corpo ?? null)).not.toContain('"unsubscribed":false')
   })
 })
 

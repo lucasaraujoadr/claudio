@@ -529,7 +529,7 @@ function AcoesNewsletter({
   if (!liberado || !conteudoOk) motivoEnvio = null
   else if (!temRascunho) motivoEnvio = 'Crie o rascunho no Resend antes de enviar.'
   else if (estadoSalvo !== 'salvo') motivoEnvio = 'Há alterações na newsletter que ainda não foram salvas.'
-  else if (Date.parse(pecaAtualizadaEm) > Date.parse(envio.atualizadoEm))
+  else if (Date.parse(pecaAtualizadaEm) > Date.parse(envio.conteudoEm))
     motivoEnvio = 'A peça mudou depois do rascunho; atualize o rascunho no Resend antes de enviar.'
   else if (destinatarios === 0) motivoEnvio = 'Nenhum contato elegível e sincronizado para receber a newsletter.'
   const podeEnviar = liberado && conteudoOk && motivoEnvio === null && ocupado === null

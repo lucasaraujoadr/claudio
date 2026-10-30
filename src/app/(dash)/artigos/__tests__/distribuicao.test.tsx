@@ -68,7 +68,7 @@ const TODAS = (): PecaTela[] => [peca('linkedin_artigo'), peca('linkedin_post'),
 
 function newsletter(extra: Partial<NewsletterTela> = {}): NewsletterTela {
   return {
-    envio: { id: 5, situacao: 'rascunho', destinatarios: 40, enviadoEm: null, erro: null, temBroadcast: true, atualizadoEm: '2026-10-29T13:00:00.000Z' },
+    envio: { id: 5, situacao: 'rascunho', destinatarios: 40, enviadoEm: null, erro: null, temBroadcast: true, conteudoEm: '2026-10-29T13:00:00.000Z' },
     destinatarios: 42,
     previaHtml: '<html><body><p>Prévia da newsletter</p></body></html>',
     resendConfigurado: true,
@@ -348,7 +348,7 @@ describe('newsletter', () => {
   it('já enviada: mostra quando e não oferece enviar de novo', () => {
     montar({
       newsletter: newsletter({
-        envio: { id: 5, situacao: 'enviado', destinatarios: 42, enviadoEm: '2026-10-29T16:00:00.000Z', erro: null, temBroadcast: true, atualizadoEm: '2026-10-29T16:00:00.000Z' },
+        envio: { id: 5, situacao: 'enviado', destinatarios: 42, enviadoEm: '2026-10-29T16:00:00.000Z', erro: null, temBroadcast: true, conteudoEm: '2026-10-29T16:00:00.000Z' },
       }),
     })
     const c = cartao('Newsletter')

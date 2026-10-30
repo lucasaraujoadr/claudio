@@ -123,7 +123,7 @@ describe('erros', () => {
 })
 
 describe('contatos', () => {
-  const contato = { email: 'a@b.com', nome: 'Ana Silva', descadastrado: false }
+  const contato = { email: 'a@b.com', nome: 'Ana Silva', descadastrar: false }
 
   it('salvarContato cria quando não existe', async () => {
     const { f, chamadas } = fetchFalso([{ status: 404 }, { status: 201, json: { object: 'contact', id: 'c1' } }])
@@ -148,9 +148,18 @@ describe('contatos', () => {
     }
   })
 
+  it('PATCH de contato não descadastrado omite unsubscribed (nunca reinscreve quem saiu no Resend)', async () => {
+    const { f, chamadas } = fetchFalso([{ status: 200, json: { object: 'contact', id: 'c9' } }])
+    await criarClienteResend(cfg, f).salvarContato(contato)
+    expect(chamadas).toHaveLength(1)
+    expect(chamadas[0].metodo).toBe('PATCH')
+    expect(chamadas[0].corpo).toEqual({ first_name: 'Ana Silva' })
+    expect(chamadas[0].corpo).not.toHaveProperty('unsubscribed')
+  })
+
   it('salvarContato em contato existente atualiza', async () => {
     const { f, chamadas } = fetchFalso([{ status: 200, json: { object: 'contact', id: 'c9' } }])
-    expect(await criarClienteResend(cfg, f).salvarContato({ ...contato, descadastrado: true })).toEqual({ id: 'c9' })
+    expect(await criarClienteResend(cfg, f).salvarContato({ ...contato, descadastrar: true })).toEqual({ id: 'c9' })
     expect(chamadas).toHaveLength(1)
     expect(chamadas[0].metodo).toBe('PATCH')
     expect(chamadas[0].corpo).toMatchObject({ unsubscribed: true, first_name: 'Ana Silva' })

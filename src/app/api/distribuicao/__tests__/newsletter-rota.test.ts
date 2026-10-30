@@ -9,7 +9,7 @@ const m = vi.hoisted(() => ({
 }))
 vi.mock('@/lib/distribuicao/newsletter', () => m)
 
-import { GET, POST } from '../pecas/[id]/newsletter/route'
+import { GET, maxDuration, POST, runtime } from '../pecas/[id]/newsletter/route'
 
 const ctx = (id = '3') => ({ params: Promise.resolve({ id }) })
 const req = (corpo: unknown) =>
@@ -18,6 +18,13 @@ const req = (corpo: unknown) =>
 beforeEach(() => {
   vi.resetAllMocks()
   vi.spyOn(console, 'error').mockImplementation(() => {})
+})
+
+describe('configuração da rota', () => {
+  it('nodejs com 120 s (a sincronização antes do envio tem prazo de 60 s)', () => {
+    expect(runtime).toBe('nodejs')
+    expect(maxDuration).toBe(120)
+  })
 })
 
 describe('POST /api/distribuicao/pecas/[id]/newsletter', () => {

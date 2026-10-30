@@ -49,7 +49,8 @@ export type EnvioTela = {
   erro: string | null
   /** Já existe broadcast no Resend (o rascunho foi criado de fato). */
   temBroadcast: boolean
-  atualizadoEm: string
+  /** Quando o conteúdo do broadcast foi gravado no Resend (não muda com a volta a rascunho). */
+  conteudoEm: string
 }
 
 export type NewsletterTela = {
@@ -88,7 +89,7 @@ export function envioParaTela(e: NewsletterEnvio): EnvioTela {
     enviadoEm: iso(e.enviadoEm),
     erro: e.erro,
     temBroadcast: Boolean(e.resendBroadcastId),
-    atualizadoEm: iso(e.atualizadoEm) ?? new Date(0).toISOString(),
+    conteudoEm: iso(e.conteudoEm ?? e.criadoEm) ?? new Date(0).toISOString(),
   }
 }
 

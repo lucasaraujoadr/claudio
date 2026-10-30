@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, isNull, lt } from 'drizzle-orm'
 import { acessoPublicoOk } from '@/lib/acesso-publico'
 import { bancoPadrao, type BancoCrm } from '@/lib/crm/banco'
 import { DOURADO, montarLayoutMarca, TINTA } from '@/lib/crm/email-html'
@@ -15,13 +15,23 @@ import { newsletterEstrito, type Newsletter } from './schemas'
  *
  * LGPD: antes de enviar, os descadastros pendentes são sincronizados com o Resend; se algum
  * descadastrado/apagado ainda não chegou lá, o envio é recusado. O Resend também respeita o
- * descadastro hospedado (`{{{RESEND_UNSUBSCRIBE_URL}}}`). Nenhuma mensagem aqui leva chave nem
- * dado de contato.
+ * descadastro hospedado (`{{{RESEND_UNSUBSCRIBE_URL}}}`), que só volta ao CRM pelo webhook: sem
+ * `RESEND_WEBHOOK_SECRET` o envio é recusado. Nenhuma mensagem aqui leva chave nem dado de contato.
+ *
+ * Situação `erro`: o envio pode ter saído (o Resend não confirmou nem desmentiu). A linha não volta
+ * a rascunho e não reenvia; o próximo rascunho do artigo confere o broadcast antigo antes.
  */
 
 export const MARCADOR_DESCADASTRO_RESEND = '{{{RESEND_UNSUBSCRIBE_URL}}}'
 export const MENSAGEM_DESCADASTROS_PENDENTES =
   'há descadastros ainda não sincronizados com o Resend; tente de novo em alguns minutos'
+export const MENSAGEM_SEM_WEBHOOK =
+  'o webhook do Resend não está configurado (RESEND_WEBHOOK_SECRET); sem ele, quem se descadastrar pelo link do email não seria registrado no CRM. Configure antes de enviar'
+export const MENSAGEM_ENVIO_NAO_CONFIRMADO = 'o envio não foi confirmado; confira no painel do Resend antes de tentar de novo'
+export const MENSAGEM_PECA_EDITADA = 'a peça foi editada depois do rascunho; atualize o rascunho antes de enviar'
+const MENSAGEM_JA_ENVIADA = 'a newsletter deste artigo já foi enviada'
+/** Tempo máximo da sincronização antes do envio (a rota tem 120 s). */
+const PRAZO_SINCRONIZACAO_MS = 60_000
 const MOTIVO = 'Você recebeu este email porque autorizou o envio dos nossos conteúdos ou é nosso cliente.'
 const MINUTOS_LINHA_PRESA = 2
 const ERRO_GENERICO = 'falha ao falar com o Resend'
@@ -39,6 +49,10 @@ export type OpcoesNewsletter = {
   cliente?: ClienteNewsletter | null
   acessoPublico?: () => Promise<boolean>
   agora?: Date
+  /** Segredo do webhook do Resend. Omitido: `RESEND_WEBHOOK_SECRET`. */
+  segredoWebhook?: string | null
+  /** Prazo da sincronização antes do envio: `true` para parar. Omitido: 60 s. */
+  deveParar?: () => boolean
 }
 
 function clientePadrao(): ClienteNewsletter | null {
@@ -106,6 +120,21 @@ function mensagemErro(e: unknown): string {
   return e instanceof ErroResend ? e.message : ERRO_GENERICO
 }
 
+/**
+ * Estado do broadcast no Resend: `rascunho` (ainda `draft`), `enviado` (saiu de rascunho:
+ * agendado, na fila, enviando ou enviado), `sumiu` (404: nunca vai sair) ou `desconhecido`
+ * (a leitura falhou ou o status veio vazio).
+ */
+async function estadoBroadcast(cliente: ClienteNewsletter, id: string): Promise<'rascunho' | 'enviado' | 'sumiu' | 'desconhecido'> {
+  try {
+    const { status } = await cliente.lerBroadcast(id)
+    if (status === 'draft') return 'rascunho'
+    return status === '' ? 'desconhecido' : 'enviado'
+  } catch (e) {
+    return e instanceof ErroResend && e.tipo === 'nao_encontrado' ? 'sumiu' : 'desconhecido'
+  }
+}
+
 /** Envio ainda em rascunho do artigo da peça (o mais recente). */
 export async function rascunhoDaPeca(pecaId: number, db: BancoCrm = bancoPadrao()): Promise<NewsletterEnvio | null> {
   const [l] = await db
@@ -169,7 +198,25 @@ export async function criarRascunhoNewsletter(
       .from(newslettersEnvios)
       .where(and(eq(newslettersEnvios.artigoId, linha.peca.artigoId), eq(newslettersEnvios.situacao, 'enviado')))
       .limit(1)
-    if (jaEnviada) return { ok: false, mensagem: 'a newsletter deste artigo já foi enviada' }
+    if (jaEnviada) return { ok: false, mensagem: MENSAGEM_JA_ENVIADA }
+
+    // Envio anterior não confirmado (`erro`): só deixa criar outro rascunho se o broadcast antigo
+    // comprovadamente não saiu. Se saiu, a linha vira `enviado`; se não dá para saber, recusa.
+    const naoConfirmados = await db
+      .select()
+      .from(newslettersEnvios)
+      .where(and(eq(newslettersEnvios.artigoId, linha.peca.artigoId), eq(newslettersEnvios.situacao, 'erro'), isNotNull(newslettersEnvios.resendBroadcastId)))
+    for (const antigo of naoConfirmados) {
+      const estado = await estadoBroadcast(cliente, antigo.resendBroadcastId!)
+      if (estado === 'desconhecido') return { ok: false, mensagem: MENSAGEM_ENVIO_NAO_CONFIRMADO }
+      if (estado === 'enviado') {
+        await db
+          .update(newslettersEnvios)
+          .set({ situacao: 'enviado', erro: null, enviadoEm: antigo.enviadoEm ?? agora, atualizadoEm: agora })
+          .where(and(eq(newslettersEnvios.id, antigo.id), eq(newslettersEnvios.situacao, 'erro')))
+        return { ok: false, mensagem: MENSAGEM_JA_ENVIADA }
+      }
+    }
 
     const segmento = await cliente.garantirSegmento(SEGMENTO_NEWSLETTER)
     const destinatarios = await contarDestinatariosNewsletter(db)
@@ -187,7 +234,7 @@ export async function criarRascunhoNewsletter(
         const { id } = await cliente.criarBroadcast({ segmentoId: segmento.id, ...dados })
         const [nova] = await db
           .update(newslettersEnvios)
-          .set({ resendBroadcastId: id, atualizadoEm: agora })
+          .set({ resendBroadcastId: id, conteudoEm: agora, atualizadoEm: agora })
           .where(eq(newslettersEnvios.id, linhaId))
           .returning()
         return { ok: true, envio: nova }
@@ -229,7 +276,7 @@ export async function criarRascunhoNewsletter(
     if (!broadcastId) broadcastId = (await cliente.criarBroadcast({ segmentoId: segmento.id, ...dados })).id
     const [nova] = await db
       .update(newslettersEnvios)
-      .set({ resendBroadcastId: broadcastId, destinatarios, erro: null, atualizadoEm: agora })
+      .set({ resendBroadcastId: broadcastId, destinatarios, erro: null, conteudoEm: agora, atualizadoEm: agora })
       .where(and(eq(newslettersEnvios.id, existente.id), eq(newslettersEnvios.situacao, 'rascunho')))
       .returning()
     if (nova) return { ok: true, envio: nova }
@@ -261,9 +308,13 @@ async function pendentesNaoElegiveis(db: BancoCrm): Promise<number> {
 }
 
 /**
- * Dispara o broadcast (sempre agora: o descadastro é checado imediatamente antes, e um envio agendado sairia sem essa checagem). Só envia a partir de `rascunho`; a troca de situação
+ * Dispara o broadcast (sempre agora: o descadastro é checado imediatamente antes, e um envio
+ * agendado sairia sem essa checagem). Só envia a partir de `rascunho`; a troca de situação
  * acontece ANTES da chamada ao Resend, de forma condicional, então dois cliques nunca enviam duas
- * vezes. Se o Resend recusar, a linha volta a `rascunho` com o erro.
+ * vezes. Se o Resend recusar, a linha volta a `rascunho` com o erro. Se a resposta for ambígua
+ * (rede/servidor) e não der para conferir o broadcast, a linha fica em `erro`: pode ter saído.
+ *
+ * Recusa antes: sem o segredo do webhook, ou se a peça foi editada depois do rascunho (`conteudoEm`).
  */
 export async function enviarNewsletter(
   envioId: number,
@@ -280,14 +331,29 @@ export async function enviarNewsletter(
     return { ok: false, mensagem: 'esta newsletter já foi enviada ou não tem rascunho' }
   }
 
+  // Sem o webhook, o descadastro feito na página do Resend nunca chegaria ao CRM.
+  const segredo = (opts.segredoWebhook === undefined ? process.env.RESEND_WEBHOOK_SECRET : opts.segredoWebhook)?.trim()
+  if (!segredo) return { ok: false, mensagem: MENSAGEM_SEM_WEBHOOK }
+
+  const [peca] = await db
+    .select({ atualizadoEm: pecasDistribuicao.atualizadoEm })
+    .from(pecasDistribuicao)
+    .where(and(eq(pecasDistribuicao.artigoId, envio.artigoId), eq(pecasDistribuicao.tipo, 'newsletter')))
+  if (!peca) return { ok: false, mensagem: 'peça de newsletter não encontrada' }
+  const conteudoEm = envio.conteudoEm ?? envio.criadoEm
+  if (peca.atualizadoEm.getTime() > conteudoEm.getTime()) return { ok: false, mensagem: MENSAGEM_PECA_EDITADA }
+
   // Sem acesso público o descadastro hospedado não volta pelo webhook.
   const acesso = await (opts.acessoPublico ?? (() => acessoPublicoOk()))().catch(() => false)
   if (!acesso) {
     return { ok: false, mensagem: 'o painel não está acessível publicamente; o descadastro não voltaria pelo webhook. Ajuste a proteção da Vercel antes de enviar' }
   }
 
+  // Com prazo: se parar antes do fim, quem ficou pendente e não é elegível ainda bloqueia logo abaixo.
+  const inicio = Date.now()
+  const deveParar = opts.deveParar ?? (() => Date.now() - inicio >= PRAZO_SINCRONIZACAO_MS)
   try {
-    await sincronizarPendentes({ db, cliente })
+    await sincronizarPendentes({ db, cliente, deveParar })
   } catch (e) {
     console.error('Falha ao sincronizar antes da newsletter', e instanceof Error ? e.name : 'erro')
   }
@@ -313,20 +379,26 @@ export async function enviarNewsletter(
   try {
     await cliente.enviarBroadcast(envio.resendBroadcastId)
   } catch (e) {
-    // Erro ambíguo (rede/servidor): o Resend pode ter aceitado o envio. Se o broadcast deixou de ser rascunho, vale como enviado.
-    if (e instanceof ErroResend && (e.tipo === 'rede' || e.tipo === 'servidor')) {
-      const saiuDeRascunho = await cliente
-        .lerBroadcast(envio.resendBroadcastId)
-        .then((b) => b.status !== '' && b.status !== 'draft')
-        .catch(() => false)
-      if (saiuDeRascunho) return { ok: true, situacao: 'enviado', destinatarios }
-    }
-    const mensagem = mensagemErro(e)
     console.error('Falha ao enviar newsletter', e instanceof Error ? e.name : 'erro')
+    // Erro ambíguo (rede/servidor): o Resend pode ter aceitado o envio. Se o broadcast deixou de
+    // ser rascunho, vale como enviado; se não dá para saber, fica em `erro` (nunca volta a rascunho).
+    if (e instanceof ErroResend && (e.tipo === 'rede' || e.tipo === 'servidor')) {
+      const estado = await estadoBroadcast(cliente, envio.resendBroadcastId)
+      if (estado === 'enviado') return { ok: true, situacao: 'enviado', destinatarios }
+      if (estado === 'desconhecido') {
+        await db
+          .update(newslettersEnvios)
+          .set({ situacao: 'erro', erro: MENSAGEM_ENVIO_NAO_CONFIRMADO, atualizadoEm: new Date() })
+          .where(and(eq(newslettersEnvios.id, envioId), eq(newslettersEnvios.situacao, 'enviado')))
+        return { ok: false, mensagem: MENSAGEM_ENVIO_NAO_CONFIRMADO }
+      }
+    }
+    // Recusa confirmada: volta a rascunho. `conteudoEm` não muda (o conteúdo do broadcast é o mesmo).
+    const mensagem = mensagemErro(e)
     await db
       .update(newslettersEnvios)
       .set({ situacao: 'rascunho', agendadoPara: null, enviadoEm: null, erro: mensagem, atualizadoEm: new Date() })
-      .where(eq(newslettersEnvios.id, envioId))
+      .where(and(eq(newslettersEnvios.id, envioId), eq(newslettersEnvios.situacao, 'enviado')))
     return { ok: false, mensagem }
   }
   return { ok: true, situacao: 'enviado', destinatarios }

@@ -10,6 +10,8 @@ import {
 } from '@/lib/distribuicao/newsletter'
 
 export const runtime = 'nodejs'
+// O envio sincroniza os contatos pendentes antes (até 60 s) e depois dispara o broadcast.
+export const maxDuration = 120
 
 type Ctx = { params: Promise<{ id: string }> }
 

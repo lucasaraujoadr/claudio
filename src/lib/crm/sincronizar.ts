@@ -10,7 +10,9 @@ import { INTERROMPIDO_POR_TEMPO } from './funis'
  *
  * Minimização (LGPD): para o Resend vai só email e nome (`salvarContato`); nunca telefone,
  * cidade, escritório, notas ou tags. Contato com `dadosApagadosEm` guarda só o email como
- * supressão: vai como `descadastrado: true`, sem nome, e o id do Resend não é gravado.
+ * supressão: vai como `descadastrar: true`, sem nome, e o id do Resend não é gravado.
+ * O contato elegível vai com `descadastrar: false`, que nunca manda `unsubscribed: false` a um
+ * contato que já existe no Resend: quem saiu pela página do Resend continua fora.
  * Descadastrado e apagado nunca são adicionados ao segmento: o único caminho para
  * `adicionarAoSegmento` é o contato elegível (`elegivelNewsletter`).
  *
@@ -86,18 +88,18 @@ async function enviarContato(cliente: ClienteContatos, segmentoId: string, c: Co
   const email = c.emailNormalizado
   if (c.dadosApagadosEm) {
     // Só a supressão: sem nome, e o id não é guardado.
-    await cliente.salvarContato({ email, nome: null, descadastrado: true })
+    await cliente.salvarContato({ email, nome: null, descadastrar: true })
     await removerTolerante(cliente, email, segmentoId)
     return null
   }
   const nome = c.nome.trim() || null
   if (c.status === 'descadastrado') {
-    const { id } = await cliente.salvarContato({ email, nome, descadastrado: true })
+    const { id } = await cliente.salvarContato({ email, nome, descadastrar: true })
     await removerTolerante(cliente, email, segmentoId)
     return id
   }
   if (elegivelNewsletter(c, naNutricao)) {
-    const { id } = await cliente.salvarContato({ email, nome, descadastrado: false })
+    const { id } = await cliente.salvarContato({ email, nome, descadastrar: false })
     await cliente.adicionarAoSegmento(email, segmentoId)
     return id
   }

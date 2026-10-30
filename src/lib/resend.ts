@@ -5,6 +5,7 @@
  * - `POST /emails` (cabeçalho `Idempotency-Key`; corpo `from`, `to[]`, `subject`, `html`, `text`,
  *   `reply_to`, `headers`, `tags[{name,value}]`) → `{id}`.
  * - `PATCH /contacts/{id ou email}` (`first_name`, `unsubscribed`) → `{id}`; 404 se não existe.
+ *   O PATCH só manda `unsubscribed: true`; nunca `false` (ver `salvarContato`).
  * - `POST /contacts` (`email`, `first_name`, `unsubscribed`) → `{id}`. Sem propriedades personalizadas.
  * - `GET /segments?limit&after` → `{has_more, data:[{id,name}]}`; `POST /segments {name}` → `{id}`.
  *   (Segments substitui a API Audiences, descontinuada.)
@@ -140,20 +141,25 @@ export function criarClienteResend(cfg: ConfigResend, f: typeof fetch = fetch) {
       return { id: lerId(json) }
     },
 
-    /** Atualiza o contato se existir (PATCH por email); senão cria. Nunca falha por "já existe". */
+    /**
+     * Atualiza o contato se existir (PATCH por email); senão cria. Nunca falha por "já existe".
+     *
+     * O descadastro é pegajoso: `descadastrar: true` manda `unsubscribed: true`; `false` não mexe
+     * no campo no PATCH, para nunca reinscrever quem saiu pela página do Resend (se o webhook
+     * `contact.updated` se perdeu, o CRM ainda acha que o contato é elegível). Só o contato novo
+     * (POST) nasce com `unsubscribed: false`.
+     */
     async salvarContato(c: {
       email: string
       nome: string | null
-      descadastrado: boolean
+      /** `true`: descadastrado ou apagado no CRM. `false`: deixa o `unsubscribed` do Resend como está. */
+      descadastrar: boolean
     }): Promise<{ id: string }> {
-      const dados = { first_name: c.nome, unsubscribed: c.descadastrado }
-      const atualizado = await chamar('PATCH', `/contacts/${encodeURIComponent(c.email)}`, { json: dados, aceitar404: true })
+      const patch = { first_name: c.nome, ...(c.descadastrar ? { unsubscribed: true } : {}) }
+      const atualizado = await chamar('PATCH', `/contacts/${encodeURIComponent(c.email)}`, { json: patch, aceitar404: true })
       if (atualizado.status !== 404) return { id: lerId(atualizado.json) }
       const criado = await chamar('POST', '/contacts', {
-        json: {
-          email: c.email,
-          ...dados,
-        },
+        json: { email: c.email, first_name: c.nome, unsubscribed: c.descadastrar },
       })
       return { id: lerId(criado.json) }
     },

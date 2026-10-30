@@ -14,6 +14,9 @@ import {
   criarRascunhoNewsletter,
   enviarNewsletter,
   MENSAGEM_DESCADASTROS_PENDENTES,
+  MENSAGEM_ENVIO_NAO_CONFIRMADO,
+  MENSAGEM_PECA_EDITADA,
+  MENSAGEM_SEM_WEBHOOK,
   montarNewsletter,
 } from '../newsletter'
 
@@ -103,7 +106,13 @@ async function contato(extra: Partial<typeof contatos.$inferInsert> = {}, naNutr
 }
 
 const ok = async () => true
-const opts = (r: ReturnType<typeof resendFalso>, extra: object = {}) => ({ db, cliente: r.cliente, acessoPublico: ok, ...extra })
+const opts = (r: ReturnType<typeof resendFalso>, extra: object = {}) => ({
+  db,
+  cliente: r.cliente,
+  acessoPublico: ok,
+  segredoWebhook: 'whsec_teste',
+  ...extra,
+})
 
 describe('montarNewsletter', () => {
   const m = montarNewsletter(CONTEUDO as never, { link: 'https://ogpericiacontabil.com.br/pericia-contabil/', slug: 'pericia-contabil' })
@@ -239,6 +248,57 @@ describe('rascunho: envio repetido e concorrência', () => {
   })
 })
 
+describe('rascunho depois de um envio não confirmado (situação erro)', () => {
+  async function envioNaoConfirmado(r: ReturnType<typeof resendFalso>) {
+    await contato()
+    const { peca } = await artigoComPeca()
+    await criarRascunhoNewsletter(peca.id, opts(r))
+    const [e] = await db.select().from(newslettersEnvios)
+    r.estado.falharEnvio = new ErroResend('rede')
+    r.mocks.lerBroadcast.mockRejectedValueOnce(new ErroResend('rede'))
+    expect((await enviarNewsletter(e.id, opts(r))).ok).toBe(false)
+    r.estado.falharEnvio = null
+    return { peca, e }
+  }
+  it('o broadcast antigo segue em rascunho no Resend → novo rascunho é criado e pode ser enviado', async () => {
+    const r = resendFalso()
+    const { peca } = await envioNaoConfirmado(r)
+    const res = await criarRascunhoNewsletter(peca.id, opts(r))
+    expect(res.ok).toBe(true)
+    expect(r.mocks.lerBroadcast).toHaveBeenLastCalledWith('bc_1')
+    const linhas = await db.select().from(newslettersEnvios).orderBy(newslettersEnvios.id)
+    expect(linhas.map((l) => l.situacao)).toEqual(['erro', 'rascunho'])
+    expect(linhas[1].resendBroadcastId).toBe('bc_2')
+    expect((await enviarNewsletter(linhas[1].id, opts(r))).ok).toBe(true)
+  })
+  it('o broadcast antigo saiu no Resend → a linha vira enviado e o novo rascunho é recusado', async () => {
+    const r = resendFalso()
+    const { peca, e } = await envioNaoConfirmado(r)
+    r.mocks.lerBroadcast.mockResolvedValue({ id: 'bc_1', status: 'sent' })
+    const res = await criarRascunhoNewsletter(peca.id, opts(r))
+    expect(res).toEqual({ ok: false, mensagem: 'a newsletter deste artigo já foi enviada' })
+    const linhas = await db.select().from(newslettersEnvios)
+    expect(linhas).toHaveLength(1)
+    expect(linhas[0]).toMatchObject({ id: e.id, situacao: 'enviado', erro: null })
+    expect(r.mocks.criarBroadcast).toHaveBeenCalledTimes(1)
+  })
+  it('não dá para conferir o broadcast antigo → recusa sem criar outro', async () => {
+    const r = resendFalso()
+    const { peca } = await envioNaoConfirmado(r)
+    r.mocks.lerBroadcast.mockRejectedValue(new ErroResend('servidor'))
+    const res = await criarRascunhoNewsletter(peca.id, opts(r))
+    expect(res).toEqual({ ok: false, mensagem: MENSAGEM_ENVIO_NAO_CONFIRMADO })
+    expect(await db.select().from(newslettersEnvios)).toHaveLength(1)
+    expect(r.mocks.criarBroadcast).toHaveBeenCalledTimes(1)
+  })
+  it('broadcast antigo apagado no Resend (404) conta como não enviado', async () => {
+    const r = resendFalso()
+    const { peca } = await envioNaoConfirmado(r)
+    r.mocks.lerBroadcast.mockRejectedValue(new ErroResend('nao_encontrado'))
+    expect((await criarRascunhoNewsletter(peca.id, opts(r))).ok).toBe(true)
+  })
+})
+
 describe('contarDestinatariosNewsletter', () => {
   it('conta só elegíveis já sincronizados', async () => {
     await contato() // conta
@@ -319,7 +379,7 @@ describe('enviarNewsletter', () => {
     const e = await rascunhoPronto(r)
     const res = await enviarNewsletter(e.id, opts(r))
     expect(res.ok).toBe(true)
-    expect(r.mocks.salvarContato).toHaveBeenCalledWith(expect.objectContaining({ email: d.emailNormalizado, descadastrado: true }))
+    expect(r.mocks.salvarContato).toHaveBeenCalledWith(expect.objectContaining({ email: d.emailNormalizado, descadastrar: true }))
     const ordem = [r.mocks.salvarContato.mock.invocationCallOrder[0], r.mocks.enviarBroadcast.mock.invocationCallOrder[0]]
     expect(ordem[0]).toBeLessThan(ordem[1])
   })
@@ -386,16 +446,97 @@ describe('enviarNewsletter', () => {
     expect(await enviarNewsletter(e.id, opts(r))).toMatchObject({ ok: true, situacao: 'enviado' })
     expect((await db.select().from(newslettersEnvios))[0].situacao).toBe('enviado')
   })
-  it('erro ambíguo: ainda rascunho ou leitura falha → volta a rascunho com erro', async () => {
+  it('erro ambíguo: broadcast confirmado como rascunho → volta a rascunho com erro', async () => {
     await contato()
     const r = resendFalso()
     const e = await rascunhoPronto(r)
     r.estado.falharEnvio = new ErroResend('servidor')
     expect((await enviarNewsletter(e.id, opts(r))).ok).toBe(false)
     expect((await db.select().from(newslettersEnvios))[0]).toMatchObject({ situacao: 'rascunho', erro: expect.any(String) })
+  })
+  it('erro ambíguo e a leitura do broadcast também falha → erro "não confirmado", nunca rascunho', async () => {
+    await contato()
+    const r = resendFalso()
+    const e = await rascunhoPronto(r)
+    r.estado.falharEnvio = new ErroResend('rede')
     r.mocks.lerBroadcast.mockRejectedValue(new ErroResend('rede'))
+    const res = await enviarNewsletter(e.id, opts(r))
+    expect(res).toEqual({ ok: false, mensagem: MENSAGEM_ENVIO_NAO_CONFIRMADO })
+    expect(MENSAGEM_ENVIO_NAO_CONFIRMADO).toBe('o envio não foi confirmado; confira no painel do Resend antes de tentar de novo')
+    const [depois] = await db.select().from(newslettersEnvios)
+    expect(depois).toMatchObject({ situacao: 'erro', erro: MENSAGEM_ENVIO_NAO_CONFIRMADO })
+    // Não dá para reenviar a mesma linha.
+    r.estado.falharEnvio = null
     expect((await enviarNewsletter(e.id, opts(r))).ok).toBe(false)
+    expect(r.mocks.enviarBroadcast).toHaveBeenCalledTimes(1)
+  })
+  it('erro ambíguo e status desconhecido → também fica em erro', async () => {
+    await contato()
+    const r = resendFalso()
+    const e = await rascunhoPronto(r)
+    r.estado.falharEnvio = new ErroResend('servidor')
+    r.mocks.lerBroadcast.mockResolvedValue({ id: 'bc_1', status: '' })
+    expect(await enviarNewsletter(e.id, opts(r))).toEqual({ ok: false, mensagem: MENSAGEM_ENVIO_NAO_CONFIRMADO })
+    expect((await db.select().from(newslettersEnvios))[0].situacao).toBe('erro')
+  })
+  it('sem RESEND_WEBHOOK_SECRET → recusa (o descadastro hospedado não voltaria ao CRM)', async () => {
+    await contato()
+    const r = resendFalso()
+    const e = await rascunhoPronto(r)
+    for (const segredoWebhook of [null, '', '   ']) {
+      expect(await enviarNewsletter(e.id, opts(r, { segredoWebhook }))).toEqual({ ok: false, mensagem: MENSAGEM_SEM_WEBHOOK })
+    }
+    const antes = process.env.RESEND_WEBHOOK_SECRET
+    delete process.env.RESEND_WEBHOOK_SECRET
+    try {
+      expect(await enviarNewsletter(e.id, opts(r, { segredoWebhook: undefined }))).toEqual({ ok: false, mensagem: MENSAGEM_SEM_WEBHOOK })
+    } finally {
+      if (antes !== undefined) process.env.RESEND_WEBHOOK_SECRET = antes
+    }
+    expect(r.mocks.enviarBroadcast).not.toHaveBeenCalled()
     expect((await db.select().from(newslettersEnvios))[0].situacao).toBe('rascunho')
+  })
+  it('peça editada depois do rascunho → recusa', async () => {
+    await contato()
+    const r = resendFalso()
+    const e = await rascunhoPronto(r)
+    await db.update(pecasDistribuicao).set({ atualizadoEm: new Date(Date.now() + 60_000) })
+    expect(await enviarNewsletter(e.id, opts(r))).toEqual({ ok: false, mensagem: MENSAGEM_PECA_EDITADA })
+    expect(MENSAGEM_PECA_EDITADA).toBe('a peça foi editada depois do rascunho; atualize o rascunho antes de enviar')
+    expect(r.mocks.enviarBroadcast).not.toHaveBeenCalled()
+  })
+  it('edição durante um envio que falhou: a volta a rascunho não esconde a edição', async () => {
+    await contato()
+    const r = resendFalso()
+    const e = await rascunhoPronto(r)
+    r.mocks.enviarBroadcast.mockImplementationOnce(async () => {
+      await db.update(pecasDistribuicao).set({ atualizadoEm: new Date(Date.now() + 1_000) })
+      throw new ErroResend('credencial')
+    })
+    expect((await enviarNewsletter(e.id, opts(r))).ok).toBe(false)
+    // A volta a rascunho grava atualizado_em depois da edição, mas o conteúdo do broadcast é o antigo.
+    await db.update(newslettersEnvios).set({ atualizadoEm: new Date(Date.now() + 5_000) })
+    expect(await enviarNewsletter(e.id, opts(r))).toEqual({ ok: false, mensagem: MENSAGEM_PECA_EDITADA })
+    expect(r.mocks.enviarBroadcast).toHaveBeenCalledTimes(1)
+  })
+  it('rascunho atualizado depois da edição libera o envio', async () => {
+    await contato()
+    const r = resendFalso()
+    const { peca } = await artigoComPeca()
+    await criarRascunhoNewsletter(peca.id, opts(r))
+    await db.update(pecasDistribuicao).set({ atualizadoEm: new Date(Date.now() - 1_000) })
+    const [e] = await db.select().from(newslettersEnvios)
+    expect((await enviarNewsletter(e.id, opts(r))).ok).toBe(true)
+  })
+  it('prazo da sincronização esgotado: descadastro pendente continua bloqueando', async () => {
+    await contato()
+    await contato({ status: 'descadastrado', syncStatus: 'pendente' }, false)
+    const r = resendFalso()
+    const e = await rascunhoPronto(r)
+    const res = await enviarNewsletter(e.id, opts(r, { deveParar: () => true }))
+    expect(res).toEqual({ ok: false, mensagem: MENSAGEM_DESCADASTROS_PENDENTES })
+    expect(r.mocks.salvarContato).not.toHaveBeenCalled()
+    expect(r.mocks.enviarBroadcast).not.toHaveBeenCalled()
   })
   it('contagem não duplica contato', async () => {
     const c = await contato()
