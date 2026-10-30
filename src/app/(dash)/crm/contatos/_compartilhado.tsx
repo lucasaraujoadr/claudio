@@ -15,9 +15,9 @@ export function SeloStatus({ status }: { status: StatusContato }) {
 }
 
 const ROTULO_SYNC: Record<Contato['syncStatus'], { texto: string; variante: VarianteSelo }> = {
-  pendente: { texto: 'Brevo: pendente', variante: 'neutro' },
-  sincronizado: { texto: 'Brevo: sincronizado', variante: 'sucesso' },
-  erro: { texto: 'Brevo: erro', variante: 'aviso' },
+  pendente: { texto: 'Resend: pendente', variante: 'neutro' },
+  sincronizado: { texto: 'Resend: sincronizado', variante: 'sucesso' },
+  erro: { texto: 'Resend: erro', variante: 'aviso' },
 }
 
 export function SeloSync({ status }: { status: Contato['syncStatus'] }) {

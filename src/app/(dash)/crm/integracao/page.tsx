@@ -1,8 +1,6 @@
 import type { ReactNode } from 'react'
 import { connection } from 'next/server'
 import { Aviso, BotaoEnviar, CabecalhoPagina, Cartao, Selo, type TipoAviso } from '@/components/ui'
-import { brevoConfigurado, ATRIBUTOS_BREVO } from '@/lib/brevo'
-import { BASES_LEGAIS, ROTULO_BASE_LEGAL } from '@/lib/crm/campos'
 import { estadoIntegracao, type EstadoIntegracao } from '@/lib/crm/sincronizar'
 import { formatarQuando } from '../contatos/_compartilhado'
 import { UrlSecreta } from './url-secreta'
@@ -17,11 +15,7 @@ const AVISOS: Record<string, { texto: string; tipo: TipoAviso }> = {
   'sync-ok': { texto: 'Sincronização concluída: nada pendente.', tipo: 'sucesso' },
   'sync-parcial': { texto: 'Sincronização feita, mas ainda há contatos pendentes ou com erro. Veja o resumo abaixo.', tipo: 'alerta' },
   'sync-interrompida': { texto: 'A sincronização parou no meio. Veja a mensagem em "Última sincronização".', tipo: 'erro' },
-  'nao-conectado': { texto: 'Brevo não conectado: configure BREVO_API_KEY na Vercel e faça um novo deploy.', tipo: 'alerta' },
-  'base-legal': { texto: 'Escolha a base legal dos contatos que vêm do Brevo.', tipo: 'erro' },
-  'importacao-ok': { texto: 'Contatos do Brevo importados.', tipo: 'sucesso' },
-  'importacao-parcial': { texto: 'Importação parou no teto por execução; clique de novo para continuar.', tipo: 'alerta' },
-  'importacao-erro': { texto: 'A importação do Brevo parou com erro. Veja "Última importação".', tipo: 'erro' },
+  'nao-conectado': { texto: 'Resend não configurado: configure RESEND_API_KEY na Vercel e faça um novo deploy.', tipo: 'alerta' },
   erro: { texto: 'Algo falhou no servidor. Tente de novo em instantes.', tipo: 'erro' },
 }
 
@@ -34,7 +28,7 @@ async function carregar(): Promise<EstadoIntegracao | null> {
   }
 }
 
-function Execucao({ titulo, e }: { titulo: string; e: EstadoIntegracao['ultimaSincronizacao'] }) {
+function Execucao({ titulo, e }: { titulo: string; e: EstadoIntegracao['ultimoSync'] }) {
   return (
     <div>
       <dt className="text-xs font-medium text-tinta-suave">{titulo}</dt>
@@ -71,10 +65,10 @@ export default async function IntegracaoPage({
   await connection()
   const sp = await searchParams
   const aviso = typeof sp.aviso === 'string' ? AVISOS[sp.aviso] : undefined
-  const conectado = brevoConfigurado()
-  const tokenBrevo = process.env.BREVO_WEBHOOK_TOKEN?.trim() || null
+    const tokenBrevo = process.env.BREVO_WEBHOOK_TOKEN?.trim() || null
   const tokenSite = process.env.SITE_WEBHOOK_TOKEN?.trim() || null
   const estado = await carregar()
+  const conectado = estado?.conectado ?? false
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -94,15 +88,14 @@ export default async function IntegracaoPage({
         e acrescentar <code>&amp;x-vercel-protection-bypass=…</code> às duas URLs abaixo. Os webhooks já exigem token próprio.
       </Aviso>
 
-      <Cartao titulo="Brevo" descricao="Conexão pela chave de API (BREVO_API_KEY).">
+      <Cartao titulo="Resend" descricao="Contatos e segmento da newsletter (RESEND_API_KEY).">
         <div className="space-y-5">
           {conectado ? (
-            <p className="text-sm text-tinta"><Selo variante="sucesso">Conectado</Selo> A chave do Brevo está configurada.</p>
+            <p className="text-sm text-tinta"><Selo variante="sucesso">Conectado</Selo> A chave do Resend está configurada.</p>
           ) : (
-            <Aviso tipo="info" titulo="Brevo não conectado" role={null}>
-              O CRM funciona por completo sem o Brevo: os contatos ficam como &quot;pendente&quot; e são enviados quando a chave for
-              configurada. Crie a conta, gere a chave em Brevo → SMTP e API → Chaves de API, cadastre <code>BREVO_API_KEY</code> na
-              Vercel (Production) e faça um novo deploy.
+            <Aviso tipo="info" titulo="Resend não configurado" role={null}>
+              O CRM funciona por completo sem o Resend: os contatos ficam como &quot;pendente&quot; e são sincronizados quando a chave for
+              configurada (<code>RESEND_API_KEY</code> e <code>RESEND_REMETENTE</code> na Vercel, Production, e um novo deploy).
             </Aviso>
           )}
 
@@ -110,65 +103,30 @@ export default async function IntegracaoPage({
             <dl className="grid gap-4 sm:grid-cols-3">
               <div>
                 <dt className="text-xs font-medium text-tinta-suave">Pendentes</dt>
-                <dd className="font-titulo text-2xl font-semibold tabular-nums text-tinta">{estado.porSync.pendente.toLocaleString('pt-BR')}</dd>
-              </div>
-              <div>
-                <dt className="text-xs font-medium text-tinta-suave">Sincronizados</dt>
-                <dd className="font-titulo text-2xl font-semibold tabular-nums text-tinta">{estado.porSync.sincronizado.toLocaleString('pt-BR')}</dd>
+                <dd className="font-titulo text-2xl font-semibold tabular-nums text-tinta">{estado.pendentes.toLocaleString('pt-BR')}</dd>
               </div>
               <div>
                 <dt className="text-xs font-medium text-tinta-suave">Com erro</dt>
-                <dd className="font-titulo text-2xl font-semibold tabular-nums text-tinta">{estado.porSync.erro.toLocaleString('pt-BR')}</dd>
+                <dd className="font-titulo text-2xl font-semibold tabular-nums text-tinta">{estado.erros.toLocaleString('pt-BR')}</dd>
               </div>
-              <Execucao titulo="Última sincronização" e={estado.ultimaSincronizacao} />
-              <Execucao titulo="Última importação do Brevo" e={estado.ultimaImportacao} />
+              <div>
+                <dt className="text-xs font-medium text-tinta-suave">Acesso público do painel</dt>
+                <dd className="text-sm text-tinta">
+                  {estado.acessoPublico === null ? 'Não verificado' : estado.acessoPublico ? <Selo variante="sucesso">Liberado</Selo> : <Selo variante="aviso">Bloqueado</Selo>}
+                </dd>
+              </div>
+              <Execucao titulo="Última sincronização" e={estado.ultimoSync} />
             </dl>
           ) : (
             <Aviso tipo="erro" titulo="Não foi possível ler o estado da integração">O banco não respondeu. Recarregue a página.</Aviso>
           )}
 
-          <form method="POST" action="/api/crm/brevo/sincronizar" className="flex flex-wrap items-center gap-3">
+          <form method="POST" action="/api/crm/funis/sincronizar" className="flex flex-wrap items-center gap-3">
             <BotaoEnviar rotuloEnviando="Sincronizando…">Sincronizar agora</BotaoEnviar>
             <span className="text-xs text-tinta-suave">
-              Envia até 200 contatos pendentes por vez. Descadastrados vão bloqueados e nunca entram em lista.
+              Envia até 200 contatos pendentes por vez. Só email e nome vão ao Resend; descadastrados e apagados nunca entram no segmento.
             </span>
           </form>
-
-          <details className="rounded-lg border border-borda p-4">
-            <summary className="cursor-pointer text-sm font-medium text-tinta">Importar contatos que já estão no Brevo</summary>
-            <form method="POST" action="/api/crm/brevo/importar" className="mt-3 space-y-3">
-              <fieldset className="space-y-1.5">
-                <legend className="text-sm font-medium text-tinta">Base legal desses contatos (obrigatória)</legend>
-                {BASES_LEGAIS.map((b) => (
-                  <label key={b} className="flex items-center gap-2 text-sm text-tinta">
-                    <input type="radio" name="baseLegal" value={b} required /> {ROTULO_BASE_LEGAL[b]}
-                  </label>
-                ))}
-              </fieldset>
-              <p className="text-xs text-tinta-suave">
-                Entram com origem &quot;Brevo&quot;; quem está bloqueado no Brevo entra como descadastrado; contatos que já existem no CRM
-                só têm os campos vazios completados. Até 10.000 por vez.
-              </p>
-              <BotaoEnviar rotuloEnviando="Importando…" variante="secundario">Importar do Brevo</BotaoEnviar>
-            </form>
-          </details>
-
-          <details className="rounded-lg border border-borda p-4">
-            <summary className="cursor-pointer text-sm font-medium text-tinta">Atributos que precisam existir no Brevo</summary>
-            <div className="mt-3 space-y-2 text-sm text-tinta">
-              <p>
-                Em Brevo → Contatos → Configurações → Atributos de contato, crie como <strong>Texto</strong> (categoria normal) os que
-                ainda não existirem:
-              </p>
-              <ul className="flex flex-wrap gap-2">
-                {ATRIBUTOS_BREVO.map((a) => <li key={a}><code className="rounded bg-elevada px-1.5 py-0.5">{a}</code></li>)}
-              </ul>
-              <p className="text-xs text-tinta-suave">
-                O telefone vai em TELEFONE (texto), não no atributo SMS do Brevo, que recusa o contato inteiro se o número não estiver
-                no formato internacional. Campos vazios no CRM não são enviados.
-              </p>
-            </div>
-          </details>
         </div>
       </Cartao>
 

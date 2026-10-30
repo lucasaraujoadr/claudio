@@ -15,10 +15,10 @@ import { SeloFunil } from './_compartilhado'
 export const metadata = { title: 'Funis' }
 
 const AVISOS: Record<string, { texto: string; tipo: TipoAviso }> = {
-  'sync-ok': { texto: 'Listas do Brevo atualizadas.', tipo: 'sucesso' },
-  'sync-parcial': { texto: 'Listas atualizadas em parte: ainda há inscrições pendentes (contato ainda não enviado ao Brevo, funil sem lista ou erro).', tipo: 'alerta' },
-  'sync-interrompida': { texto: 'A atualização das listas parou no meio por um erro do Brevo. Tente de novo mais tarde.', tipo: 'erro' },
-  'nao-conectado': { texto: 'Brevo não conectado: as inscrições ficam guardadas e vão para as listas quando BREVO_API_KEY for configurada.', tipo: 'alerta' },
+  'sync-ok': { texto: 'Contatos sincronizados com o Resend.', tipo: 'sucesso' },
+  'sync-parcial': { texto: 'Sincronização feita em parte: ainda há contatos pendentes ou com erro. Veja a tela de Integração.', tipo: 'alerta' },
+  'sync-interrompida': { texto: 'A sincronização parou no meio por um erro do Resend. Tente de novo mais tarde.', tipo: 'erro' },
+  'nao-conectado': { texto: 'Resend não configurado: os contatos ficam pendentes até a chave (RESEND_API_KEY) ser configurada.', tipo: 'alerta' },
   erro: { texto: 'Algo falhou no servidor. Tente de novo em instantes.', tipo: 'erro' },
 }
 

@@ -37,6 +37,15 @@ import {
 /** Motivo gravado quando a rotina diária para por falta de tempo (antes do limite da função). */
 export const INTERROMPIDO_POR_TEMPO = 'interrompido por tempo'
 
+/** Funil cujos membros formam o segmento da newsletter no Resend. */
+const SLUG_NUTRICAO = 'nutricao-blog'
+
+/** Entrar ou sair da nutrição muda o segmento: o contato volta para a fila de sincronização. */
+async function marcarPendente(db: Pick<BancoCrm, 'update'>, ids: readonly number[], agora: Date) {
+  if (ids.length === 0) return
+  await db.update(contatos).set({ syncStatus: 'pendente', atualizadoEm: agora }).where(inArray(contatos.id, [...ids]))
+}
+
 const ORDEM_FUNIS: readonly SlugFunil[] = DEFINICOES_FUNIS.map((d) => d.slug)
 
 function ordenar(lista: Funil[]): Funil[] {
@@ -173,6 +182,7 @@ export async function inscrever(
       inscritosHoje++
       r.inscritos.push(c.id)
     }
+    if (funil.slug === SLUG_NUTRICAO) await marcarPendente(tx, r.inscritos, agora)
     return r
   })
 }
@@ -205,6 +215,7 @@ async function encerrar(db: BancoCrm, filtro: ReturnType<typeof and>, motivo: st
   if (encerradas.length === 0) return 0
   const fs = await db.select({ id: funis.id, slug: funis.slug, nome: funis.nome }).from(funis).where(inArray(funis.id, [...new Set(encerradas.map((e) => e.funilId))]))
   const porId = new Map(fs.map((f) => [f.id, f]))
+  await marcarPendente(db, encerradas.filter((e) => porId.get(e.funilId)?.slug === SLUG_NUTRICAO).map((e) => e.contatoId), agora)
   await db.insert(eventosContato).values(
     encerradas.map((e) => ({
       contatoId: e.contatoId,

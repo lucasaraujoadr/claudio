@@ -176,6 +176,50 @@ describe('inscrição e saída', () => {
   })
 })
 
+describe('fila de sincronização com o Resend (segmento da newsletter)', () => {
+  const sincronizado = async (id: number) => {
+    await db.update(contatos).set({ syncStatus: 'sincronizado' }).where(eq(contatos.id, id))
+  }
+  const sync = async (id: number) => (await db.select().from(contatos).where(eq(contatos.id, id)))[0].syncStatus
+
+  it('entrar na nutrição marca pendente; outros funis não mexem', async () => {
+    const c = await criar()
+    await sincronizado(c.id)
+    await inscrever('boas-vindas', [c.id], { db, caminho: 'site', agora: AGORA })
+    expect(await sync(c.id)).toBe('sincronizado')
+    await inscrever('nutricao-blog', [c.id], { db, caminho: 'manual', agora: AGORA })
+    expect(await sync(c.id)).toBe('pendente')
+  })
+
+  it('recusado na nutrição não marca', async () => {
+    const c = await criar({ baseLegal: 'legitimo_interesse' })
+    await sincronizado(c.id)
+    await inscrever('nutricao-blog', [c.id], { db, caminho: 'manual', agora: AGORA })
+    expect(await sync(c.id)).toBe('sincronizado')
+  })
+
+  it('sair da nutrição marca pendente; sair de outro funil não', async () => {
+    const c = await criar()
+    await inscrever('nutricao-blog', [c.id], { db, caminho: 'manual', agora: AGORA })
+    await inscrever('boas-vindas', [c.id], { db, caminho: 'site', agora: AGORA })
+    await sincronizado(c.id)
+    const boas = await obterFunil('boas-vindas', { db })
+    await sair(boas.id, [c.id], { db, motivo: 'teste', agora: AGORA })
+    expect(await sync(c.id)).toBe('sincronizado')
+    const nutricao = await obterFunil('nutricao-blog', { db })
+    await sair(nutricao.id, [c.id], { db, motivo: 'teste', agora: AGORA })
+    expect(await sync(c.id)).toBe('pendente')
+  })
+
+  it('sair de todos os funis (descadastro) marca pendente', async () => {
+    const c = await criar()
+    await inscrever('nutricao-blog', [c.id], { db, caminho: 'manual', agora: AGORA })
+    await sincronizado(c.id)
+    await sairDeTodosOsFunis(c.id, { db, motivo: 'teste' })
+    expect(await sync(c.id)).toBe('pendente')
+  })
+})
+
 describe('reativação (rotina diária)', () => {
   it('inscreve clientes sem interação real há 180 dias e mais ninguém', async () => {
     const antes = (dias: number) => new Date(AGORA.getTime() - dias * DIA)

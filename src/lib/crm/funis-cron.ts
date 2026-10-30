@@ -1,6 +1,4 @@
 import { acessoPublicoOk } from '@/lib/acesso-publico'
-import type { ClienteBrevo } from '@/lib/brevo'
-import { criarClienteBrevo } from '@/lib/brevo'
 import { configResend, criarClienteResend, type ClienteResend } from '@/lib/resend'
 import { bancoPadrao, type BancoCrm } from './banco'
 import { executarEnviosFunil } from './envios-funil'
@@ -59,7 +57,8 @@ export class FalhaEtapaFunis extends Error {
  * Etapa diária dos funis: garante os quatro funis, apaga lotes de planilha vencidos, tira
  * descadastrados, inscreve na reativação (até 50) e na prospecção fria (se ligada, no teto),
  * envia pelo Resend as etapas devidas (até `RESEND_LIMITE_DIARIO`; a sequência conclui depois
- * da última etapa) e, com chave do Brevo, ainda envia os contatos pendentes (sai no Task 7).
+ * da última etapa) e, antes disso, sincroniza com o Resend os contatos pendentes (segmento da
+ * newsletter).
  * Cada subetapa é isolada: uma falha não impede as seguintes; no fim, se alguma falhou, lança
  * `FalhaEtapaFunis` (a rotina diária registra `erro` sem a mensagem). Nenhum dado de contato
  * vai para log.
@@ -70,7 +69,6 @@ export class FalhaEtapaFunis extends Error {
 export async function executarEtapaFunis(
   opts: {
     db?: BancoCrm
-    cliente?: ClienteBrevo
     resend?: ClienteResend | null
     acessoPublico?: () => Promise<boolean>
     agora?: Date
@@ -79,7 +77,6 @@ export async function executarEtapaFunis(
   } = {},
 ): Promise<ResultadoEtapaFunis> {
   const db = opts.db ?? bancoPadrao()
-  const cliente = opts.cliente ?? criarClienteBrevo()
   const resend = opts.resend !== undefined ? opts.resend : (() => {
     const cfg = configResend()
     return cfg ? criarClienteResend(cfg) : null
@@ -124,14 +121,17 @@ export async function executarEtapaFunis(
   await etapa('prospeccao', async () => {
     detalhes.prospeccao = (await inscreverProspeccao({ db, agora })).inscritos.length
   })
-  if (cliente.conectado) {
+  // Contatos antes dos envios: o segmento da newsletter e o `unsubscribed` já estão em dia.
+  if (resend) {
     await etapa('contatos', async () => {
-      const r = await sincronizarPendentes({ db, cliente, limite: 200, agora, deveParar: semTempo })
+      const r = await sincronizarPendentes({ db, cliente: resend, limite: 200, agora, deveParar: semTempo })
       detalhes.contatosEnviados = r.conectado ? r.enviados : 0
-      if (r.conectado && r.interrompido === INTERROMPIDO_POR_TEMPO) parouPorTempo = true
+      if (r.conectado) {
+        detalhes.contatosErros = r.erros
+        if (r.interrompido === INTERROMPIDO_POR_TEMPO) parouPorTempo = true
+        else if (r.interrompido) detalhes.contatosInterrompido = r.interrompido
+      }
     })
-  } else {
-    detalhes.brevo = 'não conectado'
   }
   // Envios por último: as inscrições de hoje (reativação, prospecção) já entram na fila.
   if (resend) {
@@ -160,7 +160,7 @@ export async function executarEtapaFunis(
       : detalhes.acessoPublico === 'não'
         ? `painel sem acesso público: nenhum email enviado (${detalhes.envioRestantes ?? 0} na fila)`
         : `emails enviados: ${detalhes.enviados ?? '—'}, erros: ${detalhes.envioErros ?? '—'}, incertos (conferir no Resend; não são repetidos): ${detalhes.envioIncertos ?? '—'}, para amanhã: ${detalhes.envioRestantes ?? '—'}`,
-    ...(cliente.conectado ? [] : ['Brevo não conectado']),
+    ...(resend ? [`contatos sincronizados: ${detalhes.contatosEnviados ?? '—'}`] : []),
   ].join('; ') + '.'
   const resultado = { linhas, detalhes, mensagem }
   if (parouPorTempo) throw new FalhaEtapaFunis(falhas, resultado, { naoRodaram })

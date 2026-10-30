@@ -6,11 +6,11 @@ import type { BancoCrm } from '../banco'
 import { apagarDadosAPedido } from '../apagar-dados'
 import { editarContato, reativarContato, upsertContato, upsertContatos } from '../contatos'
 import { inscrever } from '../funis'
-import { importarDoBrevo, sincronizarPendentes } from '../sincronizar'
+import { sincronizarPendentes } from '../sincronizar'
 import { aplicarEventoBrevo } from '../webhook-brevo'
 import { tratarWebhookSite } from '../webhook-site'
 import { criarBancoTesteFunis } from './banco-teste-funis'
-import { brevoFalso } from './brevo-fake'
+import { resendContatosFalso } from './resend-falso'
 
 let db: BancoCrm
 let fechar: () => Promise<void>
@@ -121,7 +121,7 @@ describe('apagarDadosAPedido', () => {
     expect((await linha(c.id)).nome).toBe('')
   })
 
-  it('reimportar o mesmo email (planilha, cadastro manual, Brevo) não repõe nada e continua descadastrado', async () => {
+  it('reimportar o mesmo email (planilha, cadastro manual) não repõe nada e continua descadastrado', async () => {
     const c = await contatoCompleto()
     await apagarDadosAPedido(c.id, 'pedido', { db })
     const depois = await linha(c.id)
@@ -129,9 +129,6 @@ describe('apagarDadosAPedido', () => {
     const [p] = await upsertContatos([volta], 'planilha', { db, seDescadastrado: 'ignorar', importacao: { lote: 'l1', arquivo: 'a.csv' } })
     expect(p).toEqual({ acao: 'ignorado', motivo: 'dados_apagados', contatoId: c.id })
     expect(await upsertContato({ ...volta, baseLegal: 'consentimento' }, 'manual', { db })).toEqual({ acao: 'ignorado', motivo: 'dados_apagados', contatoId: c.id })
-    const b = brevoFalso([{ id: 321, email: EMAIL, emailBlacklisted: false, listIds: [], atributos: { NOME: 'Ana Titular', TELEFONE: '1' } }])
-    const imp = await importarDoBrevo({ db, cliente: b.cliente, baseLegal: 'consentimento' })
-    expect(imp).toMatchObject({ ignorados: 1, atualizados: 0 })
     expect(await linha(c.id)).toEqual(depois)
     expect((await eventosDe(c.id)).filter((e) => e.dados !== null).map((e) => e.tipo)).toEqual(['dados_apagados'])
   })
@@ -161,14 +158,25 @@ describe('apagarDadosAPedido', () => {
     expect(ultimo).toMatchObject({ tipo: 'clicado', dados: null })
   })
 
-  it('a sincronização bloqueia no Brevo e não grava id de contato', async () => {
+  it('a sincronização manda ao Resend só a supressão e não grava id de contato', async () => {
     const c = await contatoCompleto()
     await apagarDadosAPedido(c.id, 'pedido', { db })
-    const b = brevoFalso([{ id: 321, email: EMAIL, emailBlacklisted: false, listIds: [4], atributos: {} }])
-    await sincronizarPendentes({ db, cliente: b.cliente, registrar: false })
-    expect(b.contatos.get(EMAIL)).toMatchObject({ emailBlacklisted: true, listIds: [] })
-    const upsert = b.chamadas.find((x) => x.op === 'upsert')
-    expect(upsert?.corpo).toMatchObject({ atributos: {} })
-    expect(await linha(c.id)).toMatchObject({ syncStatus: 'sincronizado', resendContatoId: null })
+    expect((await linha(c.id)).resendContatoId).toBeNull()
+    const f = resendContatosFalso()
+    await sincronizarPendentes({ db, cliente: f.cliente, registrar: false })
+    // Nada além de: contato unsubscribed (sem nome) e fora do segmento. Nunca entra no segmento.
+    expect(f.chamadas.filter((x) => x.op !== 'segmento')).toEqual([
+      { op: 'salvar', corpo: { email: EMAIL, nome: null, descadastrado: true } },
+      { op: 'remover', email: EMAIL, segmentoId: 'seg_newsletter' },
+    ])
+    const enviado = JSON.stringify(f.chamadas)
+    for (const dado of ['Ana', 'Titular', '99999', 'Natal', 'Advocacia', 'cliente antiga', 'previdenciario']) expect(enviado).not.toContain(dado)
+    // O id devolvido pelo Resend (rc_1) não é guardado: a linha continua sem id.
+    expect(await linha(c.id)).toMatchObject({ syncStatus: 'sincronizado', resendContatoId: null, status: 'descadastrado', dadosApagadosEm: expect.any(Date) })
+    // Nova rodada: nada pendente, nada enviado.
+    f.chamadas.length = 0
+    await sincronizarPendentes({ db, cliente: f.cliente, registrar: false })
+    expect(f.chamadas).toHaveLength(0)
+    expect((await linha(c.id)).resendContatoId).toBeNull()
   })
 })
