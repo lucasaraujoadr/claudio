@@ -48,6 +48,11 @@ describe('token de descadastro', () => {
     expect(lerTokenDescadastro(t, AGORA, SEGREDO)).toEqual({ contatoId: 42 })
     expect(lerTokenDescadastro(t, new Date(AGORA.getTime() + 364 * DIA), SEGREDO)).toEqual({ contatoId: 42 })
   })
+  it('email antigo continua com descadastro válido por 10 anos', () => {
+    const t = gerarTokenDescadastro(42, AGORA, SEGREDO)
+    expect(lerTokenDescadastro(t, new Date(AGORA.getTime() + 2 * 366 * DIA), SEGREDO)).toEqual({ contatoId: 42 })
+    expect(lerTokenDescadastro(t, new Date(AGORA.getTime() + 3652 * DIA), SEGREDO)).toEqual({ contatoId: 42 })
+  })
   it('token adulterado → null', () => {
     const t = gerarTokenDescadastro(42, AGORA, SEGREDO)
     const [corpo, assinatura] = t.split('.')
@@ -60,7 +65,7 @@ describe('token de descadastro', () => {
   })
   it('expirado → null', () => {
     const t = gerarTokenDescadastro(42, AGORA, SEGREDO)
-    expect(lerTokenDescadastro(t, new Date(AGORA.getTime() + 366 * DIA), SEGREDO)).toBeNull()
+    expect(lerTokenDescadastro(t, new Date(AGORA.getTime() + 3654 * DIA), SEGREDO)).toBeNull()
   })
   it('sem segredo → null', () => {
     const t = gerarTokenDescadastro(42, AGORA, SEGREDO)

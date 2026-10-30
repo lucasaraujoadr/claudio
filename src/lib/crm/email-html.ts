@@ -72,7 +72,8 @@ export function montarLayoutMarca(l: {
   motivo: string
   urlDescadastro: string
 }): string {
-  const logo = escaparHtml(`${urlPublicaPainel()}/logo-og.png`)
+  // Cabeçalho branco: a versão do logo para fundo claro (a dourada de `logo-og.png` é para fundo escuro).
+  const logo = escaparHtml(`${urlPublicaPainel()}/logo-og-claro.png`)
   const href = escaparHtml(l.urlDescadastro)
   const link = `<a href="${href}" style="color:${DOURADO};text-decoration:underline">descadastre-se aqui</a>`
   return [

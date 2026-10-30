@@ -61,12 +61,14 @@ Ficam na Vercel (Settings > Environment Variables). Nunca coloque os valores no 
 | `RESEND_API_KEY` | Chave de API do Resend (Resend → API Keys → Create API Key, permissão de envio). Opcional: sem ela o CRM funciona, os contatos ficam "pendente", nenhum email sai e a tela **CRM → Integração** diz "Resend não conectado". |
 | `RESEND_REMETENTE` | Remetente com domínio verificado no Resend, ex.: `Oliveira Guimarães <contato@ogpericiacontabil.com.br>`. Sem ele (ou sem a chave) o Resend conta como não conectado. |
 | `RESEND_RESPONDER_PARA` | Endereço que recebe as respostas aos emails (cabeçalho Reply-To). Opcional. |
-| `RESEND_WEBHOOK_SECRET` | Segredo de assinatura do webhook do Resend (Webhooks → o webhook → Signing Secret, começa com `whsec_`). Sem ele o webhook recusa tudo. |
+| `RESEND_WEBHOOK_SECRET` | Segredo de assinatura do webhook do Resend (Webhooks → o webhook → Signing Secret, começa com `whsec_`). Sem ele o webhook recusa tudo, e a newsletter não é enviada (o descadastro feito pela página do Resend não voltaria ao CRM). |
 | `RESEND_LIMITE_DIARIO` | Quantos emails de funil a rotina diária pode enviar por dia. Opcional; o padrão é 90 (o plano gratuito do Resend permite 100 por dia). O que passar do limite fica para o dia seguinte, com a boas-vindas na frente. |
 | `DESCADASTRO_SEGREDO` | Texto aleatório longo (`openssl rand -base64 32`) que assina o token do link de descadastro de cada email. Sem ele, nenhum email de funil sai. **Trocar o valor invalida os links de descadastro dos emails já enviados**: não troque sem necessidade. |
 | `URL_PUBLICA_PAINEL` | Endereço público do painel, sem barra no final (ex.: `https://claudio-psi-lime.vercel.app`). É o que vai nos links de descadastro e na verificação de acesso público. Opcional: o padrão é o domínio de produção atual. |
 | `SITE_WEBHOOK_TOKEN` | Token do webhook do formulário do site (`/api/webhooks/site?token=…`). Já configurado. Sem ele o webhook recusa tudo. |
 | `WHATSAPP_LINK` | Link do WhatsApp do escritório (ex.: `https://wa.me/55…`). Opcional: entra no lugar de `[link do WhatsApp]` nos emails prontos dos funis. |
+
+`DESCADASTRO_SEGREDO` e as variáveis `RESEND_*` (`RESEND_API_KEY`, `RESEND_REMETENTE`, `RESEND_RESPONDER_PARA`, `RESEND_WEBHOOK_SECRET`, `RESEND_LIMITE_DIARIO`) vão **só no ambiente Production**. Nas prévias (Preview) e no Development elas ficam de fora: uma prévia não pode enviar email de verdade aos contatos, e os links de descadastro e o webhook precisam apontar para a produção.
 
 ## Resend, webhooks e acesso público (CRM)
 
@@ -96,13 +98,13 @@ O link de descadastro, os webhooks e o formulário do site precisam alcançar o 
 
 - **Decisão: mudar para "Standard Protection"** (Vercel → Settings → Deployment Protection). Ela protege só as prévias; a produção fica acessível, e o painel continua todo atrás da própria senha (`DASHBOARD_PASSWORD`). Essa é uma mudança de segurança do projeto e é sua.
 - **Por que o envio fica bloqueado sem isso:** sem acesso público o descadastro não abriria e os webhooks não chegariam, e enviar email sem poder descadastrar fere a LGPD. A rotina diária faz um GET em `/api/publico/saude` a partir do próprio servidor e só envia se vier 200 com `{ok:true}`; senão, nenhum email de funil sai (ficam na fila do dia seguinte) e a tela de Integração mostra "Bloqueado" com a instrução. A checagem é refeita sozinha a cada poucos minutos.
-- As únicas rotas públicas são `/descadastro`, `/api/publico/*` e `/api/webhooks/*`; cada uma exige token ou assinatura. O link de descadastro aberto por antivírus (GET) não descadastra: só o POST com o token.
+- As únicas rotas públicas são `/descadastro`, `/api/publico/*` e `/api/webhooks/*`; cada uma exige token ou assinatura. Também ficam abertos, pelo nome exato, os dois logos dos emails (`/logo-og.png` e `/logo-og-claro.png`, arquivos estáticos de `public/`): o cliente de email busca a imagem sem cookie. O link de descadastro aberto por antivírus (GET) não descadastra: só o POST com o token.
 
 ## Funis (CRM → Funis)
 
 - Quatro funis. Em cada um, a tela mostra as etapas (assunto, espera em dias e a **prévia renderizada** do email, como o contato recebe), os **envios dos últimos 30 dias** (enviados e erros), a **fila de hoje** e os membros.
   - **Boas-vindas** (ligado): entra automaticamente o lead que preenche o formulário do site. Logo depois da resposta ao Elementor (`after()`) a primeira etapa é enviada na hora, se houver acesso público; senão sai na rotina diária.
-  - **Nutrição com o blog** (ligado): leads e clientes com base legal de consentimento ou contrato, inscritos pela tela (emails colados ou uma tag de importação). Não tem sequência: a inscrição define quem recebe a **newsletter** dos artigos novos (distribuição dos artigos).
+  - **Nutrição com o blog** (ligado): leads e clientes com base legal de consentimento ou contrato, inscritos pela tela (emails colados ou uma tag de importação). Não tem sequência: a inscrição define quem recebe a **newsletter** dos artigos novos (distribuição dos artigos). **Desligar este funil não para a newsletter** (de propósito): o segmento da newsletter é sobre consentimento (quem está inscrito e pode receber), e a newsletter só sai quando alguém a envia à mão. Para parar de mandar a alguém, tire a pessoa do funil.
   - **Reativação** (ligado): clientes **sem interação real** há 180 dias, inscritos pela rotina diária, no máximo 50 por dia. Conta como interação: formulário, clique em email, mudança de status, edição manual e a criação do contato. Não contam: envio e abertura de email (o Apple Mail "abre" sozinho), importação, sincronização e entrada/saída de funil. A rotina reinscreve só quem **concluiu** a sequência há mais de 180 dias — nunca quem foi removido à mão.
   - **Prospecção fria** (**desligado por padrão**): só leads com base legal de legítimo interesse. Para ligar, a tela exige marcar o checklist de LGPD (avaliação de legítimo interesse documentada, fonte dos contatos documentada, descadastro em todo email, volume baixo e aquecido) e um teto diário; a data da confirmação fica gravada. Todo email desta série termina com um bloco fixo: a base legal, a fonte do contato (`[fonte do contato]`, a trocar: email com esse marcador não é enviado), a oferta de explicar a fonte, apagar o dado ou parar de enviar, e o descadastro.
 - **Rotina diária** (`/api/cron/diario`, fonte `funis` em `sincronizacoes`): garante os quatro funis, apaga lotes de planilha com mais de 24 horas, tira descadastrados, inscreve a reativação e a prospecção fria (se ligada, no teto), sincroniza os contatos pendentes com o Resend e envia as etapas devidas, até `RESEND_LIMITE_DIARIO`, com a boas-vindas na frente. Sem `RESEND_API_KEY`/`RESEND_REMETENTE`, as inscrições e a limpeza continuam, nenhum email sai e a fonte aparece como "não configurada". Uma falha aqui não afeta o Search Console nem o GA4. Passados 90 s, a etapa para entre subetapas e lotes e registra "Interrompido por tempo" (o restante segue no dia seguinte).
@@ -118,7 +120,7 @@ O link de descadastro, os webhooks e o formulário do site precisam alcançar o 
 
 O schema muda só em `src/lib/db/schema.ts`; o `drizzle-kit push` é rodado por você, nunca pelo agente. **O push e o deploy do código precisam acontecer juntos**: o código antigo lê colunas que o push remove (`brevo_id`, `brevo_lista_id`, `lista_sync`, `na_lista_em`) e quebra se o push vier antes do deploy, e o código novo quebra se o deploy vier antes do push.
 
-Antes, confirme no banco que o que sai está vazio ou é descartável: `select count(*) from contatos where brevo_id is not null`; `select count(*) from funis where brevo_lista_id is not null`; `select count(*) from brevo_eventos_recebidos`; e, se a tabela `envios_funil` já existir, `select count(*) from envios_funil` (o Brevo nunca foi conectado em produção; o esperado é 0 em tudo).
+Antes, confirme no banco que o que sai está vazio ou é descartável: `select count(*) from contatos where brevo_id is not null`; `select count(*) from funis where brevo_lista_id is not null`; `select count(*) from brevo_eventos_recebidos`; e, se a tabela `envios_funil` já existir, `select count(*) from envios_funil` (o Brevo nunca foi conectado em produção; o esperado é 0 em tudo). Anote também `select count(*) from contatos where sync_status <> 'pendente';` (veja "Depois do push" abaixo).
 
 Perguntas esperadas e respostas:
 
@@ -130,6 +132,17 @@ Perguntas esperadas e respostas:
 6. Avisos ao remover `funil_inscricoes.lista_sync`, `lista_sync_erro` e `na_lista_em` ("column ... with N items"): **yes**. Também não há coluna nova nessa tabela.
 7. Qualquer outra pergunta de rename (por exemplo envolvendo `rodada`, `tentativas` ou `primeira_tentativa_em` em `envios_funil`): **create**; nada ali vem de coluna antiga.
 8. Confirmação final ("Yes, I want to execute all statements"): sim, depois de ver a lista.
+
+Depois do push (opcional, mas recomendado se a contagem de `sync_status <> 'pendente'` não deu 0):
+
+```sql
+update contatos set sync_status='pendente' where sync_status <> 'pendente';
+```
+
+Os contatos marcados como "sincronizado" na época do Brevo nunca foram enviados ao Resend; voltar todos a "pendente" faz a rotina diária mandá-los ao Resend.
+
+- **As primeiras sincronizações levam várias rotinas diárias**: cada execução manda até 200 contatos ao Resend (e para em 90 s). O resto segue nos dias seguintes; **CRM → Integração → Sincronizar agora** adianta.
+- **A newsletter é recusada** ("há descadastros ainda não sincronizados com o Resend") enquanto houver contato pendente que **não** é elegível (descadastrado, dados apagados, fora da nutrição ou sem base legal): ele poderia continuar no segmento do Resend. Contatos elegíveis pendentes não bloqueiam (só ainda não recebem). Antes de enviar a primeira newsletter, espere a sincronização terminar.
 
 ## Conta de serviço do Google (Search Console)
 

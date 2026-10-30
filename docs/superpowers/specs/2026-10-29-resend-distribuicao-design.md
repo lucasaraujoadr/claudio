@@ -93,7 +93,7 @@ Sem `RESEND_API_KEY`, as telas mostram "Resend não conectado" e nada é enviado
 ### 2.5 Descadastro
 
 - **Link de descadastro:** `/descadastro?t=<token>`, uma página pública.
-  - O token é `base64url(contatoId.expiração).HMAC-SHA256(DESCADASTRO_SEGREDO)`, com validade de 365 dias.
+  - O token é `base64url(contatoId.expiração).HMAC-SHA256(DESCADASTRO_SEGREDO)`, com validade de 10 anos (email antigo continua com descadastro funcionando).
   - A página mostra um botão "Confirmar descadastro". O link não age sozinho, porque leitores de link de antivírus abrem URLs.
 - **One-click:** `POST /api/publico/descadastro` com o mesmo token. Atende o cabeçalho `List-Unsubscribe-Post`, que o Gmail e o Yahoo exigem em envios em massa.
 - **Efeito:**

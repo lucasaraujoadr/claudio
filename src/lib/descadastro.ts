@@ -9,11 +9,12 @@ import { urlPublicaPainel } from './acesso-publico'
 
 /**
  * Descadastro público (spec §2.5). Token: `base64url("<id>.<expiraEmUnix>")` + `.` + `base64url(HMAC-SHA256)`,
- * válido por 365 dias. O GET da página nunca descadastra (leitor de link de antivírus abre URLs): só o POST.
+ * válido por 10 anos (email antigo continua com descadastro funcionando). O GET da página nunca descadastra (leitor de link de antivírus abre URLs): só o POST.
  * O segredo, o token e o email nunca vão para log nem para resposta.
  */
 
-const VALIDADE_S = 365 * 86_400
+/** 10 anos, contando os bissextos. */
+const VALIDADE_S = 3653 * 86_400
 const MOTIVO = 'link de descadastro'
 const MAX_CORPO = 4096
 /** Maior valor de `integer` do Postgres: id maior nunca existe (e estouraria a consulta). */

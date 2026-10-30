@@ -55,7 +55,9 @@ describe('montarEmail', () => {
     const e = EMAILS_FUNIS.reativacao[1]
     const m = montarEmail(e, ctx)
     expect(m.assunto).toBe(e.assunto)
-    expect(m.html).toContain('src="https://painel.example.com/logo-og.png"')
+    // Cabeçalho branco: a versão do logo para fundo claro.
+    expect(m.html).toContain('src="https://painel.example.com/logo-og-claro.png"')
+    expect(m.html).not.toContain('/logo-og.png"')
     expect(m.html).toContain('#DAA522')
     expect(m.html).toContain('width="600"')
     expect(m.html).toMatch(/<table/)
