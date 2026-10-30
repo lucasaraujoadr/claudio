@@ -17,8 +17,10 @@ import { ehSlugFunil, inicioDoDiaBrasilia, type SlugFunil } from './funis-regras
  * - `envios_funil` é único por (inscrição, rodada, etapa): a linha é reservada **antes** do envio
  *   e um conflito vira `pulado`.
  * - Resultado de cada tentativa:
- *   - recusa do Resend (`erro`): tentada de novo na rodada seguinte, até 3 chamadas; na 3ª a
- *     inscrição sai do funil;
+ *   - recusa sobre o contato (`invalido`, `nao_encontrado`; fica `erro`): tentada de novo na rodada
+ *     seguinte, até 3 tentativas; na 3ª a inscrição sai do funil;
+ *   - erro da conta (`limite` 429, `credencial` 401/403; fica `erro`): tentado no dia seguinte, sem
+ *     contar tentativa e sem nunca encerrar a inscrição; `credencial` para a rodada inteira;
  *   - rede ou 5xx (`incerto`): o email pode ter saído, então nunca é repetido sozinho;
  *   - erro sem chamada à API (marcador pendente, token): fica `erro`, sem contar tentativa nem limite.
  * - O token de descadastro deriva da primeira reserva: toda tentativa da mesma etapa manda o
@@ -47,6 +49,8 @@ const ERRO_MARCADOR = 'texto com marcador pendente'
 const ERRO_TOKEN = 'link de descadastro indisponível (DESCADASTRO_SEGREDO)'
 const ERRO_DESCONHECIDO = 'falha no envio; confira no Resend se o email saiu'
 const TIPOS_INCERTOS: ReadonlySet<ErroResend['tipo']> = new Set(['rede', 'servidor'])
+/** Recusas sobre o contato: só elas contam para a falha permanente. `limite` e `credencial` são da conta. */
+const TIPOS_DO_CONTATO: ReadonlySet<ErroResend['tipo']> = new Set(['invalido', 'nao_encontrado'])
 
 export function limiteDiario(env: NodeJS.ProcessEnv = process.env): number {
   const n = Number(env.RESEND_LIMITE_DIARIO ?? LIMITE_DIARIO_PADRAO)
@@ -168,7 +172,7 @@ async function tentarEtapa(
   db: BancoCrm,
   cliente: ClienteResend,
   agora: Date,
-): Promise<{ resultado: ResultadoEnvio; chamouApi: boolean }> {
+): Promise<{ resultado: ResultadoEnvio; chamouApi: boolean; pararRodada?: boolean }> {
   const nada = (resultado: ResultadoEnvio) => ({ resultado, chamouApi: false })
   const etapas = etapasDaSequencia(item.slug)
   const email = etapas[item.etapa]
@@ -273,6 +277,11 @@ async function tentarEtapa(
         .where(eq(enviosFunil.id, envioId))
       return { resultado: 'incerto', chamouApi: true }
     }
+    if (!TIPOS_DO_CONTATO.has(e.tipo)) {
+      // Erro da conta (429, chave): não é culpa do contato; tenta amanhã sem gastar tentativa.
+      await db.update(enviosFunil).set({ status: 'erro', erro: e.message }).where(eq(enviosFunil.id, envioId))
+      return { resultado: 'erro', chamouApi: true, pararRodada: e.tipo === 'credencial' }
+    }
     await db.update(enviosFunil).set({ status: 'erro', tentativas, erro: e.message }).where(eq(enviosFunil.id, envioId))
     if (tentativas >= MAX_TENTATIVAS) {
       await sair(atual.funilId, [item.contatoId], { db, motivo: MOTIVO_FALHA_PERMANENTE, agora })
@@ -325,13 +334,15 @@ export async function executarEnviosFunil(opts: {
   let usadas = 0
   for (const item of devidas) {
     if (usadas >= cota || opts.deveParar?.()) break
-    const { resultado, chamouApi } = await tentarEtapa(item, db, opts.cliente, opts.agora)
+    const { resultado, chamouApi, pararRodada } = await tentarEtapa(item, db, opts.cliente, opts.agora)
     if (chamouApi) usadas++
     if (resultado === 'enviado') r.enviados++
     else if (resultado === 'pulado') r.pulados++
     else if (resultado === 'incerto') r.incertos++
     else r.erros++
     r.restantes--
+    // Chave inválida ou sem permissão: todo envio seguinte falharia igual. O resto fica para amanhã.
+    if (pararRodada) break
   }
   return r
 }

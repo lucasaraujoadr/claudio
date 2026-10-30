@@ -302,6 +302,27 @@ describe('enviarEtapa', () => {
     expect(r.tentativas).toHaveLength(3)
   })
 
+  it('3 dias de 429 (limite) deixam a inscrição ativa e tentativas em 0', async () => {
+    const c = await lead()
+    const r = resendFalso({ falhar: () => new ErroResend('limite') })
+    for (let d = 0; d < 3; d++) expect(await executarEnviosFunil({ ...base(r.cliente, depois(d)) })).toMatchObject({ erros: 1 })
+    expect(r.tentativas).toHaveLength(3)
+    expect((await inscricaoDe(c.id, 'boas-vindas')).status).toBe('ativo')
+    expect(await db.select().from(enviosFunil)).toMatchObject([{ status: 'erro', tentativas: 0 }])
+    expect(await etapasDevidas(depois(3), { db })).toMatchObject([{ contatoId: c.id, etapa: 0 }])
+  })
+
+  it('credencial para a rodada no primeiro item; o resto fica para amanhã, sem tentativa contada', async () => {
+    const a = await lead()
+    await lead()
+    await lead()
+    const r = resendFalso({ falhar: () => new ErroResend('credencial') })
+    expect(await executarEnviosFunil({ ...base(r.cliente) })).toEqual({ enviados: 0, pulados: 0, erros: 1, incertos: 0, restantes: 2 })
+    expect(r.tentativas).toHaveLength(1)
+    expect(await db.select().from(enviosFunil)).toMatchObject([{ status: 'erro', tentativas: 0 }])
+    expect((await inscricaoDe(a.id, 'boas-vindas')).status).toBe('ativo')
+  })
+
   it('marcador pendente não consome o limite, não conta tentativa e não encerra a inscrição', async () => {
     process.env.RESEND_LIMITE_DIARIO = '1'
     expect(await ligarProspeccaoFria({ avaliacaoLegitimoInteresse: true, fonteDocumentada: true, descadastroEmTodoEmail: true, volumeBaixoAquecido: true }, 10, { db })).toEqual({ ok: true })
